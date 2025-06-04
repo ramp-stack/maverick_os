@@ -4,7 +4,15 @@ mod state;
 pub use state::{Field, State};
 
 pub mod hardware;
-
+use crate::hardware::{
+    Cache,
+    Clipboard,
+    Share,
+    ApplicationSupport,
+    CloudStorage,
+    {PhotoPicker, ImageOrientation},
+    {Camera, CameraError},
+};
 pub mod runtime;
 use runtime::{Runtime, Services};
 
