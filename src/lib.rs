@@ -15,7 +15,7 @@ pub mod prelude {
     pub use crate::{MaverickOS, Application, start};
 }
 
-//mod air;
+pub mod air;
 //  use air::AirTask;
 
 pub trait Application: Services {

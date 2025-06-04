@@ -4,8 +4,9 @@ use std::time::{Instant, Duration};
 use std::collections::BTreeMap;
 use std::hash::{Hasher, Hash};
 use std::future::Future;
-use std::any::Any;
 use std::any::TypeId;
+use std::pin::Pin;
+use std::any::Any;
 use downcast_rs::{impl_downcast, Downcast};
 use tokio::task::JoinHandle;
 use serde::{Serialize, Deserialize};
@@ -16,6 +17,7 @@ pub use async_trait::async_trait;
 
 use crate::State;
 use crate::hardware;
+use crate::air::AirService;
 
 pub type Callback = dyn Fn(&mut State, String);
 
@@ -23,7 +25,7 @@ pub trait Services {
     fn services() -> ServiceList {BTreeMap::new()}
 }
 
-pub type ServiceList = BTreeMap<TypeId, Box<dyn FnOnce(&mut hardware::Context) -> Box<dyn Future<Output = Box<dyn Service>> + Unpin>>>;
+pub type ServiceList = BTreeMap<TypeId, Box<dyn for<'a> FnOnce(&'a mut hardware::Context) -> Pin<Box<dyn Future<Output = Box<dyn Service>> + 'a>>>>;
 
 //Lives on the active thread, Services can talk to each other through the runtime ctx which lives
 //on the active thread.
@@ -84,6 +86,7 @@ impl Runtime {
         let mut background = BTreeMap::new();
         let mut services = BTreeMap::new();
         let mut pre_serv = S::services();
+        pre_serv.insert(TypeId::of::<AirService>(), Box::new(|ctx: &mut hardware::Context| Box::pin(async move {Box::new(AirService::new(ctx).await) as Box<dyn Service>})));
         while let Some((id, service_gen)) = pre_serv.pop_first() {
             services.entry(id).or_insert_with(|| {
             //if !services.contains_key(&id) {
@@ -160,7 +163,7 @@ pub struct ServiceContext {
     services: BTreeMap<TypeId, Box<dyn Service>>,
 }
 impl ServiceContext {
-    pub fn service<S: Service>(&mut self) -> &mut S {self.services.get_mut(&TypeId::of::<S>()).unwrap().downcast_mut().unwrap()}
+    pub fn get<S: Service>(&mut self) -> &mut S {self.services.get_mut(&TypeId::of::<S>()).expect("Service Not Found").downcast_mut().unwrap()}
 }
 
 struct ActiveThread {
