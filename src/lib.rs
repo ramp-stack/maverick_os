@@ -4,9 +4,9 @@ mod state;
 pub use state::{Field, State};
 
 pub mod hardware;
-use crate::hardware::{
-    Cache,
+pub use crate::hardware::{
     Clipboard,
+    Cache,
     Share,
     ApplicationSupport,
     CloudStorage,

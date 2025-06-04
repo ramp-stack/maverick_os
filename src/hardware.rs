@@ -14,12 +14,12 @@ use jni;
 use std::sync::mpsc::Sender;
 
 pub use cache::Cache;
+pub use clipboard::Clipboard;
 pub use camera::{Camera, CameraError};
 pub use share::Share;
 pub use app_support::ApplicationSupport;
 pub use cloud::CloudStorage;
 pub use photo_picker::{PhotoPicker, ImageOrientation};
-use crate::hardware::clipboard::Clipboard;
 
 /// Hardware context contains interfaces to various hardware.
 /// All interfaces should be clonable or internally synchronized and safe to call from multiple places.

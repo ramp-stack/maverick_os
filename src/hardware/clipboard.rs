@@ -80,8 +80,7 @@ impl Clipboard {
     pub fn set(text: String) {
         #[cfg(any(target_os = "ios", target_os = "macos"))]
         {
-            let clipboard = Self::new();
-            clipboard.set_content(text);
+            Self::new().set_content(text);
         }
 
         #[cfg(target_os = "android")]
