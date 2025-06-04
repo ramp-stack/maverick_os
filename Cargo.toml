@@ -1,6 +1,6 @@
 [package]
 name = "maverick_os"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 authors = ["Caleb Couch <caleb@orange.me>"]
 description = "Maverick OS"
@@ -9,7 +9,7 @@ repository = "https://github.com/ramp-stack/maverick_os"
 
 
 [dependencies]
-air = "0.1.0"
+air = "0.2.3"
 async-trait = "0.1.88"
 log = "0.4.27"
 raw-window-handle = "0.6.2"
@@ -19,6 +19,23 @@ serde = "1.0.219"
 hex = "0.4.3"
 rand = "0.9.1"
 downcast-rs = "2.0.1"
+image = "0.25.6"
+
+
+[target.'cfg(any(target_os = "ios", target_os = "macos"))'.dependencies]
+objc2 = "0.6.1"
+objc2-av-foundation = "0.3.1"
+objc2-core-media = "0.3.1"
+objc2-foundation = "0.3.1"
+dispatch2 = "0.3.0"
+objc2-core-video = "0.3.1"
+
+
+[target.'cfg(target_os = "android")'.dependencies]
+ndk-context = "0.1.1"
+jni = "0.21.1"
+
+
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 rusqlite = {version="0.34.0", features=["bundled"]}

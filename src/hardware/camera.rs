@@ -3,10 +3,15 @@ use image::RgbaImage;
 #[cfg(any(target_os = "ios", target_os = "macos"))]
 mod apple;
 
-// #[cfg(target_os = "android")]
-// use crate::base::driver::android::camera::*;
 #[cfg(any(target_os = "ios", target_os = "macos"))]
-use crate::base::driver::camera::apple::*;
+use crate::hardware::camera::apple::*;
+
+#[cfg(target_os = "android")]
+mod android;
+
+
+#[cfg(target_os = "android")]
+use crate::hardware::camera::android::*;
 
 #[derive(Debug)]
 pub enum CameraError {
@@ -15,12 +20,12 @@ pub enum CameraError {
     FailedToGetFrame
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Camera (
     #[cfg(any(target_os = "macos", target_os = "ios"))]
     AppleCamera,
-    // #[cfg(target_os = "android")]
-    // AndroidCamera,
+    #[cfg(target_os = "android")]
+    AndroidCamera,
 );
 
 impl Camera {
@@ -36,9 +41,9 @@ impl Camera {
 
     #[cfg(target_os = "android")]
     pub fn new() -> Self {
-        // let mut camera = AndroidCamera::new().expect("Failed to create Android camera");
-        // camera.open_camera();
-        // return Camera(camera)
+        let mut camera = AndroidCamera::new().expect("Failed to create Android camera");
+        camera.open_camera();
+        return Camera(camera)
     }
 
     #[cfg(any(target_os = "macos", target_os = "ios"))]
@@ -48,8 +53,8 @@ impl Camera {
 
     #[cfg(target_os = "android")]
     pub fn get_frame(&mut self) -> Result<RgbaImage, CameraError> {
-        // #[cfg(target_os = "android")]
-        // return self.0.get_latest_frame().map_err(|_| CameraError::FailedToGetFrame);
+        #[cfg(target_os = "android")]
+        return self.0.get_latest_frame().map_err(|_| CameraError::FailedToGetFrame);
 
         Err(CameraError::FailedToGetFrame)
     }

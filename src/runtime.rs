@@ -4,8 +4,9 @@ use std::time::{Instant, Duration};
 use std::collections::BTreeMap;
 use std::hash::{Hasher, Hash};
 use std::future::Future;
-use std::any::Any;
 use std::any::TypeId;
+use std::pin::Pin;
+use std::any::Any;
 use downcast_rs::{impl_downcast, Downcast};
 use tokio::task::JoinHandle;
 use serde::{Serialize, Deserialize};
@@ -16,6 +17,7 @@ pub use async_trait::async_trait;
 
 use crate::State;
 use crate::hardware;
+use crate::air::AirService;
 
 pub type Callback = dyn Fn(&mut State, String);
 
@@ -23,14 +25,25 @@ pub trait Services {
     fn services() -> ServiceList {BTreeMap::new()}
 }
 
-pub type ServiceList = BTreeMap<TypeId, Box<dyn FnOnce(&mut hardware::Context) -> Box<dyn Future<Output = Box<dyn Service>> + Unpin>>>;
+pub type ServiceList = BTreeMap<TypeId, Box<dyn for<'a> FnOnce(&'a mut hardware::Context) -> Pin<Box<dyn Future<Output = Box<dyn Service>> + 'a>>>>;
+
+pub struct Error(String, String);
+impl std::fmt::Display for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {write!(f, "{}", self.0)}
+}
+impl std::fmt::Debug for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {write!(f, "{}", self.1)}
+}
+impl<E: std::error::Error> From<E> for Error {
+    fn from(error: E) -> Error {Error(error.to_string(), format!("{:?}", error))}
+}
 
 //Lives on the active thread, Services can talk to each other through the runtime ctx which lives
 //on the active thread.
 #[async_trait::async_trait]
 pub trait Service: Downcast + Send + Sync + Any {
     async fn new(ctx: &mut hardware::Context) -> Self where Self: Sized;
-    async fn run(&mut self, ctx: &mut ServiceContext, channel: &mut Channel) -> Duration;
+    async fn run(&mut self, ctx: &mut ServiceContext, channel: &mut Channel) -> Result<Duration, Error>;
 
     fn background_tasks(&self) -> Vec<Box<dyn BackgroundTask>> {vec![]}
     fn services(&self) -> ServiceList {BTreeMap::new()}
@@ -41,7 +54,7 @@ impl_downcast!(Service);
 //Lives on the background thread
 #[async_trait::async_trait]
 pub trait BackgroundTask {
-    async fn run(&mut self, ctx: &mut hardware::Context) -> Duration;
+    async fn run(&mut self, ctx: &mut hardware::Context) -> Result<Duration, Error>;
 }
 
 ///Runtime Context enables communication between threads, cheap to clone and messages can be sent
@@ -72,7 +85,10 @@ impl Runtime {
             for (task, time, duration) in tasks.iter_mut() {
                 if time.elapsed() > *duration {
                     *time = Instant::now();
-                    *duration = task.run(&mut ctx).await;
+                    match task.run(&mut ctx).await {
+                        Ok(d) => {*duration = d;},
+                        Err(e) => log::error!("Service {} Error:\n{},\n{:?}", std::any::type_name_of_val(&**task), e, e)
+                    }
                 }
             }
             std::thread::sleep(Duration::from_secs(THREAD_TICK));
@@ -84,13 +100,12 @@ impl Runtime {
         let mut background = BTreeMap::new();
         let mut services = BTreeMap::new();
         let mut pre_serv = S::services();
+        pre_serv.insert(TypeId::of::<AirService>(), Box::new(|ctx: &mut hardware::Context| Box::pin(async move {Box::new(AirService::new(ctx).await) as Box<dyn Service>})));
         while let Some((id, service_gen)) = pre_serv.pop_first() {
             services.entry(id).or_insert_with(|| {
-            //if !services.contains_key(&id) {
                 let service = runtime.block_on(service_gen(&mut hardware));
                 pre_serv.extend(service.services().into_iter());
                 background.extend(service.background_tasks().into_iter().map(|s| ((*s).type_id(), s)));
-                //services.insert(id, service);
                 service
             });
         }
@@ -160,7 +175,7 @@ pub struct ServiceContext {
     services: BTreeMap<TypeId, Box<dyn Service>>,
 }
 impl ServiceContext {
-    pub fn service<S: Service>(&mut self) -> &mut S {self.services.get_mut(&TypeId::of::<S>()).unwrap().downcast_mut().unwrap()}
+    pub fn get<S: Service>(&mut self) -> &mut S {self.services.get_mut(&TypeId::of::<S>()).expect("Service Not Found").downcast_mut().unwrap()}
 }
 
 struct ActiveThread {
@@ -184,7 +199,9 @@ impl ActiveThread {
         loop {
             while let Some(request) = self.channel.receive() {
                 match serde_json::from_str::<Request>(&request).unwrap() {
-                    Request::Request(id, payload) => self.channels.get_mut(&id).unwrap().send(payload),
+                    Request::Request(id, payload) => {
+                        self.channels.get_mut(&id).unwrap().send(payload)
+                    },
                     Request::Lifetime(p) => paused = p
                 }
             }
@@ -194,7 +211,10 @@ impl ActiveThread {
                     if time.elapsed() > *duration {
                         *time = Instant::now();
                         let mut service = self.context.services.remove(id).unwrap();
-                        *duration = service.run(&mut self.context, channel).await;
+                        match service.run(&mut self.context, channel).await {
+                            Ok(d) => {*duration = d;},
+                            Err(e) => log::error!("Service {} Error:\n{},\n{:?}", std::any::type_name_of_val(&*service), e, e)
+                        }
                         self.context.services.insert(*id, service);
                     }
                 }
