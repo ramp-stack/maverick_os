@@ -147,14 +147,12 @@ impl Processor {
     // }
 }
 
-#[cfg(any(target_os = "ios", target_os = "macos"))]
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct AppleCamera {
     pub session: Retained<AVCaptureSession>,
     processor: Retained<Processor>,
 }
 
-#[cfg(any(target_os = "ios", target_os = "macos"))]
 impl AppleCamera {
     pub fn new() -> Self {
         unsafe {
