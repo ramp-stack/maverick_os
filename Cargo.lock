@@ -57,7 +57,9 @@ dependencies = [
 
 [[package]]
 name = "air"
-version = "0.1.0"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ac8489eabee0f094b6222bd04d55ea017fce7515858b2aff3a635332e85446f7"
 dependencies = [
  "async-trait",
  "chrono",
