@@ -86,6 +86,7 @@ impl<A: Application> MaverickService<A> {
 impl<A: Application + 'static> EventHandler for MaverickService<A> {
     fn event(&mut self, window_ctx: &window::Context, event: Event) {
         if let Some(runtime) = self.runtime.as_mut() {
+            runtime.tick(&mut self.state.lock().unwrap());
             if self.os.is_none() {
                 self.os = Some(MaverickOS::new(Context{
                     hardware: self.hardware.take().unwrap(),
@@ -96,7 +97,6 @@ impl<A: Application + 'static> EventHandler for MaverickService<A> {
             }
             let os = self.os.as_mut().unwrap();
             os.context.window = window_ctx.clone();
-            runtime.tick(&mut self.state.lock().unwrap());
             runtime.block_on(os.on_event(event.clone()));
             match &event {
                 Event::Lifetime(Lifetime::Paused) => runtime.pause(),
