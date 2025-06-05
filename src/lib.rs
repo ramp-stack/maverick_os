@@ -1,3 +1,4 @@
+use std::sync::{Mutex, Arc};
 use std::future::Future;
 
 mod state;
@@ -32,7 +33,7 @@ pub trait Application: Services {
 }
 
 pub struct Context {
-    pub state: State,
+    pub state: Arc<Mutex<State>>,
     pub window: window::Context,
     pub runtime: runtime::Context,
     pub hardware: hardware::Context,
@@ -71,13 +72,14 @@ impl<A: Application + 'static> MaverickOS<A> {
 }
 
 struct MaverickService<A: Application> {
+    state: Arc<Mutex<State>>,
     runtime: Option<Runtime>,
     hardware: Option<hardware::Context>,
     os: Option<MaverickOS::<A>>
 }
 impl<A: Application> MaverickService<A> {
     fn new(runtime: Runtime, hardware: hardware::Context) -> Self {
-        MaverickService{runtime: Some(runtime), hardware: Some(hardware), os: None}
+        MaverickService{runtime: Some(runtime), hardware: Some(hardware), state: Arc::new(Mutex::new(State::default())), os: None}
     }
 }
 
@@ -89,12 +91,12 @@ impl<A: Application + 'static> EventHandler for MaverickService<A> {
                     hardware: self.hardware.take().unwrap(),
                     runtime: runtime.context().clone(),
                     window: window_ctx.clone(),
-                    state: State::default(),
+                    state: self.state.clone(),
                 }))
             }
             let os = self.os.as_mut().unwrap();
             os.context.window = window_ctx.clone();
-            runtime.tick(&mut os.context.state);
+            runtime.tick(&mut self.state.lock().unwrap());
             runtime.block_on(os.on_event(event.clone()));
             match &event {
                 Event::Lifetime(Lifetime::Paused) => runtime.pause(),
