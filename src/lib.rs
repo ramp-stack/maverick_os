@@ -15,7 +15,7 @@ pub use crate::hardware::{
     {Camera, CameraError},
 };
 pub mod runtime;
-use runtime::{Runtime, Services};
+use runtime::{Runtime, Duration};
 
 pub mod window;
 use window::{WindowManager, EventHandler, Event, Lifetime};
@@ -24,10 +24,10 @@ pub mod prelude {
     pub use crate::{MaverickOS, Application, start};
 }
 
-pub mod air;
+//pub mod air;
 //  use air::AirTask;
 
-pub trait Application: Services {
+pub trait Application {
     fn new(context: &mut Context) -> impl Future<Output = Self>;
     fn on_event(&mut self, context: &mut Context, event: Event) -> impl Future<Output = ()>;
 }
@@ -45,13 +45,58 @@ pub struct MaverickOS<A: Application> {
     app: Option<A>
 }
 
+use std::pin::Pin;
+pub struct Test;
+#[async_trait::async_trait]
+impl runtime::Thread for Test {
+    async fn run(self: Box<Self>, ctx: runtime::ThreadContext) {
+        println!("HELE");
+    }
+}
+
 impl<A: Application + 'static> MaverickOS<A> {
     pub fn start(
         #[cfg(target_os = "android")]
         app: AndroidApp
     ) {
         let hardware = hardware::Context::new();
-        let runtime = Runtime::start::<A>(hardware.clone());
+        let runtime = Runtime::start(hardware.clone());
+
+        //TODO: TESTS
+      //runtime.context().spawn(|mut ctx: runtime::ThreadContext| -> Pin<Box<dyn Future<Output = ()> + Send>>{
+      //    Box::pin(async move {
+      //        loop {
+      //            println!("HELLO");
+      //            ctx.sleep(Duration::from_secs(1)).await
+      //        } 
+      //    })
+      //});
+
+        runtime.context().spawn(Test);
+
+        runtime.context().spawn(async |mut ctx: runtime::ThreadContext| {
+            loop {
+                println!("Loop");
+                ctx.sleep(Duration::from_secs(1)).await
+            } 
+        });
+
+        let i = "Hell".to_string();
+
+        runtime.context().spawn((
+            async |mut ctx: runtime::ThreadContext| {
+                loop {
+                    println!("HELLO");
+                    ctx.sleep(Duration::from_secs(1)).await;
+                    ctx.channel.send(&"HI".to_string());
+                    println!("Wake");
+                } 
+            },
+            move |state: &mut State, response: String| {
+                println!("callback: {}, {}", response, i);
+            }
+        ));
+
         WindowManager::start(
             #[cfg(target_os = "android")]
             app,

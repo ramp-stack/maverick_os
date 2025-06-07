@@ -2,13 +2,13 @@ use std::sync::Arc;
 use std::path::PathBuf;
 use std::fmt::Debug;
 
+use serde::{Serialize, Deserialize};
+
 #[cfg(target_os = "android")]
 use winit_crate::platform::android::activity::AndroidApp;
 
 #[cfg(not(target_arch = "wasm32"))]
 use tokio::sync::Mutex;
-
-use crate::state::Field;
 
 #[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug, Clone)]
@@ -29,22 +29,27 @@ impl Cache {
         Cache(Arc::new(Mutex::new(db)))
     }
 
-    pub async fn set<F: Field + 'static>(&self, item: &F) {
+    pub async fn set<
+        K: Serialize + for<'a> Deserialize <'a>,
+        V: Serialize + for<'a> Deserialize <'a> + Default,
+    >(&self, key: K, value: V) {
         self.0.lock().await.execute(
             "INSERT INTO kvs(key, value) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET value=excluded.value;",
-            [F::ident(), hex::encode(item.to_bytes())]
+            [hex::encode(serde_json::to_vec(&key).unwrap()), hex::encode(&serde_json::to_vec(&value).unwrap())]
         ).unwrap();
     }
-    pub async fn get<F: Field + 'static>(&self) -> F {
+    pub async fn get<
+        K: Serialize + for<'a> Deserialize <'a>,
+        V: Serialize + for<'a> Deserialize <'a> + Default,
+    >(&self, key: &K) -> V {
         let db = self.0.lock().await;
-        let mut stmt = db.prepare(&format!(
-            "SELECT value FROM kvs where key = \'{}\'",
-            F::ident()
-        )).unwrap();
+        let mut stmt = db.prepare(
+            &format!("SELECT value FROM kvs where key = \'{}\'", hex::encode(serde_json::to_vec(&key).unwrap())),
+        ).unwrap();
         let result = stmt.query_and_then([], |row| {
             let item: String = row.get(0).unwrap();
             Ok(hex::decode(item).unwrap())
         }).unwrap().collect::<Result<Vec<Vec<u8>>, rusqlite::Error>>().unwrap();
-        result.first().map(|b| F::from_bytes(b)).unwrap_or_default()
+        result.first().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()
     }
 }
