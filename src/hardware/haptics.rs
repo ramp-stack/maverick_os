@@ -1,4 +1,4 @@
-
+#![allow(dead_code)]
 
 #[cfg(target_os = "ios")]
 use objc2_ui_kit::UIImpactFeedbackGenerator;

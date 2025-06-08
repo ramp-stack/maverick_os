@@ -23,6 +23,14 @@ pub struct Clipboard {
     context: GlobalRef,
 }
 
+// Implement Default only for non-Android platforms where new() takes no parameters
+#[cfg(not(target_os = "android"))]
+impl Default for Clipboard {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Clipboard {
     #[cfg(target_os = "android")]
     pub fn new(env: &mut JNIEnv, context: JObject) -> Result<Self, jni::errors::Error> {
