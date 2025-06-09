@@ -23,21 +23,15 @@ pub use async_trait::async_trait;
 use crate::State;
 use crate::hardware;
 
-//  mod thread;
-//  use thread::{ThreadRequest, ThreadResponse};
-//  pub use thread::{Thread, ThreadContext, InlineThread};
-
-//  mod inline;
-//  pub use inline::{InlineChannel, InlineThread};
-
 mod channel;
 pub use channel::{Channel, SerdeChannel};
 
-mod thread;
-pub use thread::{_Thread, Thread, ThreadContext, ThreadRequest, ThreadResponse, _ThreadChannelR};
+pub mod thread;
+pub use thread::{_Thread, Thread, ThreadRequest, ThreadResponse, ThreadChannelR, Task};
 
-pub type Callback = dyn FnMut(&mut State, String);
+pub type Callback<S> = Box<dyn FnMut(&mut State, S)>;
 
+#[derive(Serialize, Deserialize, Clone)]
 pub struct Error(String, String);
 impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {write!(f, "{}", self.0)}
@@ -59,7 +53,7 @@ pub type Id = u64;
 
 pub enum RuntimeRequest {
     Request(Id, String),
-    Spawn(Box<dyn _Thread>)
+    Spawn(Box<dyn _Thread>, Callback<String>)
 }
 
 pub struct Handle<S>(Context, Id, PhantomData<S>);
@@ -81,16 +75,39 @@ impl Context {
     }
 
     pub fn spawn<
-        S: Serialize + for<'a> Deserialize <'a> + 'static,
-        R: Serialize + for<'a> Deserialize <'a> + 'static,
-        Fut: Future<Output = ()> + Send + 'static,
-        T: Into<Thread<S, R, Fut>> + 'static
-    >(&self, thread: T) -> Handle<S> {
-        let thread = thread.into();
-        let id = thread.id();
-        self.sender.send(RuntimeRequest::Spawn(Box::new(thread))).unwrap();
+        S: Serialize + for<'a> Deserialize <'a> + Send + 'static,
+        R: Serialize + for<'a> Deserialize <'a> + Send + 'static,
+        //Fut: Future<Output = Result<Option<Duration>, Error>> + Send,
+        T: Task<S, R, Pin<Box<dyn Future<Output = Result<Option<Duration>, Error>> + Send>>> + 'static
+    >(&self, task: T) -> Handle<S> {
+        let id = task.id();
+        let (task, mut callback) = task.get();
+        self.sender.send(RuntimeRequest::Spawn(
+            Box::new(Thread(Box::new(task))), 
+            Box::new(move |state: &mut State, r: String| {
+                callback(state, serde_json::from_str(&r).unwrap())
+            })
+        )).unwrap();
         Handle(self.clone(), id, PhantomData::<S>)
     }
+
+
+  //pub fn spawn<
+  //    S: Serialize + for<'a> Deserialize <'a> + 'static,
+  //    R: Serialize + for<'a> Deserialize <'a> + 'static,
+  //    Fut: Future<Output = Result<Option<Duration>, Error>> + Send + 'static,
+  //    T: Into<(Thread<S, R, Fut>, Box<Callback<S>>)> + 'static
+  //>(&self, thread: T) -> Handle<S> {
+  //    let (thread, mut callback) = thread.into();
+  //    let id = thread.id();
+  //    self.sender.send(RuntimeRequest::Spawn(
+  //        Box::new(thread), 
+  //        Box::new(move |state: &mut State, r: String| {
+  //            callback(state, serde_json::from_str(&r).unwrap())
+  //        })
+  //    )).unwrap();
+  //    Handle(self.clone(), id, PhantomData::<S>)
+  //}
 }
 
 pub struct Runtime {
@@ -98,7 +115,7 @@ pub struct Runtime {
     context: Context,
     receiver: Receiver<RuntimeRequest>,
     runtime: tokio::runtime::Runtime,
-    threads: HashMap<Id, (_ThreadChannelR, Box<Callback>, JoinHandle<()>)>,
+    threads: HashMap<Id, (ThreadChannelR, Callback<String>, JoinHandle<()>)>,
 }
 
 impl Runtime {
@@ -120,7 +137,7 @@ impl Runtime {
     pub fn tick(&mut self, state: &mut State) {
         while let Ok(request) = self.receiver.try_recv() {
             match request {
-                RuntimeRequest::Spawn(thread) => {self.spawn(thread);},
+                RuntimeRequest::Spawn(thread, callback) => {self.spawn(thread, callback);},
                 RuntimeRequest::Request(id, payload) => {
                     if let Some(thread) = self.threads.get_mut(&id) {
                         thread.0.send(ThreadRequest::Request(0, payload));
@@ -141,13 +158,11 @@ impl Runtime {
         }).collect();
     }
 
-    fn spawn(&mut self, mut thread: Box<dyn _Thread>) -> bool {
+    fn spawn(&mut self, thread: Box<dyn _Thread>, callback: Callback<String>) -> bool {
         let id = thread.id();
         if let Entry::Vacant(e) = self.threads.entry(id) {
             let (a, b) = SerdeChannel::new();
-            let callback = thread.callback();
-            let tctx = ThreadContext{hardware: self.hardware.clone()};
-            let handle = self.runtime.spawn(thread.run(tctx, b));
+            let handle = self.runtime.spawn(thread.run(self.hardware.clone(), b));
             e.insert((a, callback, handle));
             true
         } else {false}
@@ -166,12 +181,12 @@ impl Runtime {
         self.threads.values_mut().for_each(|t| t.0.send(ThreadRequest::Resume));
     }   
     pub fn close(mut self) {
-        self.runtime.block_on(async {
-            self.threads.values_mut().for_each(|t| t.0.send(ThreadRequest::Close));
-            for thread in self.threads.into_values() {
-                thread.2.await.unwrap()
-            }
-        });
+      //self.runtime.block_on(async {
+      //    self.threads.values_mut().for_each(|t| t.0.send(ThreadRequest::Close));
+      //    for thread in self.threads.into_values() {
+      //        thread.2.await.unwrap()
+      //    }
+      //});
         self.runtime.shutdown_background();
     }
 }

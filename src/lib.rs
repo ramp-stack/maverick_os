@@ -74,15 +74,13 @@ impl<A: Application + 'static> MaverickOS<A> {
       //runtime.context().spawn(Test);
       //
 
-        let h = runtime.context().spawn(async |mut ctx: runtime::ThreadContext, mut s: Box<dyn Channel<String, String>>| {
-            loop {
-                println!("Loop");
-                while let Some(key) = s.receive() {
-                    println!("received: {:?}", key);
-                    s.send(format!("TESt: {}", key));
-                }
-                ctx.sleep(Duration::from_secs(1)).await
-            } 
+        let h = runtime.context().spawn(async |ctx: &mut runtime::thread::Context<String, String>| {
+            println!("Loop");
+            while let Some((id, key)) = ctx.get_request() {
+                println!("received: {:?}", key);
+                ctx.callback(format!("TESt: {}", key));
+            }
+            Ok(Some(Duration::from_secs(1)))
         });
 
         h.send("Hello".to_string());
