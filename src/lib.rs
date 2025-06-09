@@ -15,7 +15,7 @@ pub use crate::hardware::{
     {Camera, CameraError},
 };
 pub mod runtime;
-use runtime::{Runtime, Duration};
+use runtime::{Runtime, Duration, Channel};
 
 pub mod window;
 use window::{WindowManager, EventHandler, Event, Lifetime};
@@ -45,14 +45,13 @@ pub struct MaverickOS<A: Application> {
     app: Option<A>
 }
 
-use std::pin::Pin;
-pub struct Test;
-#[async_trait::async_trait]
-impl runtime::Thread for Test {
-    async fn run(self: Box<Self>, ctx: runtime::ThreadContext) {
-        println!("HELE");
-    }
-}
+//  pub struct Test;
+//  #[async_trait::async_trait]
+//  impl runtime::Thread for Test {
+//      async fn run(self: Box<Self>, ctx: runtime::ThreadContext) {
+//          println!("HELE");
+//      }
+//  }
 
 impl<A: Application + 'static> MaverickOS<A> {
     pub fn start(
@@ -72,30 +71,38 @@ impl<A: Application + 'static> MaverickOS<A> {
       //    })
       //});
 
-        runtime.context().spawn(Test);
+      //runtime.context().spawn(Test);
+      //
 
-        runtime.context().spawn(async |mut ctx: runtime::ThreadContext| {
+        let h = runtime.context().spawn(async |mut ctx: runtime::ThreadContext, mut s: Box<dyn Channel<String, String>>| {
             loop {
                 println!("Loop");
+                while let Some(key) = s.receive() {
+                    println!("received: {:?}", key);
+                    s.send(format!("TESt: {}", key));
+                }
                 ctx.sleep(Duration::from_secs(1)).await
             } 
         });
 
-        let i = "Hell".to_string();
+        h.send("Hello".to_string());
+        //h.send(&0);
 
-        runtime.context().spawn((
-            async |mut ctx: runtime::ThreadContext| {
-                loop {
-                    println!("HELLO");
-                    ctx.sleep(Duration::from_secs(1)).await;
-                    ctx.channel.send(&"HI".to_string());
-                    println!("Wake");
-                } 
-            },
-            move |state: &mut State, response: String| {
-                println!("callback: {}, {}", response, i);
-            }
-        ));
+      //let i = "Hell".to_string();
+
+      //runtime.context().spawn((
+      //    async |mut ctx: runtime::ThreadContext| {
+      //        loop {
+      //            println!("HELLO");
+      //            ctx.sleep(Duration::from_secs(1)).await;
+      //            ctx.channel.send(&"HI".to_string());
+      //            println!("Wake");
+      //        } 
+      //    },
+      //    move |state: &mut State, response: String| {
+      //        println!("callback: {}, {}", response, i);
+      //    }
+      //));
 
         WindowManager::start(
             #[cfg(target_os = "android")]
