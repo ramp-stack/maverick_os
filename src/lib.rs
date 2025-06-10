@@ -32,6 +32,7 @@ pub trait Application: Services {
     fn on_event(&mut self, context: &mut Context, event: Event) -> impl Future<Output = ()>;
 }
 
+//TODO: Include service Clients
 pub struct Context {
     pub state: Arc<Mutex<State>>,
     pub window: window::Context,

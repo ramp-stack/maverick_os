@@ -29,12 +29,15 @@ static INIT_ONCE: Once = Once::new();
 #[derive(Clone)]
 pub struct Share;
 
+<<<<<<< HEAD
 impl Default for Share {
     fn default() -> Self {
         Self::new()
     }
 }
 
+=======
+>>>>>>> origin/master
 impl Share {
     pub fn new() -> Self {
         Self
@@ -198,4 +201,8 @@ impl Share {
             Err("App context not initialized. Call Share::initialize() first.".into())
         }
     }
+<<<<<<< HEAD
 }
+=======
+}
+>>>>>>> origin/master

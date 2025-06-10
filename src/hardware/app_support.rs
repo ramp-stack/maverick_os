@@ -124,8 +124,8 @@ impl ApplicationSupport {
 
     #[cfg(target_os = "linux")]
     pub fn get() -> Option<PathBuf> {
-    
-        let app_name = "org.ramp.orange"; 
+
+        let app_name = "org.ramp.orange";
 
         if let Ok(xdg_data_home) = env::var("XDG_DATA_HOME") {
             let path = PathBuf::from(xdg_data_home).join(app_name);
@@ -180,7 +180,7 @@ impl ApplicationSupport {
         }
         #[cfg(target_os = "ios")]
         {
-            Self::get() 
+            Self::get()
         }
         #[cfg(target_os = "linux")]
         {
@@ -234,7 +234,7 @@ impl ApplicationSupport {
 
     #[cfg(target_os = "linux")]
     fn get_linux_with_app_name(app_name: &str) -> Option<PathBuf> {
-       
+
         if let Ok(xdg_data_home) = env::var("XDG_DATA_HOME") {
             let path = PathBuf::from(xdg_data_home).join(app_name);
             if let Ok(()) = fs::create_dir_all(&path) {

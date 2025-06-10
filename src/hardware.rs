@@ -9,9 +9,16 @@ mod photo_picker;
 mod safe_area;
 
 #[cfg(target_os = "android")]
+<<<<<<< HEAD
 use jni::{JNIEnv, objects::JObject};
 
 use std::sync::mpsc::Sender;
+=======
+use jni;
+
+use std::sync::mpsc::Sender;
+
+>>>>>>> origin/master
 pub use cache::Cache;
 pub use clipboard::Clipboard;
 pub use camera::{Camera, CameraError};
@@ -39,7 +46,11 @@ impl Context {
             clipboard: Clipboard::new(),
             share: Share::new(),
             app_support: ApplicationSupport,
+<<<<<<< HEAD
             cloud: CloudStorage,  // Fixed: removed ::default() call
+=======
+            cloud: CloudStorage::default(),
+>>>>>>> origin/master
             photo_picker: PhotoPicker,
         }
     }
@@ -48,29 +59,46 @@ impl Context {
         Camera::new()
     }
 
+<<<<<<< HEAD
     pub fn get() -> String {
         Clipboard::get()
     }
 
     pub fn set(text: String) {
+=======
+    pub fn paste(&self) -> String {
+        Clipboard::get()
+    }
+
+    pub fn copy(&self, text: String) {
+>>>>>>> origin/master
         Clipboard::set(text);
     }
 
     pub fn share(&self, text: &str) {
         #[cfg(target_os = "ios")]
         {
+<<<<<<< HEAD
             self.share.share(text);
         }
+=======
+            Share::share(text);
+        }
+
+>>>>>>> origin/master
         #[cfg(target_os = "android")]
         {
             self.share.share(text);
         }
+<<<<<<< HEAD
         #[cfg(not(any(target_os = "ios", target_os = "android")))]
         {
             // Explicitly use the parameter to avoid unused variable warning
             let _ = text;
             // Could log or handle unsupported platform here
         }
+=======
+>>>>>>> origin/master
     }
 
     pub fn get_app_support_path(&self) -> Option<std::path::PathBuf> {
@@ -151,15 +179,27 @@ impl Context {
 
     #[cfg(target_os = "android")]
     pub fn initialize(env: &mut JNIEnv, context: JObject) -> Result<(), jni::errors::Error> {
+<<<<<<< HEAD
         Clipboard::initialize(env, context)?;
 
         Share::initialize().map_err(|_e| {
             jni::errors::Error::JavaException
+=======
+
+        Clipboard::initialize(env, context)?;
+
+        Share::initialize().map_err(|e| {
+            jni::errors::Error::JavaException // Convert the error appropriately
+>>>>>>> origin/master
         })?;
 
         if let Ok(vm) = unsafe { jni::JavaVM::from_raw(env.get_java_vm()?.get_java_vm_pointer()) } {
             if let Err(e) = CloudStorage::init_java_vm(vm) {
                 eprintln!("Warning: Failed to initialize CloudStorage JavaVM: {}", e);
+<<<<<<< HEAD
+=======
+                // Don't fail the entire initialization if cloud storage fails
+>>>>>>> origin/master
             }
         }
 

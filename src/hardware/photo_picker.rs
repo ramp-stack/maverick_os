@@ -1,14 +1,26 @@
 use std::sync::mpsc::Sender;
 
+<<<<<<< HEAD
+=======
+#[cfg(any(target_os = "ios", target_os = "macos"))]
+use objc2::{msg_send, class};
+#[cfg(any(target_os = "ios", target_os = "macos"))]
+use objc2::runtime::{AnyObject, AnyClass};
+>>>>>>> origin/master
 #[cfg(target_os = "ios")]
 use block::{ConcreteBlock, RcBlock};
 #[cfg(target_os = "ios")]
 use dispatch2;
 #[cfg(target_os = "ios")]
 use objc2::{
+<<<<<<< HEAD
     class, msg_send, sel,
     rc::autoreleasepool,
     runtime::{AnyClass, AnyObject, ClassBuilder, Sel},
+=======
+    sel, rc::autoreleasepool,
+    runtime::{ClassBuilder, Sel},
+>>>>>>> origin/master
 };
 #[cfg(target_os = "ios")]
 use objc2_foundation::NSArray;
@@ -21,6 +33,7 @@ use std::ffi::c_void;
 #[cfg(target_os = "ios")]
 use std::ffi::{CStr, CString};
 
+<<<<<<< HEAD
 #[cfg(any(target_os = "linux", target_os = "windows"))]
 use std::process::Command;
 #[cfg(any(target_os = "linux", target_os = "windows"))]
@@ -29,6 +42,16 @@ use std::path::Path;
 use std::fs;
 #[cfg(any(target_os = "linux", target_os = "windows"))]
 use std::thread;
+=======
+#[cfg(target_os = "macos")]
+use objc2_foundation::{NSString, NSArray, NSObject};
+#[cfg(target_os = "macos")]
+use std::path::PathBuf;
+#[cfg(target_os = "macos")]
+use std::fs;
+use std::f64::consts::{FRAC_PI_2, PI};
+use objc2::rc::{Retained, autoreleasepool};
+>>>>>>> origin/master
 
 #[derive(Clone)]
 pub struct PhotoPicker;
@@ -44,6 +67,7 @@ unsafe impl Sync for SenderPtr {}
 
 impl PhotoPicker {
     #[cfg(target_os = "macos")]
+<<<<<<< HEAD
     pub fn open(_sender: Sender<(Vec<u8>, ImageOrientation)>) {
         // TODO: Implement macOS native file picker
     }
@@ -189,6 +213,70 @@ impl PhotoPicker {
             ImageOrientation::Up
         }
     }
+=======
+    pub fn open(sender: Sender<(Vec<u8>, ImageOrientation)>) {
+        dispatch2::DispatchQueue::main().exec_async(move || {
+            autoreleasepool(|_| unsafe {
+
+                let cls: *const AnyClass = class!(NSOpenPanel);
+                if cls.is_null() {
+                    eprintln!("NSOpenPanel class not found");
+                    // let _ = sender.send((Vec::new(), ImageOrientation::Up));
+                    return;
+                }
+
+                let panel: *mut AnyObject = msg_send![cls, openPanel];
+                if panel.is_null() {
+                    eprintln!("Failed to create NSOpenPanel");
+                    // let _ = sender.send((Vec::new(), ImageOrientation::Up));
+                    return;
+                }
+
+                let () = msg_send![panel, setCanChooseFiles: true];
+                let () = msg_send![panel, setAllowsMultipleSelection: false];
+                let () = msg_send![panel, setCanChooseDirectories: false];
+
+                let png_str: Retained<NSString> = NSString::from_str("png");
+                let file_types: Retained<NSArray<NSString>> = NSArray::from_slice(&[png_str.as_ref()]);
+                let () = msg_send![panel, setAllowedFileTypes: &*file_types];
+
+                const NS_MODAL_RESPONSE_OK: i64 = 1;
+                let response: i64 = msg_send![panel, runModal];
+                if response != NS_MODAL_RESPONSE_OK {
+                    // let _ = sender.send((Vec::new(), ImageOrientation::Up));
+                    return;
+                }
+
+                let url: *mut AnyObject = msg_send![panel, URL];
+                if url.is_null() {
+                    eprintln!("URL was null");
+                    // let _ = sender.send((Vec::new(), ImageOrientation::Up));
+                    return;
+                }
+
+                let nsstring: *mut NSString = msg_send![url, path];
+                if nsstring.is_null() {
+                    eprintln!("Path string was null");
+                    // let _ = sender.send((Vec::new(), ImageOrientation::Up));
+                    return;
+                }
+
+                let rust_path = (*nsstring).to_string();
+                let path = PathBuf::from(rust_path);
+
+                match fs::read(&path) {
+                    Ok(png_data) => {sender.send((png_data, ImageOrientation::Up));},
+                    Err(err) => eprintln!("Failed to read file: {err}")
+                }
+            });
+        });
+    }
+
+    #[cfg(target_os = "linux")]
+    pub fn open(_sender: Sender<(Vec<u8>, ImageOrientation)>) {}
+    #[cfg(target_os = "android")]
+    pub fn open(_sender: Sender<(Vec<u8>, ImageOrientation)>) {}
+>>>>>>> origin/master
 
     #[cfg(target_os = "ios")]
     pub fn open(sender: Sender<(Vec<u8>, ImageOrientation)>) {
@@ -198,6 +286,10 @@ impl PhotoPicker {
         let sender_ptr = SenderPtr(Box::into_raw(sender_box) as usize);
 
         dispatch2::DispatchQueue::main().exec_async(move || {
+<<<<<<< HEAD
+=======
+            // Now we cast it back into a raw pointer safely
+>>>>>>> origin/master
             let sender_ptr = sender_ptr.0 as *mut c_void;
             println!("Started dispatcher");
             autoreleasepool(|_| unsafe {
@@ -290,6 +382,10 @@ fn create_photo_picker_delegate(sender_ptr: *mut c_void) -> *mut AnyObject {
                     let block = ConcreteBlock::new(move |image_obj: *mut AnyObject, _error: *mut AnyObject| {
                         let (data, orientation) = if !image_obj.is_null() {
                             let orientation: i64 = unsafe { msg_send![image_obj, imageOrientation] };
+<<<<<<< HEAD
+=======
+                            // let image_obj = rotated_from(orientation, image_obj);
+>>>>>>> origin/master
 
                             let symbol_name = CString::new("UIImagePNGRepresentation").unwrap();
                             let func_ptr = libc::dlsym(libc::RTLD_DEFAULT, symbol_name.as_ptr());
@@ -311,7 +407,11 @@ fn create_photo_picker_delegate(sender_ptr: *mut c_void) -> *mut AnyObject {
                             (Vec::new(), 0)
                         };
 
+<<<<<<< HEAD
                         let _ = sender_box.send((data, ImageOrientation::from_ios_value(orientation)));
+=======
+                        let _ = sender_box.send((data, ImageOrientation::get(orientation)));
+>>>>>>> origin/master
                     });
 
                     let rc_block: RcBlock<(*mut AnyObject, *mut AnyObject), ()> = block.copy();
@@ -358,6 +458,7 @@ pub enum ImageOrientation {
 }
 
 impl ImageOrientation {
+<<<<<<< HEAD
     /// Convert iOS UIImageOrientation value to ImageOrientation enum
     pub fn from_ios_value(orientation: i64) -> Self {
         match orientation {
@@ -371,10 +472,25 @@ impl ImageOrientation {
             7 => ImageOrientation::RightMirrored,
             _ => ImageOrientation::Up,
         }
+=======
+    fn get(orientation: i64) -> Self {
+        match orientation {
+            0 => return ImageOrientation::Up,
+            1 => return ImageOrientation::Down,
+            2 => return ImageOrientation::Left,
+            3 => return ImageOrientation::Right,
+            4 => return ImageOrientation::UpMirrored,
+            5 => return ImageOrientation::DownMirrored,
+            6 => return ImageOrientation::LeftMirrored,
+            7 => return ImageOrientation::RightMirrored,
+            _ => return ImageOrientation::Up,
+        };
+>>>>>>> origin/master
     }
 
     pub fn apply_to(&self, image: image::DynamicImage) -> image::DynamicImage {
         match self {
+<<<<<<< HEAD
             ImageOrientation::Up => image,
             ImageOrientation::Down => image.rotate180(),
             ImageOrientation::Left => image.rotate270(),
@@ -386,3 +502,16 @@ impl ImageOrientation {
         }
     }
 }
+=======
+            ImageOrientation::Up => return image,
+            ImageOrientation::Down => return image.rotate180(),
+            ImageOrientation::Left => return image.rotate270(),
+            ImageOrientation::Right => return image.rotate90(),
+            ImageOrientation::UpMirrored => return image.fliph(),
+            ImageOrientation::DownMirrored => return image.fliph().rotate180(),
+            ImageOrientation::LeftMirrored => return image.fliph().rotate90(),
+            ImageOrientation::RightMirrored => return image.fliph().rotate270()
+        };
+    }
+}
+>>>>>>> origin/master

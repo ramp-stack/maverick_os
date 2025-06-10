@@ -1,6 +1,10 @@
 use std::time::Duration;
 
+<<<<<<< HEAD
 use crate::runtime::{Channel, Service, ServiceContext};
+=======
+use crate::runtime::{self, Channel, Service, ServiceContext};
+>>>>>>> origin/master
 use crate::hardware;
 
 use air::orange_name::{OrangeSecret, OrangeResolver, OrangeName};
@@ -25,11 +29,20 @@ impl AirService {
         let res = self.purser.send(&mut self.resolver, &endpoint, c.build_request()).await?;
         Ok(c.process_response(&mut self.resolver, res).await?.create_public())
     }
+<<<<<<< HEAD
     pub async fn update_public(&mut self, id: Id, item: PublicItem) -> Result<Id, Error> {
         let endpoint = self.resolver.endpoint(&self.secret.name(), None, None).await?;
         let c = Client::update_public(&mut self.resolver, &self.secret, id, item).await?;
         let res = self.purser.send(&mut self.resolver, &endpoint, c.build_request()).await?;
         Ok(c.process_response(&mut self.resolver, res).await?.create_public())
+=======
+    pub async fn update_public(&mut self, id: Id, item: PublicItem) -> Result<(), Error> {
+        let endpoint = self.resolver.endpoint(&self.secret.name(), None, None).await?;
+        let c = Client::update_public(&mut self.resolver, &self.secret, id, item).await?;
+        let res = self.purser.send(&mut self.resolver, &endpoint, c.build_request()).await?;
+        c.process_response(&mut self.resolver, res).await?.assert_empty();
+        Ok(())
+>>>>>>> origin/master
     }
     pub async fn read_public(&mut self, filter: Filter) -> Result<Vec<(Id, OrangeName, PublicItem, DateTime)>, Error> {
         let endpoint = self.resolver.endpoint(&self.secret.name(), None, None).await?;
@@ -58,8 +71,13 @@ impl Service for AirService {
     }
 
     ///This service does not have any repeating tasks and accepts no messages from main
+<<<<<<< HEAD
     async fn run(&mut self, _ctx: &mut ServiceContext, _channel: &mut Channel) -> Duration {
         Duration::from_secs(10000)
+=======
+    async fn run(&mut self, _ctx: &mut ServiceContext, _channel: &mut Channel) -> Result<Duration, runtime::Error> {
+        Ok(Duration::from_secs(10000))
+>>>>>>> origin/master
     }
 }
 

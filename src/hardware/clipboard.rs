@@ -22,6 +22,7 @@ pub struct Clipboard {
     #[cfg(target_os = "android")]
     context: GlobalRef,
 }
+<<<<<<< HEAD
 
 // Implement Default only for non-Android platforms where new() takes no parameters
 #[cfg(not(target_os = "android"))]
@@ -30,6 +31,8 @@ impl Default for Clipboard {
         Self::new()
     }
 }
+=======
+>>>>>>> origin/master
 
 impl Clipboard {
     #[cfg(target_os = "android")]
@@ -136,6 +139,132 @@ impl Clipboard {
     #[inline]
     pub fn set_content(&self, text: String) {
         let _ = cli_clipboard::set_contents(text);
+<<<<<<< HEAD
+=======
+    }
+
+    #[cfg(not(any(target_os = "ios", target_os = "macos", target_os = "android")))]
+    #[inline]
+    pub fn get_content(&self) -> String {
+        String::new()
+    }
+
+    #[cfg(not(any(target_os = "ios", target_os = "macos", target_os = "android")))]
+    #[inline]
+    pub fn set_content(&self, _text: String) {
+        // No-op for unsupported platforms
+    }
+
+    #[cfg(target_os = "android")]
+    #[inline]
+    pub fn get_content(&self) -> Result<String, jni::errors::Error> {
+        let mut env = self.vm.attach_current_thread()?;
+        let context = self.context.as_obj();
+
+        let clipboard_string = env.new_string("clipboard")?;
+        let clipboard_service = env
+            .call_method(
+                context,
+                "getSystemService",
+                "(Ljava/lang/String;)Ljava/lang/Object;",
+                &[(&clipboard_string).into()],
+            )?
+            .l()?;
+
+        let clipboard_manager = JObject::from(clipboard_service);
+
+        // Get primary clip
+        let primary_clip = env.call_method(
+            clipboard_manager,
+            "getPrimaryClip",
+            "()Landroid/content/ClipData;",
+            &[],
+        )?.l()?;
+
+        if primary_clip.is_null() {
+            return Ok(String::new());
+        }
+
+        // Get item count
+        let item_count = env.call_method(
+            &primary_clip,
+            "getItemCount",
+            "()I",
+            &[],
+        )?.i()?;
+
+        if item_count == 0 {
+            return Ok(String::new());
+        }
+
+        // Get first item
+        let clip_item = env.call_method(
+            primary_clip,
+            "getItemAt",
+            "(I)Landroid/content/ClipData$Item;",
+            &[0i32.into()],
+        )?.l()?;
+
+        // Get text from item
+        let text = env.call_method(
+            clip_item,
+            "getText",
+            "()Ljava/lang/CharSequence;",
+            &[],
+        )?.l()?;
+
+        if text.is_null() {
+            return Ok(String::new());
+        }
+
+        let java_string = env.call_method(
+            text,
+            "toString",
+            "()Ljava/lang/String;",
+            &[],
+        )?.l()?;
+
+        let rust_string = env.get_string(&java_string.into())?.into();
+        Ok(rust_string)
+    }
+
+    #[cfg(target_os = "android")]
+    #[inline]
+    pub fn set_content(&self, text: String) -> Result<(), jni::errors::Error> {
+        let mut env = self.vm.attach_current_thread()?;
+        let context = self.context.as_obj();
+
+        let clipboard_string = env.new_string("clipboard")?;
+        let clipboard_service = env
+            .call_method(
+                context,
+                "getSystemService",
+                "(Ljava/lang/String;)Ljava/lang/Object;",
+                &[(&clipboard_string).into()],
+            )?
+            .l()?;
+
+        let clipboard_manager = JObject::from(clipboard_service);
+
+        let clip_data_class = env.find_class("android/content/ClipData")?;
+        let label = env.new_string("label")?;
+        let text_string = env.new_string(&text)?;
+        let clip_data = env.call_static_method(
+            clip_data_class,
+            "newPlainText",
+            "(Ljava/lang/CharSequence;Ljava/lang/CharSequence;)Landroid/content/ClipData;",
+            &[(&JObject::from(label)).into(), (&JObject::from(text_string)).into()],
+        )?.l()?;
+
+        env.call_method(
+            clipboard_manager,
+            "setPrimaryClip",
+            "(Landroid/content/ClipData;)V",
+            &[(&clip_data).into()],
+        )?;
+
+        Ok(())
+>>>>>>> origin/master
     }
 
     #[cfg(not(any(target_os = "ios", target_os = "macos", target_os = "android")))]
