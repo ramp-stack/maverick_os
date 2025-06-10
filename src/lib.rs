@@ -88,6 +88,13 @@ impl<A: Application + 'static> MaverickOS<A> {
 
       //let i = "Hell".to_string();
 
+        let h = runtime.context().spawn(async || {
+            println!("Oneshot!");
+            "String".to_string()
+        });
+
+
+
       //runtime.context().spawn((
       //    async |mut ctx: runtime::ThreadContext| {
       //        loop {

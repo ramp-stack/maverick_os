@@ -21,7 +21,7 @@ use super::{ThreadRequest, ThreadResponse};
 
 ///_Channel is the base channel that is used for between thread communications(Restricted to
 ///Strings at least on wasm)
-pub struct _Channel(Sender<String>, Receiver<String>);
+pub struct _Channel();
 impl _Channel {
     fn new() -> (Self, Self) {
         let (a, b) = channel();
@@ -43,25 +43,7 @@ pub trait Channel<S, R>: Send{
     fn receive(&mut self) -> Option<R>;
 }
 
-pub struct SerdeChannel<S, R>(_Channel, PhantomData<S>, PhantomData<R>);
-impl<S, R> SerdeChannel<S, R> {pub fn new() -> (Self, SerdeChannel<R, S>) {
-    let (a, b) = _Channel::new();
-    (SerdeChannel(a, PhantomData::<S>, PhantomData::<R>), SerdeChannel(b, PhantomData::<R>, PhantomData::<S>))
-}}
-unsafe impl<S, R> Send for SerdeChannel<S, R> {}
 
-impl< 
-    S: Serialize + for<'a> Deserialize <'a>,
-    R: Serialize + for<'a> Deserialize <'a>,
-> Channel<S, R> for SerdeChannel<S, R> {
-    fn send(&mut self, payload: S) {
-        self.0.send(serde_json::to_string(&payload).unwrap());
-    }
-
-    fn receive(&mut self) -> Option<R> {
-        self.0.receive().map(|r| serde_json::from_str(&r).unwrap())
-    }
-}
 
 //  pub struct Channel<S, R> (pub Box<dyn Channel<ThreadResponse, ThreadRequest>>, pub PhantomData<S>, pub PhantomData<R>);
 //  unsafe impl<S, R> Send for Channel<S, R> {}

@@ -23,8 +23,25 @@ pub use async_trait::async_trait;
 use crate::State;
 use crate::hardware;
 
-mod channel;
-pub use channel::{Channel, SerdeChannel};
+pub struct Channel<S, R>(Sender<String>, Receiver<String>, PhantomData<fn() -> S>, PhantomData<fn() -> R>);
+impl< 
+    S: Serialize + for<'a> Deserialize <'a>,
+    R: Serialize + for<'a> Deserialize <'a>,
+> Channel<S, R> {
+    pub fn new() -> (Self, Channel<R, S>) {
+        let (a, b) = channel();
+        let (c, d) = channel();
+        (Channel(a, d, PhantomData::<fn() -> S>, PhantomData::<fn() -> R>), Channel(c, b, PhantomData::<fn() -> R>, PhantomData::<fn() -> S>))
+    }
+
+    fn send(&mut self, payload: S) {
+        let _ = self.0.send(serde_json::to_string(&payload).unwrap());
+    }
+
+    fn receive(&mut self) -> Option<R> {
+        self.1.try_recv().ok().map(|r| serde_json::from_str(&r).unwrap())
+    }
+}
 
 pub mod thread;
 pub use thread::{_Thread, Thread, ThreadRequest, ThreadResponse, ThreadChannelR, Task};
@@ -77,13 +94,13 @@ impl Context {
     pub fn spawn<
         S: Serialize + for<'a> Deserialize <'a> + Send + 'static,
         R: Serialize + for<'a> Deserialize <'a> + Send + 'static,
-        //Fut: Future<Output = Result<Option<Duration>, Error>> + Send,
-        T: Task<S, R, Pin<Box<dyn Future<Output = Result<Option<Duration>, Error>> + Send>>> + 'static
+        X: 'static,
+        T: Task<S, R, X> + 'static
     >(&self, task: T) -> Handle<S> {
         let id = task.id();
-        let (task, mut callback) = task.get();
+        let (thread, mut callback) = task.get();
         self.sender.send(RuntimeRequest::Spawn(
-            Box::new(Thread(Box::new(task))), 
+            thread, 
             Box::new(move |state: &mut State, r: String| {
                 callback(state, serde_json::from_str(&r).unwrap())
             })
@@ -161,7 +178,7 @@ impl Runtime {
     fn spawn(&mut self, thread: Box<dyn _Thread>, callback: Callback<String>) -> bool {
         let id = thread.id();
         if let Entry::Vacant(e) = self.threads.entry(id) {
-            let (a, b) = SerdeChannel::new();
+            let (a, b) = Channel::new();
             let handle = self.runtime.spawn(thread.run(self.hardware.clone(), b));
             e.insert((a, callback, handle));
             true

@@ -17,15 +17,13 @@ use tokio::task::JoinHandle;
 use serde::{Serialize, Deserialize};
 use rand::Rng;
 
-use crate::runtime::channel::{Channel, SerdeChannel};
 use crate::runtime;
 
 use crate::{State, hardware};
-use super::{Callback, Id, Error};
+use super::{Callback, Id, Error, Channel};
 
-//pub type TaskTick<'b, S, R, Fut> = Box<dyn FnMut(&mut Context<S, R>) -> Fut + Send>;
-pub type ThreadChannel = SerdeChannel<ThreadResponse, ThreadRequest>;
-pub type ThreadChannelR = SerdeChannel<ThreadRequest, ThreadResponse>;
+pub type ThreadChannel = Channel<ThreadResponse, ThreadRequest>;
+pub type ThreadChannelR = Channel<ThreadRequest, ThreadResponse>;
 
 #[derive(Serialize, Deserialize, Debug)]
 pub enum ThreadRequest {
@@ -47,7 +45,32 @@ pub trait _Thread: Send {
     fn id(&self) -> Id {rand::rng().random()} 
 }
 
+pub trait Task<S, R, X> {
+    fn id(&self) -> Id {rand::rng().random()} 
+
+    fn get(self) -> (Box<dyn _Thread>, Callback<S>);
+}
+
+trait AsyncFnMutSend<I>: FnMut(I) -> Self::Fut {
+    type Fut: Future<Output = <Self as AsyncFnMutSend::<I>>::Out> + Send;
+    type Out;
+}
+impl<I, F: FnMut(I) -> Fut + Send, Fut: Future + Send> AsyncFnMutSend<I> for F {
+    type Fut = Fut;
+    type Out = Fut::Output;
+}
+
+pub struct Thread<T>(
+    T
+);
+impl<T> Thread<T> {
+    pub fn new(t: T) -> Self {Thread(t)}
+}
+
+//SERVICE THREAD
+
 type Res = Result<Option<Duration>, Error>;
+type TaskTick<S, R> = Box<dyn for<'b> FnMut(&'b mut Context<S, R>) -> Pin<Box<dyn Future<Output = Res> + Send + 'b>> + Send>;
 
 pub struct Context<S, R> {
     pub hardware: hardware::Context,
@@ -72,15 +95,12 @@ impl<S, R> Context<S, R> {
     }
 }
 
-pub struct Thread<S, R>(
-    pub Box<dyn for<'a> FnMut(&'a mut Context<S, R>) -> Pin<Box<dyn Future<Output = Res> + Send + 'a>> + Send>,
-);
+
 #[async_trait::async_trait]
 impl<
     S: Serialize + for<'a> Deserialize <'a> + Send + 'static,
     R: Serialize + for<'a> Deserialize <'a> + Send + 'static,
-    //Fut: Future<Output = Res> + Send + 'b,
-> _Thread for Thread<S, R> {
+> _Thread for Thread<TaskTick<S, R>> {
     async fn run(mut self: Box<Self>, hardware: hardware::Context, mut channel: ThreadChannel) {
         let mut ctx = Context{hardware, send: VecDeque::new(), receive: VecDeque::new()};
         let mut error_count = 0;
@@ -118,37 +138,153 @@ impl<
     }
 }
 
-pub trait Task<S, R, Fut> {
-    fn id(&self) -> Id {rand::rng().random()} 
-
-    //fn get(self) -> (Box<dyn FnMut(&mut Context<S, R>) -> Fut + Send>, Callback<S>);
-    fn get(self) -> (Box<dyn for<'b> FnMut(&'b mut Context<S, R>) -> Pin<Box<dyn Future<Output = Res> + Send + 'b>> + Send>, Callback<S>);
+impl<
+    S: Serialize + for<'a> Deserialize <'a> + Send + 'static,
+    R: Serialize + for<'a> Deserialize <'a> + Send + 'static,
+    F: for<'b> AsyncFnMutSend<&'b mut Context<S, R>, Out = Res> + Send + 'static
+> Task<S, R, TaskTick<S, R>> for F {
+    fn get(mut self) -> (Box<dyn _Thread>, Callback<S>){
+        (Box::new(Thread::<TaskTick<S, R>>::new(Box::new(move |ctx: &mut Context<S, R>| Box::pin(self(ctx))))), Box::new(|_: &mut State, _: S| {}))
+    }
 }
 
-trait AsyncFnMutSend<I>: FnMut(I) -> Self::Fut {
-    type Fut: Future<Output = <Self as AsyncFnMutSend::<I>>::Outpu> + Send;
-    type Outpu;
-}
+//ONESHOT
 
-impl<I, F, Fut> AsyncFnMutSend<I> for F
-where
-    F: FnMut(I) -> Fut + Send,
-    Fut: Future + Send,
-{
-    type Fut = Fut;
-    type Outpu = Fut::Output;
+type TaskOneshot<S> = Box<dyn FnOnce() -> Pin<Box<dyn Future<Output = S> + Send>> + Send>;
+
+#[async_trait::async_trait]
+impl<
+    S: Serialize + for<'a> Deserialize <'a> + Send + 'static,
+> _Thread for Thread<TaskOneshot<S>> {
+    async fn run(mut self: Box<Self>, hardware: hardware::Context, mut channel: ThreadChannel) {
+        let s = (self.0)().await;
+        channel.send(ThreadResponse::Response(0, serde_json::to_string(&s).unwrap()));
+    }
 }
 
 impl<
     S: Serialize + for<'a> Deserialize <'a> + Send + 'static,
-    R: Serialize + for<'a> Deserialize <'a> + Send + 'static,
-    //Fut: Future<Output = Res> + Send + 'b,
-    F: for<'b> AsyncFnMutSend<&'b mut Context<S, R>, Outpu = Res> + Send + 'static
-> Task<S, R, Pin<Box<dyn Future<Output = Res> + Send>>> for F {
-    fn get(mut self) -> (Box<dyn for<'b> FnMut(&'b mut Context<S, R>) -> Pin<Box<dyn Future<Output = Res> + Send + 'b>> + Send>, Callback<S>){
-        (Box::new(move |ctx: &mut Context<S, R>| {Box::pin(self(ctx))}), Box::new(|_: &mut State, _: S| {}))
+
+    Fut: Future<Output = S> + Send + 'static,
+    F: FnOnce() -> Fut + Send + 'static,
+> Task<S, (), TaskOneshot<S>> for F {
+    fn get(mut self) -> (Box<dyn _Thread>, Callback<S>){
+        (Box::new(Thread::<TaskOneshot<S>>::new(Box::new(move || Box::pin(self())))), Box::new(|_: &mut State, _: S| {}))
     }
 }
+
+//  impl<
+//      S: Serialize + for<'a> Deserialize <'a> + Send + 'static,
+//      R: Serialize + for<'a> Deserialize <'a> + Send + 'static,
+//      F: for<'b> AsyncFnMutSend<&'b mut Context<S, R>, Out = Res> + Send + 'static,
+//      CF: FnMut(&mut State, S) + 'static
+//  > Task<S, R> for (F, CF) {
+//      fn get(mut self) -> (TaskTick<S, R>, Callback<S>){
+//          (Box::new(move |ctx: &mut Context<S, R>| Box::pin((self.0)(ctx))), Box::new(self.1))
+//      }
+//  }
+
+//  impl<
+//      S: Serialize + for<'a> Deserialize <'a> + Send + 'static,
+//      R: Serialize + for<'a> Deserialize <'a> + Send + 'static,
+//      //F: for<'b> AsyncFnMutSend<&'b mut Context<S, R>, Out = Res> + Send + 'static
+
+//      Fut: Future<Output = S> + Send + 'static,
+//      F: FnMut() -> Fut + Send + 'static,
+//  > Task<S, R> for F {
+//      fn get(mut self) -> (Box<dyn _Thread>, Callback<S>){
+//          (Box::new(Thread::<S, R, TaskTick<S, R>>::new(Box::new(move |ctx: &mut Context<S, R>| {
+//              Box::pin(async move {self().await; Ok(None)})
+//          }))), Box::new(|_: &mut State, _: S| {}))
+//      }
+//  }
+
+//  impl<
+//      S: Serialize + for<'a> Deserialize <'a> + Send + 'static,
+//      Fut: Future<Output = S> + Send + 'static,
+//      F: FnOnce() -> Fut + Send + 'static,
+//  > Task<S, ()> for F {
+//      fn get(mut self) -> (TaskTick<S, ()>, Callback<S>){
+//          (Box::new(move |ctx: &mut Context<S, ()>| Box::pin(async move {
+//              ctx.callback(self().await);
+//              Ok(None)
+//          })), Box::new(|_: &mut State, _: S| {}))
+//      }
+//  }
+
+//  fn test<'c, 
+//      S: Serialize + for<'a> Deserialize <'a> + Send + 'static,
+//      R: Serialize + for<'a> Deserialize <'a> + Send + 'static,
+//      F: for<'b> AsyncFnMutSend<&'b mut Context<S, R>, Out = Res> + Send + 'static
+//  >(f: &'c mut F, ctx: &'c mut Context<S, R>) -> Pin<Box<dyn Future<Output = Res> + Send + 'c>> {
+//       Box::pin(async move {f(ctx).await})
+//  }
+
+//  impl<
+//      S: Serialize + for<'a> Deserialize <'a> + Send + 'static,
+//      R: Serialize + for<'a> Deserialize <'a> + Send + 'static,
+//      F: for<'b> AsyncFnMutSend<&'b mut Context<S, R>, Out = Res> + Send + 'static,
+//      CF: FnMut(&mut State, S) -> () + Send + 'static
+//  > Task<S, R> for (F, CF) {
+//      fn get(mut self) -> (Box<dyn for<'b> FnMut(&'b mut Context<S, R>) -> Pin<Box<dyn Future<Output = Res> + Send + 'b>> + Send>, Callback<S>){
+//          (Box::new(move |ctx: &mut Context<S, R>| {Box::pin(self.0(ctx))}), Box::new(self.1))
+//      }
+//  }
+//
+
+
+
+
+
+//  impl<
+//      S: Serialize + for<'a> Deserialize <'a> + Send + 'static,
+//      Fut: Future<Output = S> + Send + 'static,
+//      F: FnMut() -> Fut + Send + 'static,
+//      //F: for<'b> AsyncFnMutSend<&'b mut Context<S, ()>, Out = S> + Send + 'static,
+//      CF: FnMut(&mut State, S) + Send + 'static
+//  > Task<S, ()> for (F, CF) {
+//      fn get(mut self) -> (TaskTick<S, ()>, Callback<S>){
+//          
+//          //let test: Box<dyn for<'b> FnMut(&'b mut Context<S, ()>) -> Pin<Box<dyn Future<Output = S> + Send + 'b>>> = Box::new(move |ctx: &mut Context<S, ()>| {Box::pin((self.0)())});
+//          //let mut test: Box<dyn FnMut() -> Pin<Box<dyn Future<Output = S> + Send>> + Send> = Box::new(move || {Box::pin((self.0)())});
+//        //let test2: Box<dyn FnOnce(&mut Context<S, ()>) -> Pin<Box<dyn Future<Output = Res> + Send>>> = Box::new(move |ctx: &mut Context<S, ()>| {
+//        //    let func = &mut self.0;
+//        //    Box::pin(async move {
+//        //        let val = func().await;
+//        //        Ok::<_, Error>(None::<Duration>)
+//        //    })
+//        //});
+//        //    (self.0)().await;
+//        //    Ok(None)
+//        //})});
+
+//          (Box::new(move |ctx: &mut Context<S, ()>, _: []| {
+//              Box::pin(async {
+//                  //let test = (self.0)().await;
+//                  Ok(None)
+//              })
+//          }), Box::new(self.1))
+
+//          //let test: Box<dyn for<'b> AsyncFnMutSend<&'b mut Context<S, ()>, Out = S, Output = Pin<Box<dyn Future<Output = S> + Send + 'b>>> + Send + 'static> = Box::new(self.0);
+//        //let mut closure: Box<dyn for<'a> FnMut(&'a mut Context<S, ()>, [&'a &'max (); 0]) -> Pin<Box<dyn Future<Output = Res> + Send + 'a>> + Send> = Box::new(move |ctx: &mut Context<S, ()>, _: [&'a &'max (); 0]| {
+//        //    Box::pin(async {
+//        //        (self.0)().await; 
+//        //        Ok(None) 
+//        //    })
+//        //});
+//        //let test: Box<dyn for<'b> FnMut(&'b mut Context<S, ()>) -> Pin<Box<dyn Future<Output = Res> + Send + 'b>> + Send> = Box::new(
+//        //    move |ctx: &mut Context<S, ()>| {Box::pin(closure(ctx))}
+//        //);
+//        //let (task, _) = (|ctx: &mut Context<S, ()>| {let func = &mut self.0; async move {
+//        //    let val = func(ctx).await;
+//        //    ctx.callback(val);
+//        //    Ok(None)
+//        //}}).get();
+//        //(task, Box::new(self.1))
+//      }
+//  }
+
+//fn hr_bump<A, F: Fn(&mut A) -> &A>(f: F) -> F { f }
 
 //  impl<
 //      S: Serialize + for<'a> Deserialize <'a> + 'static,
@@ -159,135 +295,5 @@ impl<
 //  > Task<S, R, Fut> for (F, CF) {
 //      fn get(self) -> (TaskTick<S, R, Fut>, Callback<S>) {
 //          (Box::new(self.0), Box::new(self.1))
-//      }
-//  }
-
-
-//  impl<
-//      S: Serialize + for<'a> Deserialize <'a> + 'static,
-//      R: Serialize + for<'a> Deserialize <'a> + 'static,
-//      Fut: Future<Output = ()> + Send + 'static,
-//      F: FnOnce(ThreadContext, Box<dyn Channel<S, R>>) -> Fut + Send + 'static,
-//      CF: FnMut(&mut State, S) -> () + Send + 'static
-//  > From<(F, CF)> for Thread<S, R, Pin<Box<dyn Future<Output = ()> + Send>>> {
-//      fn from(f: (F, CF)) -> Self {
-//          Thread(Box::new(|ctx: ThreadContext, channel: ThreadChannel<S, R> | {Box::pin(async move {
-//              let mut channel = InlineChannel(channel);
-//              (f.0)(ctx, Box::new(channel)).await
-//          })}), Some(Box::new(f.1)))
-//      }
-//  }
-
-//  impl<
-//      S: Serialize + for<'a> Deserialize <'a> + 'static,
-//      R: Serialize + for<'a> Deserialize <'a> + 'static,
-//      Fut: Future<Output = Res> + Send + 'static,
-//      //Fut2: Future<Output = ()> + Send + 'static,
-//      T: Task<S, R, Fut> 
-//  > From<T> for Thread<S, R, Pin<Box<dyn Future<Output = Res> + Send>>> {
-//      fn from(f: F) -> Self {
-//          Thread(Box::new(|ctx: ThreadContext, channel: ThreadChannel<S, R> | {Box::pin(async move {
-//              let mut channel = InlineChannel(channel);
-//              f(ctx, Box::new(channel)).await
-//          })}), Some(Box::new(|_state: &mut State, _response: S| {})))
-//      }
-//  }
-
-
-
-
-
-
-//  impl<
-//      S: Serialize + for<'a> Deserialize <'a> + 'static,
-//      R: Serialize + for<'a> Deserialize <'a> + 'static,
-//      Fut: Future<Output = Res> + Send + 'static,
-//      //Fut2: Future<Output = ()> + Send + 'static,
-//      F: FnOnce(ThreadContext, Box<dyn Channel<S, R>>) -> Fut + Send + 'static
-//  > From<F> for Thread<S, R, Pin<Box<dyn Future<Output = Res> + Send>>> {
-//      fn from(f: F) -> Self {
-//          Thread(Box::new(|ctx: ThreadContext, channel: ThreadChannel<S, R> | {Box::pin(async move {
-//              let mut channel = InlineChannel(channel);
-//              f(ctx, Box::new(channel)).await
-//          })}), Some(Box::new(|_state: &mut State, _response: S| {})))
-//      }
-//  }
-
-
-
-//Validate works for service
-//Communication between threads needs to be handle between ctx/channel hybrid. await on ctx and get
-//response should be user interface
-
-
-//  pub struct VecDequeChannel<S, R>(Vec<S>, VecDeque<R>);
-//  impl<
-//      S: Serialize + for<'a> Deserialize <'a>,
-//      R: Serialize + for<'a> Deserialize <'a>,
-//  >Channel<S, R> for InlineChannel<S, R> {
-//      fn send(&mut self, payload: S) {
-//          self.0.send(ThreadResponse::Response(0, payload));
-//      }
-
-//      fn receive(&mut self) -> Option<R> {
-//          while let Some(r) = self.0.receive() {
-//              match r {
-//                  ThreadRequest::Request(i, r) => return Some(r),
-//                  _ => {}
-//              }
-//          }
-//          None
-//      }
-//  }
-
-//  pub struct InlineChannel<S, R>(ThreadChannel<S, R>);
-//  impl<
-//      S: Serialize + for<'a> Deserialize <'a>,
-//      R: Serialize + for<'a> Deserialize <'a>,
-//  >Channel<S, R> for InlineChannel<S, R> {
-//      fn send(&mut self, payload: S) {
-//          self.0.send(ThreadResponse::Response(0, payload));
-//      }
-
-//      fn receive(&mut self) -> Option<R> {
-//          while let Some(r) = self.0.receive() {
-//              match r {
-//                  ThreadRequest::Request(i, r) => return Some(r),
-//                  _ => {}
-//              }
-//          }
-//          None
-//      }
-//  }
-
-
-//  impl<
-//      S: Serialize + for<'a> Deserialize <'a> + 'static,
-//      R: Serialize + for<'a> Deserialize <'a> + 'static,
-//      Fut: Future<Output = ()> + Send + 'static,
-//      //Fut2: Future<Output = ()> + Send + 'static,
-//      F: FnOnce(ThreadContext, Box<dyn Channel<S, R>>) -> Fut + Send + 'static
-//  > From<F> for Thread<S, R, Pin<Box<dyn Future<Output = ()> + Send>>> {
-//      fn from(f: F) -> Self {
-//          Thread(Box::new(|ctx: ThreadContext, channel: ThreadChannel<S, R> | {Box::pin(async move {
-//              let mut channel = InlineChannel(channel);
-//              f(ctx, Box::new(channel)).await
-//          })}), Some(Box::new(|_state: &mut State, _response: S| {})))
-//      }
-//  }
-
-
-//  impl<
-//      S: Serialize + for<'a> Deserialize <'a> + 'static,
-//      R: Serialize + for<'a> Deserialize <'a> + 'static,
-//      Fut: Future<Output = ()> + Send + 'static,
-//      F: FnOnce(ThreadContext, Box<dyn Channel<S, R>>) -> Fut + Send + 'static,
-//      CF: FnMut(&mut State, S) -> () + Send + 'static
-//  > From<(F, CF)> for Thread<S, R, Pin<Box<dyn Future<Output = ()> + Send>>> {
-//      fn from(f: (F, CF)) -> Self {
-//          Thread(Box::new(|ctx: ThreadContext, channel: ThreadChannel<S, R> | {Box::pin(async move {
-//              let mut channel = InlineChannel(channel);
-//              (f.0)(ctx, Box::new(channel)).await
-//          })}), Some(Box::new(f.1)))
 //      }
 //  }
