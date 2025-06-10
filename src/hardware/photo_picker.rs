@@ -36,12 +36,11 @@ use std::fs;
 use std::thread;
 
 #[cfg(target_os = "macos")]
-use objc2_foundation::{NSString, NSArray, NSObject};
+use objc2_foundation::{NSString, NSArray};
 #[cfg(target_os = "macos")]
 use std::path::PathBuf;
 #[cfg(target_os = "macos")]
 use std::fs;
-use std::f64::consts::{FRAC_PI_2, PI};
 use objc2::rc::{Retained, autoreleasepool};
 
 #[derive(Clone)]

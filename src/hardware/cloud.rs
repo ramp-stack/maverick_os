@@ -1,4 +1,3 @@
-use std::ffi::{c_char, CStr};
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 use objc2_foundation::{NSString, NSAutoreleasePool};
 #[cfg(any(target_os = "macos", target_os = "ios"))]

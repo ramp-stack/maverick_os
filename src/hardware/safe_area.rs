@@ -39,6 +39,7 @@ pub fn get_safe_area_insets() -> (f32, f32, f32, f32) {
 pub fn get_safe_area_insets() -> (f32, f32, f32, f32) {
     (0.0, 0.0, 0.0, 0.0)
 }
+#[allow(dead_code)]
 pub struct SafeAreaInsets;
 
 impl SafeAreaInsets {
@@ -67,6 +68,7 @@ impl SafeAreaInsets {
     }
 
     #[cfg(not(target_os = "ios"))]
+    #[allow(dead_code)]
     pub fn get() -> (f32, f32, f32, f32) {
         (0.0, 0.0, 0.0, 0.0)
     }
