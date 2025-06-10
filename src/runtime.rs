@@ -44,7 +44,7 @@ impl<
 }
 
 pub mod thread;
-pub use thread::{_Thread, Thread, ThreadRequest, ThreadResponse, ThreadChannelR, Task};
+pub use thread::{Thread, ThreadRequest, ThreadResponse, ThreadChannelR, Task};
 
 pub type Callback<S> = Box<dyn FnMut(&mut State, S)>;
 
@@ -70,7 +70,7 @@ pub type Id = u64;
 
 pub enum RuntimeRequest {
     Request(Id, String),
-    Spawn(Box<dyn _Thread>, Callback<String>)
+    Spawn(Box<dyn Thread>, Callback<String>)
 }
 
 pub struct Handle<S>(Context, Id, PhantomData<S>);
@@ -96,7 +96,7 @@ impl Context {
         R: Serialize + for<'a> Deserialize <'a> + Send + 'static,
         X: 'static,
         T: Task<S, R, X> + 'static
-    >(&self, task: T) -> Handle<S> {
+    >(&self, task: T) -> Handle<R> {
         let id = task.id();
         let (thread, mut callback) = task.get();
         self.sender.send(RuntimeRequest::Spawn(
@@ -105,7 +105,7 @@ impl Context {
                 callback(state, serde_json::from_str(&r).unwrap())
             })
         )).unwrap();
-        Handle(self.clone(), id, PhantomData::<S>)
+        Handle(self.clone(), id, PhantomData::<R>)
     }
 
 
@@ -175,7 +175,7 @@ impl Runtime {
         }).collect();
     }
 
-    fn spawn(&mut self, thread: Box<dyn _Thread>, callback: Callback<String>) -> bool {
+    fn spawn(&mut self, thread: Box<dyn Thread>, callback: Callback<String>) -> bool {
         let id = thread.id();
         if let Entry::Vacant(e) = self.threads.entry(id) {
             let (a, b) = Channel::new();
