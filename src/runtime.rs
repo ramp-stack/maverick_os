@@ -26,8 +26,6 @@ pub trait Services {
 }
 
 pub type ServiceList = BTreeMap<TypeId, Box<dyn for<'a> FnOnce(&'a mut hardware::Context) -> Pin<Box<dyn Future<Output = Box<dyn Service>> + 'a>>>>;
-<<<<<<< HEAD
-=======
 
 pub struct Error(String, String);
 impl std::fmt::Display for Error {
@@ -39,7 +37,6 @@ impl std::fmt::Debug for Error {
 impl<E: std::error::Error> From<E> for Error {
     fn from(error: E) -> Error {Error(error.to_string(), format!("{:?}", error))}
 }
->>>>>>> origin/master
 
 //Lives on the active thread, Services can talk to each other through the runtime ctx which lives
 //on the active thread.
@@ -185,7 +182,7 @@ struct ActiveThread {
     context: ServiceContext,
     channel: Channel,
     channels: BTreeMap<u64, Channel>,
-    handles: BTreeMap<TypeId, (Channel, Instant, Duration)> 
+    handles: BTreeMap<TypeId, (Channel, Instant, Duration)>
 }
 
 impl ActiveThread {
