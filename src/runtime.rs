@@ -11,17 +11,17 @@ use std::pin::Pin;
 use std::any::Any;
 
 use downcast_rs::{impl_downcast, Downcast};
+pub use async_trait::async_trait;
 pub use tokio::time::Duration;
 use tokio::task::JoinHandle;
 use serde::{Serialize, Deserialize};
 use rand::Rng;
 
-const THREAD_TICK: u64 = 16;
-
-pub use async_trait::async_trait;
-
 use crate::State;
 use crate::hardware;
+
+pub mod thread;
+pub use thread::{Thread, ThreadRequest, ThreadResponse, ThreadChannelR, Task};
 
 pub struct Channel<S, R>(Sender<String>, Receiver<String>, PhantomData<fn() -> S>, PhantomData<fn() -> R>);
 impl< 
@@ -43,8 +43,6 @@ impl<
     }
 }
 
-pub mod thread;
-pub use thread::{Thread, ThreadRequest, ThreadResponse, ThreadChannelR, Task};
 
 pub type Callback<S> = Box<dyn FnMut(&mut State, S)>;
 
@@ -70,7 +68,7 @@ pub type Id = u64;
 
 pub enum RuntimeRequest {
     Request(Id, String),
-    Spawn(Box<dyn Thread>, Callback<String>)
+    Spawn(Id, Box<dyn Thread>, Callback<String>)
 }
 
 pub struct Handle<S>(Context, Id, PhantomData<S>);
@@ -97,9 +95,10 @@ impl Context {
         X: 'static,
         T: Task<S, R, X> + 'static
     >(&self, task: T) -> Handle<R> {
-        let id = task.id();
         let (thread, mut callback) = task.get();
+        let id = thread.id();
         self.sender.send(RuntimeRequest::Spawn(
+            id,
             thread, 
             Box::new(move |state: &mut State, r: String| {
                 callback(state, serde_json::from_str(&r).unwrap())
@@ -107,24 +106,6 @@ impl Context {
         )).unwrap();
         Handle(self.clone(), id, PhantomData::<R>)
     }
-
-
-  //pub fn spawn<
-  //    S: Serialize + for<'a> Deserialize <'a> + 'static,
-  //    R: Serialize + for<'a> Deserialize <'a> + 'static,
-  //    Fut: Future<Output = Result<Option<Duration>, Error>> + Send + 'static,
-  //    T: Into<(Thread<S, R, Fut>, Box<Callback<S>>)> + 'static
-  //>(&self, thread: T) -> Handle<S> {
-  //    let (thread, mut callback) = thread.into();
-  //    let id = thread.id();
-  //    self.sender.send(RuntimeRequest::Spawn(
-  //        Box::new(thread), 
-  //        Box::new(move |state: &mut State, r: String| {
-  //            callback(state, serde_json::from_str(&r).unwrap())
-  //        })
-  //    )).unwrap();
-  //    Handle(self.clone(), id, PhantomData::<S>)
-  //}
 }
 
 pub struct Runtime {
@@ -152,14 +133,19 @@ impl Runtime {
     pub fn context(&self) -> &Context {&self.context}
 
     pub fn tick(&mut self, state: &mut State) {
+        let mut requests = Vec::new();
         while let Ok(request) = self.receiver.try_recv() {
             match request {
-                RuntimeRequest::Spawn(thread, callback) => {self.spawn(thread, callback);},
+                RuntimeRequest::Spawn(id, thread, callback) => {self.spawn(id, thread, callback);},
                 RuntimeRequest::Request(id, payload) => {
-                    if let Some(thread) = self.threads.get_mut(&id) {
-                        thread.0.send(ThreadRequest::Request(0, payload));
-                    }
+                    requests.push((id, payload));
                 }
+            }
+        }
+
+        for (id, payload) in requests {
+            if let Some(thread) = self.threads.get_mut(&id) {
+                thread.0.send(ThreadRequest::Request(0, payload));
             }
         }
 
@@ -175,8 +161,7 @@ impl Runtime {
         }).collect();
     }
 
-    fn spawn(&mut self, thread: Box<dyn Thread>, callback: Callback<String>) -> bool {
-        let id = thread.id();
+    fn spawn(&mut self, id: Id, thread: Box<dyn Thread>, callback: Callback<String>) -> bool {
         if let Entry::Vacant(e) = self.threads.entry(id) {
             let (a, b) = Channel::new();
             let handle = self.runtime.spawn(thread.run(self.hardware.clone(), b));
@@ -207,102 +192,3 @@ impl Runtime {
         self.runtime.shutdown_background();
     }
 }
-
-
-
-//  trait TypeIdId {
-//      fn get(self) -> u64;
-//  }
-//  impl TypeIdId for TypeId {
-//      fn get(self) -> u64 {
-//          let mut hasher = DefaultHasher::new();
-//          self.hash(&mut hasher);
-//          hasher.finish()
-//      }
-//  }
-//
-//  trait AsyncFnOnceSend<I, O>: FnOnce(ThreadContext, I) -> Self::Fut + Send + 'static {
-//      type Fut: Future<Output = O> + Send;
-//  }
-
-//  impl<
-//      I, Fut: Future<Output = ()> + Send,
-//      F: FnOnce(ThreadContext, I) -> Fut + Send + 'static
-//  > AsyncFnOnceSend<I, ()> for F {
-//      type Fut = Fut;
-//  }
-//
-////  #[async_trait]
-//  impl<F: FnOnce(ThreadContext) -> Fut + Send + 'static, Fut: Future<Output = ()> + Send, C: FnMut(&mut State, String) + Clone + Send + 'static> Thread for (F, C) {
-//      async fn run(self: Box<Self>, ctx: ThreadContext) {
-//          (self.0)(ctx).await
-//      }
-
-//      fn callback(&self) -> Box<Callback> {Box::new(self.1.clone())}
-//  }
-
-
-
-//  pub struct ServiceContext {
-//      pub hardware: hardware::Context,
-//      services: BTreeMap<TypeId, Box<dyn Service>>,
-//  }
-//  impl ServiceContext {
-//      pub fn get<S: Service>(&mut self) -> &mut S {self.services.get_mut(&TypeId::of::<S>()).expect("Service Not Found").downcast_mut().unwrap()}
-//  }
-
-//  struct ActiveThread {
-//      context: ServiceContext,
-//      channel: Channel,
-//      channels: BTreeMap<u64, Channel>,
-//      handles: BTreeMap<TypeId, (Channel, Instant, Duration)> 
-//  }
-
-//  impl ActiveThread {
-//      pub fn new(context: ServiceContext, channel: Channel) -> Self {
-//          let (channels, handles): (BTreeMap<_,_>, BTreeMap<_,_>) = context.services.keys().map(|k| {
-//              let (a, b) = Channel::new();
-//              ((k.get(), a), (*k, (b, Instant::now(), Duration::ZERO)))
-//          }).unzip();
-//          ActiveThread{context, channel, channels, handles}
-//      }
-
-//      pub async fn run(mut self) {
-//          let mut paused = false;
-//          loop {
-//              while let Some(request) = self.channel.receive() {
-//                  match serde_json::from_str::<Request>(&request).unwrap() {
-//                      Request::Request(id, payload) => {
-//                          self.channels.get_mut(&id).unwrap().send(payload)
-//                      },
-//                      Request::Lifetime(p) => paused = p
-//                  }
-//              }
-
-//              if !paused {
-//                  for (id, (channel, time, duration)) in &mut self.handles {
-//                      if time.elapsed() > *duration {
-//                          *time = Instant::now();
-//                          let mut service = self.context.services.remove(id).unwrap();
-//                          match service.run(&mut self.context, channel).await {
-//                              Ok(d) => {*duration = d;},
-//                              Err(e) => log::error!("Service {} Error:\n{},\n{:?}", std::any::type_name_of_val(&*service), e, e)
-//                          }
-//                          self.context.services.insert(*id, service);
-//                      }
-//                  }
-
-//                  for (id, channel) in &mut self.channels {
-//                      while let Some(payload) = channel.receive() {
-//                          self.channel.send(serde_json::to_string(&(id, payload)).unwrap());
-//                      }
-//                  }
-//                  //TODO: sleep for min duration till next task or THREAD_TICK if paused
-//              }
-
-//              std::thread::sleep(Duration::from_millis(THREAD_TICK));
-//          }
-//      }
-//  }
-
-
