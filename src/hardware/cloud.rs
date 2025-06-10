@@ -1,3 +1,4 @@
+use std::ffi::{c_char, CStr};
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 use objc2_foundation::{NSString, NSAutoreleasePool};
 #[cfg(any(target_os = "macos", target_os = "ios"))]
@@ -331,7 +332,6 @@ impl CloudStorage {
     /// Get or create Android application context as instance method
     #[cfg(target_os = "android")]
     fn get_or_create_application_context<'a>(&self, env: &mut JNIEnv<'a>) -> Result<JObject<'a>, CloudStorageError> {
-        // Try to get context from stored global reference first
         if let Some(context_mutex) = APP_CONTEXT.get() {
             if let Ok(context_guard) = context_mutex.lock() {
                 if let Some(context_ref) = context_guard.as_ref() {

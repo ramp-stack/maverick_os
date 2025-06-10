@@ -1,6 +1,6 @@
 [package]
 name = "maverick_os"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 authors = ["Caleb Couch <caleb@orange.me>"]
 description = "Maverick OS"
@@ -9,7 +9,11 @@ repository = "https://github.com/ramp-stack/maverick_os"
 
 
 [dependencies]
+<<<<<<< HEAD
 air = "0.2.2"
+=======
+air = "0.2.3"
+>>>>>>> origin/master
 async-trait = "0.1.88"
 log = "0.4.27"
 raw-window-handle = "0.6.2"
@@ -20,10 +24,13 @@ hex = "0.4.3"
 rand = "0.9.1"
 downcast-rs = "2.0.1"
 image = "0.25.6"
+<<<<<<< HEAD
 libc = "0.2.172"
 objc2-ui-kit = "0.3.1"
 block = "0.1.6"
 cli-clipboard = "0.4.0"
+=======
+>>>>>>> origin/master
 
 
 [target.'cfg(any(target_os = "ios", target_os = "macos"))'.dependencies]

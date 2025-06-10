@@ -1,5 +1,10 @@
 use std::sync::mpsc::Sender;
 
+#[cfg(any(target_os = "ios", target_os = "macos"))]
+use objc2::{msg_send, class};
+#[cfg(any(target_os = "ios", target_os = "macos"))]
+use objc2::runtime::{AnyObject, AnyClass};
+
 #[cfg(target_os = "ios")]
 use block::{ConcreteBlock, RcBlock};
 #[cfg(target_os = "ios")]
@@ -30,6 +35,15 @@ use std::fs;
 #[cfg(any(target_os = "linux", target_os = "windows"))]
 use std::thread;
 
+#[cfg(target_os = "macos")]
+use objc2_foundation::{NSString, NSArray, NSObject};
+#[cfg(target_os = "macos")]
+use std::path::PathBuf;
+#[cfg(target_os = "macos")]
+use std::fs;
+use std::f64::consts::{FRAC_PI_2, PI};
+use objc2::rc::{Retained, autoreleasepool};
+
 #[derive(Clone)]
 pub struct PhotoPicker;
 
@@ -44,8 +58,72 @@ unsafe impl Sync for SenderPtr {}
 
 impl PhotoPicker {
     #[cfg(target_os = "macos")]
-    pub fn open(_sender: Sender<(Vec<u8>, ImageOrientation)>) {
-        // TODO: Implement macOS native file picker
+    pub fn open(sender: Sender<(Vec<u8>, ImageOrientation)>) {
+        dispatch2::DispatchQueue::main().exec_async(move || {
+            autoreleasepool(|_| unsafe {
+                let cls: *const AnyClass = class!(NSOpenPanel);
+                if cls.is_null() {
+                    eprintln!("NSOpenPanel class not found");
+                    let _ = sender.send((Vec::new(), ImageOrientation::Up));
+                    return;
+                }
+
+                let panel: *mut AnyObject = msg_send![cls, openPanel];
+                if panel.is_null() {
+                    eprintln!("Failed to create NSOpenPanel");
+                    let _ = sender.send((Vec::new(), ImageOrientation::Up));
+                    return;
+                }
+
+                let () = msg_send![panel, setCanChooseFiles: true];
+                let () = msg_send![panel, setAllowsMultipleSelection: false];
+                let () = msg_send![panel, setCanChooseDirectories: false];
+
+                let png_str: Retained<NSString> = NSString::from_str("png");
+                let jpg_str: Retained<NSString> = NSString::from_str("jpg");
+                let jpeg_str: Retained<NSString> = NSString::from_str("jpeg");
+                let file_types: Retained<NSArray<NSString>> = NSArray::from_slice(&[
+                    png_str.as_ref(),
+                    jpg_str.as_ref(),
+                    jpeg_str.as_ref()
+                ]);
+                let () = msg_send![panel, setAllowedFileTypes: &*file_types];
+
+                const NS_MODAL_RESPONSE_OK: i64 = 1;
+                let response: i64 = msg_send![panel, runModal];
+                if response != NS_MODAL_RESPONSE_OK {
+                    let _ = sender.send((Vec::new(), ImageOrientation::Up));
+                    return;
+                }
+
+                let url: *mut AnyObject = msg_send![panel, URL];
+                if url.is_null() {
+                    eprintln!("URL was null");
+                    let _ = sender.send((Vec::new(), ImageOrientation::Up));
+                    return;
+                }
+
+                let nsstring: *mut NSString = msg_send![url, path];
+                if nsstring.is_null() {
+                    eprintln!("Path string was null");
+                    let _ = sender.send((Vec::new(), ImageOrientation::Up));
+                    return;
+                }
+
+                let rust_path = (*nsstring).to_string();
+                let path = PathBuf::from(rust_path);
+
+                match fs::read(&path) {
+                    Ok(image_data) => {
+                        let _ = sender.send((image_data, ImageOrientation::Up));
+                    },
+                    Err(err) => {
+                        eprintln!("Failed to read file: {err}");
+                        let _ = sender.send((Vec::new(), ImageOrientation::Up));
+                    }
+                }
+            });
+        });
     }
 
     #[cfg(target_os = "linux")]
@@ -181,6 +259,7 @@ impl PhotoPicker {
         if let Some(extension) = path.extension() {
             match extension.to_str().unwrap_or("").to_lowercase().as_str() {
                 "jpg" | "jpeg" => {
+                    // TODO: Parse EXIF data for actual orientation
                     ImageOrientation::Up
                 }
                 _ => ImageOrientation::Up,
@@ -198,6 +277,7 @@ impl PhotoPicker {
         let sender_ptr = SenderPtr(Box::into_raw(sender_box) as usize);
 
         dispatch2::DispatchQueue::main().exec_async(move || {
+            // Now we cast it back into a raw pointer safely
             let sender_ptr = sender_ptr.0 as *mut c_void;
             println!("Started dispatcher");
             autoreleasepool(|_| unsafe {

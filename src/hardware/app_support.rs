@@ -6,6 +6,11 @@ use objc2::msg_send;
 use std::path::PathBuf;
 #[cfg(any(target_os = "ios", target_os = "macos"))]
 use objc2::__framework_prelude::AnyObject;
+#[cfg(any(target_os = "ios", target_os = "macos"))]
+use objc2::rc::Retained;
+#[cfg(any(target_os = "ios", target_os = "macos"))]
+use objc2::runtime::Bool;
+
 
 #[cfg(target_os = "ios")]
 use std::ffi::CStr;
@@ -72,9 +77,6 @@ impl ApplicationSupport {
     #[cfg(target_os = "macos")]
     pub fn get() -> Option<PathBuf> {
         unsafe {
-            use objc2::rc::Retained;
-            use objc2::runtime::Bool;
-
             let _pool = NSAutoreleasePool::new();
 
             let file_manager = NSFileManager::defaultManager();
@@ -124,8 +126,8 @@ impl ApplicationSupport {
 
     #[cfg(target_os = "linux")]
     pub fn get() -> Option<PathBuf> {
-    
-        let app_name = "org.ramp.orange"; 
+
+        let app_name = "org.ramp.orange";
 
         if let Ok(xdg_data_home) = env::var("XDG_DATA_HOME") {
             let path = PathBuf::from(xdg_data_home).join(app_name);
@@ -180,7 +182,7 @@ impl ApplicationSupport {
         }
         #[cfg(target_os = "ios")]
         {
-            Self::get() 
+            Self::get()
         }
         #[cfg(target_os = "linux")]
         {
@@ -195,9 +197,6 @@ impl ApplicationSupport {
     #[cfg(target_os = "macos")]
     fn get_macos_with_app_name(app_name: &str) -> Option<PathBuf> {
         unsafe {
-            use objc2::rc::Retained;
-            use objc2::runtime::Bool;
-
             let _pool = NSAutoreleasePool::new();
 
             let file_manager = NSFileManager::defaultManager();
@@ -234,7 +233,7 @@ impl ApplicationSupport {
 
     #[cfg(target_os = "linux")]
     fn get_linux_with_app_name(app_name: &str) -> Option<PathBuf> {
-       
+
         if let Ok(xdg_data_home) = env::var("XDG_DATA_HOME") {
             let path = PathBuf::from(xdg_data_home).join(app_name);
             if let Ok(()) = fs::create_dir_all(&path) {
