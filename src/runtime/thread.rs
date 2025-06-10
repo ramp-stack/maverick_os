@@ -1,23 +1,10 @@
-use std::sync::mpsc::{channel, Sender, Receiver};
-use std::collections::hash_map::DefaultHasher;
-use std::collections::hash_map::Entry;
 use std::collections::VecDeque;
-use std::collections::HashMap;
-use std::marker::PhantomData;
-use std::hash::{Hasher, Hash};
 use std::future::Future;
-use std::sync::Arc;
-use std::any::TypeId;
 use std::pin::Pin;
-use std::any::Any;
 
-use downcast_rs::{impl_downcast, Downcast};
 use tokio::time::{Instant, Duration};
-use tokio::task::JoinHandle;
 use serde::{Serialize, Deserialize};
 use rand::Rng;
-
-use crate::runtime;
 
 use crate::{State, hardware};
 use super::{Callback, Id, Error, Channel};
@@ -160,7 +147,7 @@ type TaskOneshot<S> = Box<dyn FnOnce() -> Pin<Box<dyn Future<Output = S> + Send>
 impl<
     S: Serialize + for<'a> Deserialize <'a> + Send + 'static,
 > Thread for TaskOneshot<S> {
-    async fn run(mut self: Box<Self>, hardware: hardware::Context, mut channel: ThreadChannel) {
+    async fn run(mut self: Box<Self>, _hardware: hardware::Context, mut channel: ThreadChannel) {
         let s = (self)().await;
         channel.send(ThreadResponse::Response(0, serde_json::to_string(&s).unwrap()));
     }
@@ -172,7 +159,7 @@ impl<
     Fut: Future<Output = S> + Send + 'static,
     F: FnOnce() -> Fut + Send + 'static,
 > Task<S, (), TaskOneshot<S>> for F {
-    fn get(mut self) -> (Box<dyn Thread>, Callback<S>){
+    fn get(self) -> (Box<dyn Thread>, Callback<S>){
         let task: TaskOneshot<S> = Box::new(move || Box::pin(self()));
         (Box::new(task), Box::new(|_: &mut State, _: S| {}))
     }
@@ -185,7 +172,7 @@ impl<
     F: FnOnce() -> Fut + Send + 'static,
     CF: FnMut(&mut State, S) + 'static
 > Task<S, (), TaskOneshot<S>> for (F, CF) {
-    fn get(mut self) -> (Box<dyn Thread>, Callback<S>){
+    fn get(self) -> (Box<dyn Thread>, Callback<S>){
         let task: TaskOneshot<S> = Box::new(move || Box::pin((self.0)()));
         (Box::new(task), Box::new(self.1))
     }

@@ -15,7 +15,7 @@ pub use crate::hardware::{
     {Camera, CameraError},
 };
 pub mod runtime;
-use runtime::{Runtime, Duration, Channel};
+use runtime::Runtime;
 
 pub mod window;
 use window::{WindowManager, EventHandler, Event, Lifetime};
@@ -74,30 +74,30 @@ impl<A: Application + 'static> MaverickOS<A> {
       //runtime.context().spawn(Test);
       //
 
-        let h = runtime.context().spawn((
-            async |ctx: &mut runtime::thread::Context<u32, String>| {
-                println!("Loop");
-                while let Some((id, key)) = ctx.get_request() {
-                    println!("received: {:?}", key);
-                    ctx.callback(20);
-                }
-                Ok(Some(Duration::from_secs(1)))
-            },
-            |state: &mut State, val: u32| println!("sent: {}", val)
-        ));
+      //let h = runtime.context().spawn((
+      //    async |ctx: &mut runtime::thread::Context<u32, String>| {
+      //        println!("Loop");
+      //        while let Some((id, key)) = ctx.get_request() {
+      //            println!("received: {:?}", key);
+      //            ctx.callback(20);
+      //        }
+      //        Ok(Some(Duration::from_secs(1)))
+      //    },
+      //    |state: &mut State, val: u32| println!("sent: {}", val)
+      //));
 
-        h.send("Hello".to_string());
-        //h.send(&0);
+      //h.send("Hello".to_string());
+      ////h.send(&0);
 
       //let i = "Hell".to_string();
 
-        let h = runtime.context().spawn((
-            async || {
-                println!("Oneshot!");
-                "String".to_string()
-            }, 
-            |state: &mut State, val: String| state.set_raw("Hello".to_string(), val.as_bytes().to_vec())
-        ));
+      //let h = runtime.context().spawn((
+      //    async || {
+      //        println!("Oneshot!");
+      //        "String".to_string()
+      //    }, 
+      //    |state: &mut State, val: String| state.set_raw("Hello".to_string(), val.as_bytes().to_vec())
+      //));
 
 
 

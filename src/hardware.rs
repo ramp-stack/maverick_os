@@ -9,7 +9,7 @@ mod photo_picker;
 mod safe_area;
 
 #[cfg(target_os = "android")]
-use jni;
+use jni::{JNIEnv, objects::JObject};
 
 use std::sync::mpsc::Sender;
 
@@ -40,7 +40,7 @@ impl Context {
             clipboard: Clipboard::new(),
             share: Share::new(),
             app_support: ApplicationSupport,
-            cloud: CloudStorage::default(),
+            cloud: CloudStorage,
             photo_picker: PhotoPicker,
         }
     }
@@ -66,6 +66,13 @@ impl Context {
         #[cfg(target_os = "android")]
         {
             self.share.share(text);
+        }
+
+        #[cfg(not(any(target_os = "ios", target_os = "android")))]
+        {
+            // Explicitly use the parameter to avoid unused variable warning
+            let _ = text;
+            // Could log or handle unsupported platform here
         }
     }
 
@@ -147,7 +154,6 @@ impl Context {
 
     #[cfg(target_os = "android")]
     pub fn initialize(env: &mut JNIEnv, context: JObject) -> Result<(), jni::errors::Error> {
-
         Clipboard::initialize(env, context)?;
 
         Share::initialize().map_err(|e| {

@@ -29,6 +29,12 @@ static INIT_ONCE: Once = Once::new();
 #[derive(Clone)]
 pub struct Share;
 
+impl Default for Share {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Share {
     pub fn new() -> Self {
         Self
@@ -193,3 +199,4 @@ impl Share {
         }
     }
 }
+

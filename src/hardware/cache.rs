@@ -35,7 +35,7 @@ impl Cache {
     >(&self, key: K, value: V) {
         self.0.lock().await.execute(
             "INSERT INTO kvs(key, value) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET value=excluded.value;",
-            [hex::encode(serde_json::to_vec(&key).unwrap()), hex::encode(&serde_json::to_vec(&value).unwrap())]
+            [hex::encode(serde_json::to_vec(&key).unwrap()), hex::encode(serde_json::to_vec(&value).unwrap())]
         ).unwrap();
     }
     pub async fn get<
@@ -50,6 +50,6 @@ impl Cache {
             let item: String = row.get(0).unwrap();
             Ok(hex::decode(item).unwrap())
         }).unwrap().collect::<Result<Vec<Vec<u8>>, rusqlite::Error>>().unwrap();
-        result.first().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()
+        result.first().and_then(|b| serde_json::from_slice(b).ok()).unwrap_or_default()
     }
 }

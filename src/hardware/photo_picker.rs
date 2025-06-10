@@ -4,14 +4,16 @@ use std::sync::mpsc::Sender;
 use objc2::{msg_send, class};
 #[cfg(any(target_os = "ios", target_os = "macos"))]
 use objc2::runtime::{AnyObject, AnyClass};
+
 #[cfg(target_os = "ios")]
 use block::{ConcreteBlock, RcBlock};
 #[cfg(target_os = "ios")]
 use dispatch2;
 #[cfg(target_os = "ios")]
 use objc2::{
-    sel, rc::autoreleasepool,
-    runtime::{ClassBuilder, Sel},
+    class, msg_send, sel,
+    rc::autoreleasepool,
+    runtime::{AnyClass, AnyObject, ClassBuilder, Sel},
 };
 #[cfg(target_os = "ios")]
 use objc2_foundation::NSArray;
@@ -24,13 +26,21 @@ use std::ffi::c_void;
 #[cfg(target_os = "ios")]
 use std::ffi::{CStr, CString};
 
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+use std::process::Command;
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+use std::path::Path;
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+use std::fs;
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+use std::thread;
+
 #[cfg(target_os = "macos")]
-use objc2_foundation::{NSString, NSArray, NSObject};
+use objc2_foundation::{NSString, NSArray};
 #[cfg(target_os = "macos")]
 use std::path::PathBuf;
 #[cfg(target_os = "macos")]
 use std::fs;
-use std::f64::consts::{FRAC_PI_2, PI};
 use objc2::rc::{Retained, autoreleasepool};
 
 #[derive(Clone)]
@@ -50,18 +60,17 @@ impl PhotoPicker {
     pub fn open(sender: Sender<(Vec<u8>, ImageOrientation)>) {
         dispatch2::DispatchQueue::main().exec_async(move || {
             autoreleasepool(|_| unsafe {
-
                 let cls: *const AnyClass = class!(NSOpenPanel);
                 if cls.is_null() {
                     eprintln!("NSOpenPanel class not found");
-                    // let _ = sender.send((Vec::new(), ImageOrientation::Up));
+                    let _ = sender.send((Vec::new(), ImageOrientation::Up));
                     return;
                 }
 
                 let panel: *mut AnyObject = msg_send![cls, openPanel];
                 if panel.is_null() {
                     eprintln!("Failed to create NSOpenPanel");
-                    // let _ = sender.send((Vec::new(), ImageOrientation::Up));
+                    let _ = sender.send((Vec::new(), ImageOrientation::Up));
                     return;
                 }
 
@@ -70,27 +79,33 @@ impl PhotoPicker {
                 let () = msg_send![panel, setCanChooseDirectories: false];
 
                 let png_str: Retained<NSString> = NSString::from_str("png");
-                let file_types: Retained<NSArray<NSString>> = NSArray::from_slice(&[png_str.as_ref()]);
+                let jpg_str: Retained<NSString> = NSString::from_str("jpg");
+                let jpeg_str: Retained<NSString> = NSString::from_str("jpeg");
+                let file_types: Retained<NSArray<NSString>> = NSArray::from_slice(&[
+                    png_str.as_ref(),
+                    jpg_str.as_ref(),
+                    jpeg_str.as_ref()
+                ]);
                 let () = msg_send![panel, setAllowedFileTypes: &*file_types];
 
                 const NS_MODAL_RESPONSE_OK: i64 = 1;
                 let response: i64 = msg_send![panel, runModal];
                 if response != NS_MODAL_RESPONSE_OK {
-                    // let _ = sender.send((Vec::new(), ImageOrientation::Up));
+                    let _ = sender.send((Vec::new(), ImageOrientation::Up));
                     return;
                 }
 
                 let url: *mut AnyObject = msg_send![panel, URL];
                 if url.is_null() {
                     eprintln!("URL was null");
-                    // let _ = sender.send((Vec::new(), ImageOrientation::Up));
+                    let _ = sender.send((Vec::new(), ImageOrientation::Up));
                     return;
                 }
 
                 let nsstring: *mut NSString = msg_send![url, path];
                 if nsstring.is_null() {
                     eprintln!("Path string was null");
-                    // let _ = sender.send((Vec::new(), ImageOrientation::Up));
+                    let _ = sender.send((Vec::new(), ImageOrientation::Up));
                     return;
                 }
 
@@ -98,17 +113,160 @@ impl PhotoPicker {
                 let path = PathBuf::from(rust_path);
 
                 match fs::read(&path) {
-                    Ok(png_data) => {sender.send((png_data, ImageOrientation::Up));},
-                    Err(err) => eprintln!("Failed to read file: {err}")
+                    Ok(image_data) => {
+                        let _ = sender.send((image_data, ImageOrientation::Up));
+                    },
+                    Err(err) => {
+                        eprintln!("Failed to read file: {err}");
+                        let _ = sender.send((Vec::new(), ImageOrientation::Up));
+                    }
                 }
             });
         });
     }
 
     #[cfg(target_os = "linux")]
-    pub fn open(_sender: Sender<(Vec<u8>, ImageOrientation)>) {}
+    pub fn open(sender: Sender<(Vec<u8>, ImageOrientation)>) {
+        thread::spawn(move || {
+            // Try different Linux file dialog options in order of preference
+            let result = Self::try_zenity()
+                .or_else(|| Self::try_kdialog())
+                .or_else(|| Self::try_xdg_open());
+
+            match result {
+                Some(file_path) => {
+                    if let Ok(image_data) = fs::read(&file_path) {
+                        // Try to determine orientation from EXIF data or default to Up
+                        let orientation = Self::get_image_orientation(&file_path);
+                        let _ = sender.send((image_data, orientation));
+                    } else {
+                        let _ = sender.send((Vec::new(), ImageOrientation::Up));
+                    }
+                }
+                None => {
+                    let _ = sender.send((Vec::new(), ImageOrientation::Up));
+                }
+            }
+        });
+    }
+
+    #[cfg(target_os = "windows")]
+    pub fn open(sender: Sender<(Vec<u8>, ImageOrientation)>) {
+        thread::spawn(move || {
+            let result = Command::new("powershell")
+                .args(&[
+                    "-Command",
+                    r#"
+                    Add-Type -AssemblyName System.Windows.Forms;
+                    $dialog = New-Object System.Windows.Forms.OpenFileDialog;
+                    $dialog.Filter = 'Image Files|*.jpg;*.jpeg;*.png;*.gif;*.bmp;*.tiff;*.webp|All Files|*.*';
+                    $dialog.Title = 'Select an Image';
+                    $dialog.Multiselect = $false;
+                    if ($dialog.ShowDialog() -eq 'OK') {
+                        Write-Output $dialog.FileName
+                    }
+                    "#,
+                ])
+                .output();
+
+            match result {
+                Ok(output) if output.status.success() => {
+                    let file_path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                    if !file_path.is_empty() && Path::new(&file_path).exists() {
+                        if let Ok(image_data) = fs::read(&file_path) {
+                            let orientation = Self::get_image_orientation(&file_path);
+                            let _ = sender.send((image_data, orientation));
+                        } else {
+                            let _ = sender.send((Vec::new(), ImageOrientation::Up));
+                        }
+                    } else {
+                        let _ = sender.send((Vec::new(), ImageOrientation::Up));
+                    }
+                }
+                _ => {
+                    let _ = sender.send((Vec::new(), ImageOrientation::Up));
+                }
+            }
+        });
+    }
+
     #[cfg(target_os = "android")]
-    pub fn open(_sender: Sender<(Vec<u8>, ImageOrientation)>) {}
+    pub fn open(_sender: Sender<(Vec<u8>, ImageOrientation)>) {
+        // TODO: Implement Android photo picker
+    }
+
+    #[cfg(target_os = "linux")]
+    fn try_zenity() -> Option<String> {
+        let result = Command::new("zenity")
+            .args(&[
+                "--file-selection",
+                "--file-filter=Image files | *.jpg *.jpeg *.png",
+                "--file-filter=All files | *",
+                "--title=Select an Image",
+            ])
+            .output();
+
+        match result {
+            Ok(output) if output.status.success() => {
+                let file_path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                if !file_path.is_empty() && Path::new(&file_path).exists() {
+                    Some(file_path)
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    fn try_kdialog() -> Option<String> {
+        let result = Command::new("kdialog")
+            .args(&[
+                "--getopenfilename",
+                ".",
+                "*.jpg *.jpeg *.png *.webp|Image files",
+                "--title",
+                "Select an Image",
+            ])
+            .output();
+
+        match result {
+            Ok(output) if output.status.success() => {
+                let file_path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                if !file_path.is_empty() && Path::new(&file_path).exists() {
+                    Some(file_path)
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    fn try_xdg_open() -> Option<String> {
+        // As a fallback, we could try to open a simple file manager
+        // This won't return a selected file, so it's not ideal
+        // You might want to implement a simple terminal-based file picker here
+        None
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    fn get_image_orientation(file_path: &str) -> ImageOrientation {
+        let path = Path::new(file_path);
+        if let Some(extension) = path.extension() {
+            match extension.to_str().unwrap_or("").to_lowercase().as_str() {
+                "jpg" | "jpeg" => {
+                    // TODO: Parse EXIF data for actual orientation
+                    ImageOrientation::Up
+                }
+                _ => ImageOrientation::Up,
+            }
+        } else {
+            ImageOrientation::Up
+        }
+    }
 
     #[cfg(target_os = "ios")]
     pub fn open(sender: Sender<(Vec<u8>, ImageOrientation)>) {
@@ -211,7 +369,6 @@ fn create_photo_picker_delegate(sender_ptr: *mut c_void) -> *mut AnyObject {
                     let block = ConcreteBlock::new(move |image_obj: *mut AnyObject, _error: *mut AnyObject| {
                         let (data, orientation) = if !image_obj.is_null() {
                             let orientation: i64 = unsafe { msg_send![image_obj, imageOrientation] };
-                            // let image_obj = rotated_from(orientation, image_obj);
 
                             let symbol_name = CString::new("UIImagePNGRepresentation").unwrap();
                             let func_ptr = libc::dlsym(libc::RTLD_DEFAULT, symbol_name.as_ptr());
@@ -233,7 +390,7 @@ fn create_photo_picker_delegate(sender_ptr: *mut c_void) -> *mut AnyObject {
                             (Vec::new(), 0)
                         };
 
-                        let _ = sender_box.send((data, ImageOrientation::get(orientation)));
+                        let _ = sender_box.send((data, ImageOrientation::from_ios_value(orientation)));
                     });
 
                     let rc_block: RcBlock<(*mut AnyObject, *mut AnyObject), ()> = block.copy();
@@ -280,30 +437,31 @@ pub enum ImageOrientation {
 }
 
 impl ImageOrientation {
-    fn get(orientation: i64) -> Self {
+    /// Convert iOS UIImageOrientation value to ImageOrientation enum
+    pub fn from_ios_value(orientation: i64) -> Self {
         match orientation {
-            0 => return ImageOrientation::Up,
-            1 => return ImageOrientation::Down,
-            2 => return ImageOrientation::Left,
-            3 => return ImageOrientation::Right,
-            4 => return ImageOrientation::UpMirrored,
-            5 => return ImageOrientation::DownMirrored,
-            6 => return ImageOrientation::LeftMirrored,
-            7 => return ImageOrientation::RightMirrored,
-            _ => return ImageOrientation::Up,
-        };
+            0 => ImageOrientation::Up,
+            1 => ImageOrientation::Down,
+            2 => ImageOrientation::Left,
+            3 => ImageOrientation::Right,
+            4 => ImageOrientation::UpMirrored,
+            5 => ImageOrientation::DownMirrored,
+            6 => ImageOrientation::LeftMirrored,
+            7 => ImageOrientation::RightMirrored,
+            _ => ImageOrientation::Up,
+        }
     }
 
     pub fn apply_to(&self, image: image::DynamicImage) -> image::DynamicImage {
         match self {
-            ImageOrientation::Up => return image,
-            ImageOrientation::Down => return image.rotate180(),
-            ImageOrientation::Left => return image.rotate270(),
-            ImageOrientation::Right => return image.rotate90(),
-            ImageOrientation::UpMirrored => return image.fliph(),
-            ImageOrientation::DownMirrored => return image.fliph().rotate180(),
-            ImageOrientation::LeftMirrored => return image.fliph().rotate90(),
-            ImageOrientation::RightMirrored => return image.fliph().rotate270()
-        };
+            ImageOrientation::Up => image,
+            ImageOrientation::Down => image.rotate180(),
+            ImageOrientation::Left => image.rotate270(),
+            ImageOrientation::Right => image.rotate90(),
+            ImageOrientation::UpMirrored => image.fliph(),
+            ImageOrientation::DownMirrored => image.fliph().rotate180(),
+            ImageOrientation::LeftMirrored => image.fliph().rotate90(),
+            ImageOrientation::RightMirrored => image.fliph().rotate270(),
+        }
     }
 }

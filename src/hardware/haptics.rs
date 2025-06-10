@@ -1,5 +1,5 @@
 
-
+#![allow(dead_code)]
 #[cfg(target_os = "ios")]
 use objc2_ui_kit::UIImpactFeedbackGenerator;
 #[cfg(target_os = "ios")]
@@ -25,3 +25,5 @@ impl Haptics {
     #[cfg(not(any(target_os = "ios", target_os = "android")))]
     pub fn vibrate() {}
 }
+
+

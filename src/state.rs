@@ -27,6 +27,6 @@ impl State {
         self.0.get(&Key::Raw(key.to_string()))
     }
     pub fn get<F: Field + 'static>(&self) -> F {
-        self.0.get(&Key::Id(TypeId::of::<F>())).and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()
+        self.0.get(&Key::Id(TypeId::of::<F>())).and_then(|b| serde_json::from_slice(b).ok()).unwrap_or_default()
     }
 }

@@ -1,21 +1,13 @@
 use std::sync::mpsc::{channel, Sender, Receiver};
-use std::collections::hash_map::DefaultHasher;
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::marker::PhantomData;
-use std::hash::{Hasher, Hash};
 use std::future::Future;
-use std::sync::Arc;
-use std::any::TypeId;
-use std::pin::Pin;
-use std::any::Any;
 
-use downcast_rs::{impl_downcast, Downcast};
 pub use async_trait::async_trait;
 pub use tokio::time::Duration;
 use tokio::task::JoinHandle;
 use serde::{Serialize, Deserialize};
-use rand::Rng;
 
 use crate::State;
 use crate::hardware;
@@ -182,7 +174,7 @@ impl Runtime {
     pub fn resume(&mut self) {
         self.threads.values_mut().for_each(|t| t.0.send(ThreadRequest::Resume));
     }   
-    pub fn close(mut self) {
+    pub fn close(self) {
       //self.runtime.block_on(async {
       //    self.threads.values_mut().for_each(|t| t.0.send(ThreadRequest::Close));
       //    for thread in self.threads.into_values() {
