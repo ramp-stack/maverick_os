@@ -60,7 +60,7 @@ pub type Id = u64;
 
 pub enum RuntimeRequest {
     Request(Id, String),
-    Spawn(Id, Box<dyn Thread>, Callback<String>)
+    Spawn(Box<dyn Thread>, Callback<String>)
 }
 
 pub struct Handle<S>(Context, Id, PhantomData<S>);
@@ -90,7 +90,6 @@ impl Context {
         let (thread, mut callback) = task.get();
         let id = thread.id();
         self.sender.send(RuntimeRequest::Spawn(
-            id,
             thread, 
             Box::new(move |state: &mut State, r: String| {
                 callback(state, serde_json::from_str(&r).unwrap())
@@ -128,7 +127,7 @@ impl Runtime {
         let mut requests = Vec::new();
         while let Ok(request) = self.receiver.try_recv() {
             match request {
-                RuntimeRequest::Spawn(id, thread, callback) => {self.spawn(id, thread, callback);},
+                RuntimeRequest::Spawn(thread, callback) => {self.spawn(thread, callback);},
                 RuntimeRequest::Request(id, payload) => {
                     requests.push((id, payload));
                 }
@@ -153,7 +152,8 @@ impl Runtime {
         }).collect();
     }
 
-    fn spawn(&mut self, id: Id, thread: Box<dyn Thread>, callback: Callback<String>) -> bool {
+    fn spawn(&mut self, thread: Box<dyn Thread>, callback: Callback<String>) -> bool {
+        let id = thread.id();
         if let Entry::Vacant(e) = self.threads.entry(id) {
             let (a, b) = Channel::new();
             let handle = self.runtime.spawn(thread.run(self.hardware.clone(), b));
