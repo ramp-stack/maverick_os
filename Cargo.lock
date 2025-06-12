@@ -1522,6 +1522,7 @@ name = "maverick_os"
 version = "0.1.1"
 dependencies = [
  "air",
+ "android-activity",
  "async-trait",
  "block",
  "cli-clipboard",

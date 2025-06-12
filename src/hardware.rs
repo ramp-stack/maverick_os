@@ -26,6 +26,9 @@ pub use photo_picker::{PhotoPicker, ImageOrientation};
 #[derive(Clone)]
 pub struct Context {
     pub cache: Cache,
+    #[cfg(target_os = "android")]
+    pub clipboard: Clipboard,
+    #[cfg(not(target_os = "android"))]
     pub clipboard: Clipboard,
     pub share: Share,
     pub app_support: ApplicationSupport,
@@ -34,6 +37,19 @@ pub struct Context {
 }
 
 impl Context {
+    #[cfg(target_os = "android")]
+    pub(crate) fn new(env: &mut JNIEnv, context: JObject) -> Result<Self, jni::errors::Error> {
+        Ok(Self {
+            cache: Cache::new(),
+            clipboard: Clipboard::new(env, context)?,
+            share: Share::new(),
+            app_support: ApplicationSupport,
+            cloud: CloudStorage::default(),
+            photo_picker: PhotoPicker,
+        })
+    }
+
+    #[cfg(not(target_os = "android"))]
     pub(crate) fn new() -> Self {
         Self {
             cache: Cache::new(),
@@ -92,7 +108,7 @@ impl Context {
 
         #[cfg(target_os = "android")]
         {
-            CloudStorage::save(key, value).map_err(|e| Box::new(e) as Box<dyn std::error::Error>)
+            CloudStorage::save(key, value).map_err(|e| format!("{:?}", e).into())
         }
 
         #[cfg(not(any(target_os = "macos", target_os = "ios", target_os = "android")))]
@@ -109,7 +125,7 @@ impl Context {
 
         #[cfg(target_os = "android")]
         {
-            CloudStorage::get(key).map_err(|e| Box::new(e) as Box<dyn std::error::Error>)
+            CloudStorage::get(key).map_err(|e| format!("{:?}", e).into())
         }
 
         #[cfg(not(any(target_os = "macos", target_os = "ios", target_os = "android")))]
@@ -126,7 +142,7 @@ impl Context {
 
         #[cfg(target_os = "android")]
         {
-            CloudStorage::remove(key).map_err(|e| Box::new(e) as Box<dyn std::error::Error>)
+            CloudStorage::remove(key).map_err(|e| format!("{:?}", e).into())
         }
 
         #[cfg(not(any(target_os = "macos", target_os = "ios", target_os = "android")))]
@@ -143,7 +159,7 @@ impl Context {
 
         #[cfg(target_os = "android")]
         {
-            CloudStorage::clear().map_err(|e| Box::new(e) as Box<dyn std::error::Error>)
+            CloudStorage::clear().map_err(|e| format!("{:?}", e).into())
         }
 
         #[cfg(not(any(target_os = "macos", target_os = "ios", target_os = "android")))]

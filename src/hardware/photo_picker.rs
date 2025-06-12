@@ -41,6 +41,7 @@ use objc2_foundation::{NSString, NSArray};
 use std::path::PathBuf;
 #[cfg(target_os = "macos")]
 use std::fs;
+#[cfg(target_os = "macos")]
 use objc2::rc::{Retained, autoreleasepool};
 
 #[derive(Clone)]

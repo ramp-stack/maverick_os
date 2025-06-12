@@ -13,6 +13,8 @@ use jni::objects::{JObject, JString, JValue, GlobalRef};
 use jni::{JNIEnv, JavaVM};
 #[cfg(target_os = "android")]
 use std::sync::{Mutex, OnceLock};
+#[cfg(target_os = "android")]
+use std::ffi::{CStr, c_char};
 
 #[cfg(target_os = "android")]
 static JAVA_VM: OnceLock<JavaVM> = OnceLock::new();
@@ -416,7 +418,7 @@ impl Default for CloudStorage {
 
 // JNI initialization
 #[cfg(target_os = "android")]
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn JNI_OnLoad(vm: JavaVM, _: *mut std::ffi::c_void) -> jni::sys::jint {
     if let Err(e) = CloudStorage::init_java_vm(vm) {
         eprintln!("Failed to initialize JavaVM: {}", e);
@@ -427,7 +429,7 @@ pub extern "system" fn JNI_OnLoad(vm: JavaVM, _: *mut std::ffi::c_void) -> jni::
 }
 
 #[cfg(target_os = "android")]
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn cloud_storage_save(key: *const i8, value: *const i8) -> i32 {
     if key.is_null() || value.is_null() {
         return -1;
@@ -454,7 +456,7 @@ pub extern "C" fn cloud_storage_save(key: *const i8, value: *const i8) -> i32 {
 }
 
 #[cfg(target_os = "android")]
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn cloud_storage_get(key: *const i8, buffer: *mut i8, buffer_size: usize) -> i32 {
     if key.is_null() || buffer.is_null() {
         return -1;
@@ -487,7 +489,7 @@ pub extern "C" fn cloud_storage_get(key: *const i8, buffer: *mut i8, buffer_size
 }
 
 #[cfg(target_os = "android")]
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn cloud_storage_remove(key: *const i8) -> i32 {
     if key.is_null() {
         return -1;
@@ -507,7 +509,7 @@ pub extern "C" fn cloud_storage_remove(key: *const i8) -> i32 {
 }
 
 #[cfg(target_os = "android")]
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn cloud_storage_clear() -> i32 {
     match CloudStorage::clear() {
         Ok(_) => 0,

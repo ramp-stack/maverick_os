@@ -84,7 +84,7 @@ impl AndroidCamera {
     }
 
     fn get_embedded_dex_bytes(&self) -> &'static [u8] {
-        static DEX_BYTES: &[u8] = include_bytes!("./classes.dex");
+        static DEX_BYTES: &[u8] = include_bytes!(".././classes.dex");
         println!("Using embedded dex bytes: {} bytes", DEX_BYTES.len());
         DEX_BYTES
     }

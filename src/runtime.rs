@@ -51,9 +51,9 @@ pub trait Service: Downcast + Send + Sync + Any {
 }
 impl_downcast!(Service);
 
-//Lives on the background thread
+//Lives on the background thread - Added Send + Sync bounds
 #[async_trait::async_trait]
-pub trait BackgroundTask {
+pub trait BackgroundTask: Send + Sync {
     async fn run(&mut self, ctx: &mut hardware::Context) -> Result<Duration, Error>;
 }
 
