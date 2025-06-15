@@ -1,5 +1,7 @@
 use std::sync::{Mutex, Arc};
 use std::future::Future;
+
+#[cfg(target_os = "android")]
 use winit::platform::android::activity::AndroidApp;
 
 mod state;
@@ -51,19 +53,17 @@ impl<A: Application + 'static> MaverickOS<A> {
         #[cfg(target_os = "android")]
         app: AndroidApp
     ) {
-        // For Android, we need JNI context - this would typically be passed from JNI layer
         #[cfg(target_os = "android")]
         {
             // This is a placeholder - in a real implementation, you'd get these from the JNI layer
             // You might need to restructure this to accept JNI parameters or get them differently
             panic!("Android JNI context initialization needs to be implemented");
         }
-        
+
         #[cfg(not(target_os = "android"))]
         {
-            // For non-Android platforms, create a different constructor or handle this case
-            let hardware = hardware::Context::new_non_android()
-                .expect("Failed to initialize hardware context");
+            // Use the existing new() method instead of new_non_android()
+            let hardware = hardware::Context::new();
             let runtime = Runtime::start::<A>(hardware.clone());
             WindowManager::start(
                 MaverickService::<A>::new(runtime, hardware)

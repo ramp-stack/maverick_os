@@ -49,6 +49,7 @@ impl Context {
         })
     }
 
+    /// Creates a new hardware context for non-Android platforms
     #[cfg(not(target_os = "android"))]
     pub(crate) fn new() -> Self {
         Self {
@@ -60,6 +61,8 @@ impl Context {
             photo_picker: PhotoPicker,
         }
     }
+
+
 
     pub fn create_camera(&self) -> Camera {
         Camera::new()
