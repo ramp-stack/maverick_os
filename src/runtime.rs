@@ -15,6 +15,8 @@ use crate::hardware;
 pub mod thread;
 pub use thread::{Thread, ThreadRequest, ThreadResponse, ThreadChannelR, Task};
 
+//mod service;
+
 pub struct Channel<S, R>(Sender<String>, Receiver<String>, PhantomData<fn() -> S>, PhantomData<fn() -> R>);
 impl< 
     S: Serialize + for<'a> Deserialize <'a>,
@@ -49,12 +51,6 @@ impl std::fmt::Debug for Error {
 impl<E: std::error::Error> From<E> for Error {
     fn from(error: E) -> Error {Error(error.to_string(), format!("{:?}", error))}
 }
-
-//  //Lives on the background thread
-//  #[async_trait::async_trait]
-//  pub trait BackgroundTask {
-//      async fn run(&mut self, ctx: &mut hardware::Context) -> Result<Duration, Error>;
-//  }
 
 pub type Id = u64;
 
