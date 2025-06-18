@@ -1,6 +1,6 @@
 [package]
 name = "maverick_os"
-version = "0.1.1"
+version = "0.1.5"
 edition = "2024"
 authors = ["Caleb Couch <caleb@orange.me>"]
 description = "Maverick OS"
@@ -8,7 +8,8 @@ license = "BSD-3-Clause"
 repository = "https://github.com/ramp-stack/maverick_os"
 
 [dependencies]
-air = "0.2.2"
+#air = "0.2.2"
+air = {path="../air"}
 async-trait = "0.1.88"
 log = "0.4.27"
 raw-window-handle = "0.6.2"

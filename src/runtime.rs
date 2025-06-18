@@ -1,32 +1,73 @@
 use std::sync::mpsc::{channel, Sender, Receiver};
-use std::collections::hash_map::DefaultHasher;
-use std::time::{Instant, Duration};
-use std::collections::BTreeMap;
-use std::hash::{Hasher, Hash};
+use std::collections::hash_map::Entry;
+use std::collections::HashMap;
+use std::marker::PhantomData;
 use std::future::Future;
-use std::any::TypeId;
-use std::pin::Pin;
-use std::any::Any;
-use downcast_rs::{impl_downcast, Downcast};
+
+pub use async_trait::async_trait;
+pub use tokio::time::Duration;
 use tokio::task::JoinHandle;
 use serde::{Serialize, Deserialize};
 
-const THREAD_TICK: u64 = 16;
-
-pub use async_trait::async_trait;
-
 use crate::State;
 use crate::hardware;
-use crate::air::AirService;
 
-pub type Callback = dyn Fn(&mut State, String);
+mod thread;
+use thread::{Thread, ThreadRequest, ThreadResponse, ThreadChannelR, Task};
+pub use thread::{Service, Context as ThreadContext};
 
-pub trait Services {
-    fn services() -> ServiceList {BTreeMap::new()}
+//mod service;
+
+pub struct Channel<S, R>(Sender<String>, Receiver<String>, PhantomData<fn() -> S>, PhantomData<fn() -> R>);
+impl< 
+    S: Serialize + for<'a> Deserialize <'a>,
+    R: Serialize + for<'a> Deserialize <'a>,
+> Channel<S, R> {
+    pub fn new() -> (Self, Channel<R, S>) {
+        let (a, b) = channel();
+        let (c, d) = channel();
+        (Channel(a, d, PhantomData::<fn() -> S>, PhantomData::<fn() -> R>), Channel(c, b, PhantomData::<fn() -> R>, PhantomData::<fn() -> S>))
+    }
+
+    fn send(&mut self, payload: S) {
+        let _ = self.0.send(serde_json::to_string(&payload).unwrap());
+    }
+
+    fn receive(&mut self) -> Option<R> {
+        self.1.try_recv().ok().map(|r| serde_json::from_str(&r).unwrap())
+    }
 }
 
-pub type ServiceList = BTreeMap<TypeId, Box<dyn for<'a> FnOnce(&'a mut hardware::Context) -> Pin<Box<dyn Future<Output = Box<dyn Service>> + 'a>>>>;
+use std::collections::BTreeMap;
+use std::any::TypeId;
+use std::pin::Pin;
 
+pub type ServiceConstructor = Box<dyn for<'a> Fn(&'a mut hardware::Context) -> Pin<Box<dyn Future<Output = (Box<dyn Thread>, Callback<String>)> + 'a>>>;
+type Dependancies = Box<dyn FnOnce() -> ServiceList>;
+
+#[derive(Default)]
+pub struct ServiceList(pub BTreeMap<TypeId, (ServiceConstructor, Dependancies)>);
+impl ServiceList {
+    pub fn insert<S: thread::Service + 'static>(&mut self) {
+        self.0.insert(TypeId::of::<S>(), (
+            Box::new(|ctx: &mut hardware::Context| Box::pin(async move {
+                let (thread, mut callback) = Task::get(S::new(ctx).await);
+                (thread, Box::new(move |state: &mut State, r: String| {
+                    callback(state, serde_json::from_str(&r).unwrap())
+                }) as Callback<String>)
+            })),
+            Box::new(S::services)
+        ));
+    }
+}
+
+pub trait Services {
+    fn services() -> ServiceList {ServiceList::default()}
+}
+
+pub type Callback<S> = Box<dyn FnMut(&mut State, S)>;
+
+#[derive(Serialize, Deserialize, Clone)]
 pub struct Error(String, String);
 impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {write!(f, "{}", self.0)}
@@ -38,125 +79,146 @@ impl<E: std::error::Error> From<E> for Error {
     fn from(error: E) -> Error {Error(error.to_string(), format!("{:?}", error))}
 }
 
-//Lives on the active thread, Services can talk to each other through the runtime ctx which lives
-//on the active thread.
-#[async_trait::async_trait]
-pub trait Service: Downcast + Send + Sync + Any {
-    async fn new(ctx: &mut hardware::Context) -> Self where Self: Sized;
-    async fn run(&mut self, ctx: &mut ServiceContext, channel: &mut Channel) -> Result<Duration, Error>;
+pub type Id = u64;
 
-    fn background_tasks(&self) -> Vec<Box<dyn BackgroundTask>> {vec![]}
-    fn services(&self) -> ServiceList {BTreeMap::new()}
-    fn callback(&self) -> Box<Callback> {Box::new(|_state: &mut State, _response: String| {})}
+pub enum RuntimeRequest {
+    Request(Id, String),
+    Spawn(Box<dyn Thread>, Callback<String>)
 }
-impl_downcast!(Service);
 
-//Lives on the background thread - Added Send + Sync bounds
-#[async_trait::async_trait]
-pub trait BackgroundTask: Send + Sync {
-    async fn run(&mut self, ctx: &mut hardware::Context) -> Result<Duration, Error>;
+pub struct Handle<R>(Context, Id, PhantomData<R>);
+impl<R: Serialize> Handle<R> {
+    pub fn send(&self, payload: &R) {
+        self.0._send(self.1, serde_json::to_string(payload).unwrap());
+    }
 }
 
 ///Runtime Context enables communication between threads, cheap to clone and messages can be sent
 ///from anywhere
 #[derive(Clone)]
 pub struct Context {
-    sender: Sender<(u64, String)>
+    sender: Sender<RuntimeRequest>
 }
 impl Context {
-    pub fn send<S: Service>(&mut self, payload: String) {
-        self.sender.send((TypeId::of::<S>().get(), payload)).unwrap();
+    pub fn send<
+        T: Thread + 'static,
+    >(&self, payload: &T::Receive) {
+        self.sender.send(RuntimeRequest::Request(T::type_id().expect("Can not send messages to this thread"), serde_json::to_string(payload).unwrap())).unwrap();
+    }
+
+    fn _send(&self, id: Id, payload: String) {
+        self.sender.send(RuntimeRequest::Request(id, payload)).unwrap();
+    }
+
+    pub fn spawn<
+        S: Serialize + for<'a> Deserialize <'a> + Send + 'static,
+        R: Serialize + for<'a> Deserialize <'a> + Send + 'static,
+        X: 'static,
+        T: Task<S, R, X> + 'static
+    >(&self, task: T) -> Handle<R> {
+        let (thread, mut callback) = task.get();
+        let id = thread.id();
+        self.sender.send(RuntimeRequest::Spawn(
+            thread, 
+            Box::new(move |state: &mut State, r: String| {
+                callback(state, serde_json::from_str(&r).unwrap())
+            })
+        )).unwrap();
+        Handle(self.clone(), id, PhantomData::<R>)
     }
 }
 
 pub struct Runtime {
-    runtime: tokio::runtime::Runtime,
-    receiver: Receiver<(u64, String)>,
+    hardware: hardware::Context,
     context: Context,
-    channel: Channel,
-    callbacks: BTreeMap<u64, Box<Callback>>,
-    handles: Vec<JoinHandle<()>>
+    receiver: Receiver<RuntimeRequest>,
+    runtime: tokio::runtime::Runtime,
+    threads: HashMap<Id, (ThreadChannelR, Callback<String>, JoinHandle<()>)>,
+    requests: Vec<(Id, Id)>
 }
 
 impl Runtime {
-    pub async fn background(tasks: Vec<Box<dyn BackgroundTask>>, mut ctx: hardware::Context) {
-        let mut tasks = tasks.into_iter().map(|t| (t, Instant::now(), Duration::ZERO)).collect::<Vec<_>>();
-        loop {
-            for (task, time, duration) in tasks.iter_mut() {
-                if time.elapsed() > *duration {
-                    *time = Instant::now();
-                    match task.run(&mut ctx).await {
-                        Ok(d) => {*duration = d;},
-                        Err(e) => log::error!("Service {} Error:\n{},\n{:?}", std::any::type_name_of_val(&**task), e, e)
-                    }
-                }
-            }
-            std::thread::sleep(Duration::from_secs(THREAD_TICK));
-        }
-    }
-
-    pub fn start<S: Services>(mut hardware: hardware::Context) -> Self {
-        let runtime = tokio::runtime::Builder::new_multi_thread().enable_time().enable_io().build().unwrap();
-        let mut background = BTreeMap::new();
-        let mut services = BTreeMap::new();
-        let mut pre_serv = S::services();
-        pre_serv.insert(TypeId::of::<AirService>(), Box::new(|ctx: &mut hardware::Context| Box::pin(async move {Box::new(AirService::new(ctx).await) as Box<dyn Service>})));
-        while let Some((id, service_gen)) = pre_serv.pop_first() {
-            services.entry(id).or_insert_with(|| {
-                let service = runtime.block_on(service_gen(&mut hardware));
-                pre_serv.extend(service.services().into_iter());
-                background.extend(service.background_tasks().into_iter().map(|s| ((*s).type_id(), s)));
-                service
-            });
-        }
-        let mut handles = Vec::new();
-        #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
-        {
-            if std::env::args().len() > 1 {
-                runtime.block_on(Self::background(background.into_values().collect(), hardware));
-                panic!("Background tasks shutdown");
-            }
-        }
-        #[cfg(any(target_os = "ios", target_os = "android"))]
-        {
-            handles.push(runtime.spawn(Self::background(background.into_values().collect(), hardware.clone())));
-        }
-
+    pub fn start(hardware: hardware::Context) -> Self {
         let (sender, receiver) = channel();
-        let (channel, b) = Channel::new();
-        let callbacks = services.iter().map(|(k, s)| (k.get(), s.callback())).collect();
-        let context = ServiceContext{hardware, services};
-        handles.push(runtime.spawn(ActiveThread::new(context, b).run()));
+        let context = Context{sender};
+        let runtime = tokio::runtime::Builder::new_multi_thread().enable_time().enable_io().build().unwrap();
         Runtime{
-            runtime,
+            hardware,
+            context,
             receiver,
-            context: Context{sender},
-            channel,
-            callbacks,
-            handles
+            runtime,
+            threads: HashMap::new(),
+            requests: Vec::new()
         }
     }
 
     pub fn context(&self) -> &Context {&self.context}
 
-    ///Reads any requests from the context and passes them onto the tasks
-    pub fn tick(&mut self, state: &mut State) {
-        while let Ok((id, payload)) = self.receiver.try_recv() {
-            if self.callbacks.contains_key(&id) {
-                self.channel.send(serde_json::to_string(&Request::Request(id, payload)).unwrap());
+    pub fn tick(&mut self, state: &mut State) -> Result<(), Error> {
+        let mut requests = Vec::new();
+        while let Ok(request) = self.receiver.try_recv() {
+            match request {
+                RuntimeRequest::Spawn(thread, callback) => {self._spawn(thread, callback);},
+                RuntimeRequest::Request(id, payload) => {
+                    requests.push((id, payload));
+                }
             }
         }
 
-        while let Some(recv) = self.channel.receive() {
-            let (id, payload) = serde_json::from_str::<(u64, String)>(&recv).unwrap();
-            self.callbacks.get_mut(&id).unwrap()(state, payload)
-        }
-
-        for handle in &mut self.handles {
-            if handle.is_finished() {
-                self.runtime.block_on(handle).unwrap()
+        for (id, payload) in requests {
+            if let Some(thread) = self.threads.get_mut(&id) {
+                thread.0.send(ThreadRequest::Request(0, payload));
             }
         }
+
+        let keys = self.threads.keys().copied().collect::<Vec<Id>>();
+        for id in keys {
+            let mut thread = self.threads.remove(&id).unwrap();
+            while let Some(recv) = thread.0.receive() {match recv {
+                ThreadResponse::Response(0, r) => (thread.1)(state, r),
+                ThreadResponse::Response(id, r) => {
+                    let task_id = self.requests.iter().find_map(|(i, ti)| (*i == id).then_some(ti)).expect("Responded to missing request");
+                    if let Some(thread) = self.threads.get_mut(task_id) {
+                        thread.0.send(ThreadRequest::Response(id, r));
+                    } else {panic!("Responded to missing thread")}
+                },
+                ThreadResponse::Error(e) => return Err(e),
+                ThreadResponse::Request(req_id, task_id, payload) => {
+                    if let Some(thread) = self.threads.get_mut(&task_id) {
+                        thread.0.send(ThreadRequest::Request(req_id, payload));
+                        self.requests.push((req_id, id))
+                    } else {panic!("Requested to missing thread");}
+                },
+            }}
+            match thread.2.is_finished() {
+                true => {self.runtime.block_on(thread.2).unwrap();},
+                false => {self.threads.insert(id, thread);},
+            }
+        }
+
+        Ok(())
+    }
+
+    fn _spawn(&mut self, thread: Box<dyn Thread>, callback: Callback<String>) -> bool {
+        let id = thread.id();
+        if let Entry::Vacant(e) = self.threads.entry(id) {
+            let (a, b) = Channel::new();
+            let handle = self.runtime.spawn(thread.run(self.hardware.clone(), b));
+            e.insert((a, callback, handle));
+            true
+        } else {false}
+    }
+
+    pub fn spawn<
+        S: Serialize + for<'a> Deserialize <'a> + Send + 'static,
+        R: Serialize + for<'a> Deserialize <'a> + Send + 'static,
+        X: 'static,
+        T: Task<S, R, X> + 'static
+    >(&mut self, task: T) -> bool {
+        let (thread, mut callback) = task.get();
+        self._spawn(thread, Box::new(move |state: &mut State, r: String| {
+            callback(state, serde_json::from_str(&r).unwrap())
+        }))
     }
 
     ///Blocks on non wasm on wasm local spawned threads block until completed
@@ -165,103 +227,19 @@ impl Runtime {
         self.runtime.block_on(future);
     }
 
-    pub fn pause(&mut self) {self.channel.send(serde_json::to_string(&Request::Lifetime(true)).unwrap());}
-    pub fn resume(&mut self) {self.channel.send(serde_json::to_string(&Request::Lifetime(false)).unwrap());}
-    pub fn close(self) {self.runtime.shutdown_background()}
-}
-
-pub struct ServiceContext {
-    pub hardware: hardware::Context,
-    services: BTreeMap<TypeId, Box<dyn Service>>,
-}
-impl ServiceContext {
-    pub fn get<S: Service>(&mut self) -> &mut S {self.services.get_mut(&TypeId::of::<S>()).expect("Service Not Found").downcast_mut().unwrap()}
-}
-
-struct ActiveThread {
-    context: ServiceContext,
-    channel: Channel,
-    channels: BTreeMap<u64, Channel>,
-    handles: BTreeMap<TypeId, (Channel, Instant, Duration)>
-}
-
-impl ActiveThread {
-    pub fn new(context: ServiceContext, channel: Channel) -> Self {
-        let (channels, handles): (BTreeMap<_,_>, BTreeMap<_,_>) = context.services.keys().map(|k| {
-            let (a, b) = Channel::new();
-            ((k.get(), a), (*k, (b, Instant::now(), Duration::ZERO)))
-        }).unzip();
-        ActiveThread{context, channel, channels, handles}
+    pub fn pause(&mut self) {
+        self.threads.values_mut().for_each(|t| t.0.send(ThreadRequest::Pause));
     }
-
-    pub async fn run(mut self) {
-        let mut paused = false;
-        loop {
-            while let Some(request) = self.channel.receive() {
-                match serde_json::from_str::<Request>(&request).unwrap() {
-                    Request::Request(id, payload) => {
-                        self.channels.get_mut(&id).unwrap().send(payload)
-                    },
-                    Request::Lifetime(p) => paused = p
-                }
-            }
-
-            if !paused {
-                for (id, (channel, time, duration)) in &mut self.handles {
-                    if time.elapsed() > *duration {
-                        *time = Instant::now();
-                        let mut service = self.context.services.remove(id).unwrap();
-                        match service.run(&mut self.context, channel).await {
-                            Ok(d) => {*duration = d;},
-                            Err(e) => log::error!("Service {} Error:\n{},\n{:?}", std::any::type_name_of_val(&*service), e, e)
-                        }
-                        self.context.services.insert(*id, service);
-                    }
-                }
-
-                for (id, channel) in &mut self.channels {
-                    while let Some(payload) = channel.receive() {
-                        self.channel.send(serde_json::to_string(&(id, payload)).unwrap());
-                    }
-                }
-                //TODO: sleep for min duration till next task or THREAD_TICK if paused
-            }
-
-            std::thread::sleep(Duration::from_millis(THREAD_TICK));
-        }
-    }
-}
-
-pub struct Channel(Sender<String>, Receiver<String>);
-impl Channel {
-    fn new() -> (Self, Self) {
-        let (a, b) = channel();
-        let (c, d) = channel();
-        (Channel(a, d), Channel(c, b))
-    }
-
-    pub fn send(&mut self, payload: String) {
-        self.0.send(payload).unwrap();
-    }
-
-    pub fn receive(&mut self) -> Option<String> {
-        self.1.try_recv().ok()
-    }
-}
-
-#[derive(Serialize, Deserialize)]
-enum Request {
-    Request(u64, String),
-    Lifetime(bool)
-}
-
-trait TypeIdId {
-    fn get(self) -> u64;
-}
-impl TypeIdId for TypeId {
-    fn get(self) -> u64 {
-        let mut hasher = DefaultHasher::new();
-        self.hash(&mut hasher);
-        hasher.finish()
+    pub fn resume(&mut self) {
+        self.threads.values_mut().for_each(|t| t.0.send(ThreadRequest::Resume));
+    }   
+    pub fn close(self) {
+      //self.runtime.block_on(async {
+      //    self.threads.values_mut().for_each(|t| t.0.send(ThreadRequest::Close));
+      //    for thread in self.threads.into_values() {
+      //        thread.2.await.unwrap()
+      //    }
+      //});
+        self.runtime.shutdown_background();
     }
 }

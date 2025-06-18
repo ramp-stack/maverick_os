@@ -1,28 +1,32 @@
 use std::collections::HashMap;
 use std::fmt::Debug;
+use std::any::TypeId;
 
 use serde::{Serialize, Deserialize};
 
-pub trait Field: Serialize + for<'a> Deserialize <'a> + Default + Debug {
-    fn ident() -> String where Self: Sized + 'static {
-        std::any::type_name::<Self>().to_string()
-    }
-    fn to_bytes(&self) -> Vec<u8> {serde_json::to_vec(self).unwrap()}
-    fn from_bytes(bytes: &[u8]) -> Self where Self: Sized {
-        serde_json::from_slice(bytes).unwrap_or_default()
-    }
+pub trait Field: Serialize + for<'a> Deserialize <'a> + Default {}
+impl<I: Serialize + for<'a> Deserialize <'a> + Default> Field for I {}
+
+#[derive(Debug, Hash, Eq, PartialEq)]
+enum Key {
+    Raw(String),
+    Id(TypeId)
 }
 
-impl<I: Serialize + for<'a> Deserialize <'a> + Default + Debug> Field for I {}
-
-
-#[derive(Debug, Default, Serialize, Deserialize)]
-pub struct State(HashMap<String, Vec<u8>>);
+#[derive(Debug, Default)]
+pub struct State(HashMap<Key, Vec<u8>>);
 impl State {
+    pub fn set_raw(&mut self, key: String, value: Vec<u8>) {
+        self.0.insert(Key::Raw(key), value);
+    }
     pub fn set<F: Field + 'static>(&mut self, item: &F) {
-        self.0.insert(F::ident(), item.to_bytes());
+        self.0.insert(Key::Id(TypeId::of::<F>()), serde_json::to_vec(&item).unwrap());
+    }
+
+    pub fn get_raw(&mut self, key: &str) -> Option<&Vec<u8>> {
+        self.0.get(&Key::Raw(key.to_string()))
     }
     pub fn get<F: Field + 'static>(&self) -> F {
-        self.0.get(&F::ident()).map(|b| F::from_bytes(b)).unwrap_or_default()
+        self.0.get(&Key::Id(TypeId::of::<F>())).and_then(|b| serde_json::from_slice(b).ok()).unwrap_or_default()
     }
 }

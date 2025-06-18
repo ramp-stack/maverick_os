@@ -58,7 +58,7 @@ impl Context {
             clipboard: Clipboard::new(),
             share: Share::new(),
             app_support: ApplicationSupport,
-            cloud: CloudStorage::default(),
+            cloud: CloudStorage,
             photo_picker: PhotoPicker,
         }
     }

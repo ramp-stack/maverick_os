@@ -2,6 +2,7 @@ use winit::window::WindowId;
 pub use winit::event::{WindowEvent, DeviceEvent, DeviceId, TouchPhase, Touch, AxisId, MouseButton, MouseScrollDelta, Modifiers, ElementState, KeyEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::application::ApplicationHandler;
+use winit::event::StartCause;
 
 #[cfg(target_os="android")]
 use winit::platform::android::activity::AndroidApp;
@@ -9,10 +10,14 @@ use winit::platform::android::activity::AndroidApp;
 use winit::platform::android::EventLoopBuilderExtAndroid;
 
 use std::path::PathBuf;
+use std::time::Instant;
+use std::time::Duration;
 use std::sync::Arc;
 
 pub use winit::keyboard::{NamedKey, SmolStr, Key};
 pub use winit::window::Window;
+
+const TICK: Duration = Duration::from_millis(16);//60 fps
 
 ///Window Context contains window information and its handle, The context is cheaply clonable but
 ///does not get remotely updated each resume/resize event creates a new window Context
@@ -98,28 +103,28 @@ impl<E: EventHandler> WindowManager<E> {
     #[cfg(target_os = "android")]
     fn start_loop(mut self, app: AndroidApp) {
         let event_loop = EventLoop::builder().with_android_app(app).build().unwrap();
-        event_loop.set_control_flow(ControlFlow::Poll);
         event_loop.run_app(&mut self).unwrap();
     }
 
     #[cfg(target_arch = "wasm32")]
     fn start_loop(mut self) {
         let event_loop = EventLoop::new().unwrap();
-        event_loop.set_control_flow(ControlFlow::Poll);
+        //event_loop.set_control_flow(ControlFlow::Poll);
         event_loop.run_app(self).unwrap();
     }
 
     #[cfg(not(any(target_os = "android", target_arch = "wasm32")))]
     fn start_loop(mut self) {
         let event_loop = EventLoop::new().unwrap();
-        event_loop.set_control_flow(ControlFlow::Poll);
         event_loop.run_app(&mut self).unwrap();
     }
 }
 
 impl<E: EventHandler> ApplicationHandler for WindowManager<E> {
-    fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
-        if let Some(context) = &self.context { context.handle.request_redraw(); }
+    fn new_events(&mut self, _event_loop: &ActiveEventLoop, cause: StartCause) {
+        if let StartCause::ResumeTimeReached{..} = cause {
+            if let Some(context) = &self.context { context.handle.request_redraw(); }
+        }
     }
 
     fn suspended(&mut self, _event_loop: &ActiveEventLoop) {
@@ -163,7 +168,11 @@ impl<E: EventHandler> ApplicationHandler for WindowManager<E> {
                         event_loop.exit();
                         Event::Lifetime(Lifetime::Close)
                     },
-                    WindowEvent::RedrawRequested => Event::Lifetime(Lifetime::Draw),
+                    WindowEvent::RedrawRequested => {
+                        println!("drawing---------------------");
+                        event_loop.set_control_flow(ControlFlow::WaitUntil(Instant::now()+TICK));
+                        Event::Lifetime(Lifetime::Draw)
+                    },
                     WindowEvent::Occluded(occluded) => {
                         if occluded {
                             self.pause = true;
