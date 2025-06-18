@@ -103,8 +103,7 @@ impl<E: EventHandler> WindowManager<E> {
 
     #[cfg(target_os = "android")]
     fn start_loop(mut self, app: AndroidApp) {
-        let event_loop = EventLoop::builder().with_android_app(self.app).build().unwrap();
-        //event_loop.set_control_flow(ControlFlow::Poll);
+        let event_loop = EventLoop::builder().with_android_app(app).build().unwrap();
         event_loop.run_app(&mut self).unwrap();
     }
 

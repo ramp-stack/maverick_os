@@ -1519,9 +1519,10 @@ dependencies = [
 
 [[package]]
 name = "maverick_os"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "air",
+ "android-activity",
  "async-trait",
  "block",
  "cli-clipboard",

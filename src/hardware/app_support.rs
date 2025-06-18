@@ -2,7 +2,6 @@
 use objc2_foundation::{NSString, NSURL};
 #[cfg(any(target_os = "ios", target_os = "macos"))]
 use objc2::msg_send;
-#[cfg(any(target_os = "ios", target_os = "macos"))]
 use std::path::PathBuf;
 #[cfg(any(target_os = "ios", target_os = "macos"))]
 use objc2::__framework_prelude::AnyObject;
@@ -11,18 +10,14 @@ use objc2::rc::Retained;
 #[cfg(any(target_os = "ios", target_os = "macos"))]
 use objc2::runtime::Bool;
 
-
 #[cfg(target_os = "ios")]
 use std::ffi::CStr;
-
 #[cfg(target_os = "ios")]
 use objc2::runtime::AnyClass;
 
 #[cfg(target_os = "macos")]
 use objc2_foundation::{NSError, NSDictionary, NSAutoreleasePool, NSFileManager, NSSearchPathDirectory, NSSearchPathDomainMask};
 
-#[cfg(any(target_os = "linux", target_os = "windows"))]
-use std::path::PathBuf;
 #[cfg(any(target_os = "linux", target_os = "windows"))]
 use std::env;
 #[cfg(any(target_os = "linux", target_os = "windows"))]
@@ -37,8 +32,43 @@ const NS_USER_DOMAIN_MASK: usize = 1;
 pub struct ApplicationSupport;
 
 impl ApplicationSupport {
-    #[cfg(target_os = "ios")]
+    /// Get the application support directory for the current platform
     pub fn get() -> Option<PathBuf> {
+        #[cfg(target_os = "ios")]
+        {
+            Self::get_ios()
+        }
+
+        #[cfg(target_os = "macos")]
+        {
+            Self::get_macos()
+        }
+
+        #[cfg(target_os = "linux")]
+        {
+            Self::get_linux()
+        }
+
+        #[cfg(target_os = "windows")]
+        {
+            Self::get_windows()
+        }
+
+        #[cfg(target_os = "android")]
+        {
+            // Android doesn't have a traditional application support directory
+            // You might want to use the app's internal storage or external storage
+            None
+        }
+
+        #[cfg(not(any(target_os = "ios", target_os = "macos", target_os = "linux", target_os = "windows", target_os = "android")))]
+        {
+            None
+        }
+    }
+
+    #[cfg(target_os = "ios")]
+    fn get_ios() -> Option<PathBuf> {
         unsafe {
             let file_manager_class = AnyClass::get(c"NSFileManager").unwrap();
             let file_manager: *mut AnyObject = msg_send![file_manager_class, defaultManager];
@@ -69,13 +99,12 @@ impl ApplicationSupport {
             }
 
             let path = CStr::from_ptr(c_str).to_string_lossy().into_owned();
-            let str_path = (*path).to_string();
-            Some(PathBuf::from(str_path))
+            Some(PathBuf::from(path))
         }
     }
 
     #[cfg(target_os = "macos")]
-    pub fn get() -> Option<PathBuf> {
+    fn get_macos() -> Option<PathBuf> {
         unsafe {
             let _pool = NSAutoreleasePool::new();
 
@@ -88,18 +117,13 @@ impl ApplicationSupport {
                 true
             );
 
-            println!("URL: {:?}", url);
-
             if let Ok(mut url) = url {
                 let bundle: *mut AnyObject = msg_send![objc2::class!(NSBundle), mainBundle];
-                println!("Bundle {:?}", bundle);
                 let identifier: *mut NSString = msg_send![bundle, bundleIdentifier];
-                println!("Identifier {:?}", identifier);
 
                 let identifier = if !identifier.is_null() {
                     Retained::retain(identifier).unwrap()
                 } else {
-                    println!("Running outside .app bundle — using fallback identifier");
                     NSString::from_str("org.ramp.orange")
                 };
 
@@ -125,8 +149,7 @@ impl ApplicationSupport {
     }
 
     #[cfg(target_os = "linux")]
-    pub fn get() -> Option<PathBuf> {
-
+    fn get_linux() -> Option<PathBuf> {
         let app_name = "org.ramp.orange";
 
         if let Ok(xdg_data_home) = env::var("XDG_DATA_HOME") {
@@ -151,7 +174,7 @@ impl ApplicationSupport {
     }
 
     #[cfg(target_os = "windows")]
-    pub fn get() -> Option<PathBuf> {
+    fn get_windows() -> Option<PathBuf> {
         let app_name = "org.ramp.orange";
 
         if let Ok(appdata) = env::var("APPDATA") {
@@ -175,23 +198,22 @@ impl ApplicationSupport {
         None
     }
 
+    /// Get the application support directory with a custom app name
     pub fn get_app_name(app_name: &str) -> Option<PathBuf> {
         #[cfg(target_os = "macos")]
-        {
-            Self::get_macos_with_app_name(app_name)
-        }
+        return Self::get_macos_with_app_name(app_name);
+
         #[cfg(target_os = "ios")]
-        {
-            Self::get()
-        }
+        return Self::get_ios(); // iOS uses the app's bundle identifier automatically
+
         #[cfg(target_os = "linux")]
-        {
-            Self::get_linux_with_app_name(app_name)
-        }
+        return Self::get_linux_with_app_name(app_name);
+
         #[cfg(target_os = "windows")]
-        {
-            Self::get_windows_with_app_name(app_name)
-        }
+        return Self::get_windows_with_app_name(app_name);
+
+        #[cfg(not(any(target_os = "macos", target_os = "ios", target_os = "linux", target_os = "windows")))]
+        return None;
     }
 
     #[cfg(target_os = "macos")]
@@ -233,7 +255,6 @@ impl ApplicationSupport {
 
     #[cfg(target_os = "linux")]
     fn get_linux_with_app_name(app_name: &str) -> Option<PathBuf> {
-
         if let Ok(xdg_data_home) = env::var("XDG_DATA_HOME") {
             let path = PathBuf::from(xdg_data_home).join(app_name);
             if let Ok(()) = fs::create_dir_all(&path) {

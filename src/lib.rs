@@ -1,6 +1,9 @@
 use std::sync::{Mutex, Arc};
 use std::future::Future;
 
+#[cfg(target_os = "android")]
+use winit::platform::android::activity::AndroidApp;
+
 mod state;
 pub use state::{Field, State};
 
@@ -60,61 +63,6 @@ impl<A: Application + 'static> MaverickOS<A> {
     ) {
         let hardware = hardware::Context::new();
         let runtime = Runtime::start(hardware.clone());
-
-        //TODO: TESTS
-      //runtime.context().spawn(|mut ctx: runtime::ThreadContext| -> Pin<Box<dyn Future<Output = ()> + Send>>{
-      //    Box::pin(async move {
-      //        loop {
-      //            println!("HELLO");
-      //            ctx.sleep(Duration::from_secs(1)).await
-      //        } 
-      //    })
-      //});
-
-      //runtime.context().spawn(Test);
-      //
-
-      //let h = runtime.context().spawn((
-      //    async |ctx: &mut runtime::thread::Context<u32, String>| {
-      //        println!("Loop");
-      //        while let Some((id, key)) = ctx.get_request() {
-      //            println!("received: {:?}", key);
-      //            ctx.callback(20);
-      //        }
-      //        Ok(Some(Duration::from_secs(1)))
-      //    },
-      //    |state: &mut State, val: u32| println!("sent: {}", val)
-      //));
-
-      //h.send("Hello".to_string());
-      ////h.send(&0);
-
-      //let i = "Hell".to_string();
-
-      //let h = runtime.context().spawn((
-      //    async || {
-      //        println!("Oneshot!");
-      //        "String".to_string()
-      //    }, 
-      //    |state: &mut State, val: String| state.set_raw("Hello".to_string(), val.as_bytes().to_vec())
-      //));
-
-
-
-      //runtime.context().spawn((
-      //    async |mut ctx: runtime::ThreadContext| {
-      //        loop {
-      //            println!("HELLO");
-      //            ctx.sleep(Duration::from_secs(1)).await;
-      //            ctx.channel.send(&"HI".to_string());
-      //            println!("Wake");
-      //        } 
-      //    },
-      //    move |state: &mut State, response: String| {
-      //        println!("callback: {}, {}", response, i);
-      //    }
-      //));
-
         WindowManager::start(
             #[cfg(target_os = "android")]
             app,

@@ -5,7 +5,7 @@ use std::fmt::Debug;
 use serde::{Serialize, Deserialize};
 
 #[cfg(target_os = "android")]
-use winit_crate::platform::android::activity::AndroidApp;
+use winit::platform::android::activity::AndroidApp;
 
 #[cfg(not(target_arch = "wasm32"))]
 use tokio::sync::Mutex;

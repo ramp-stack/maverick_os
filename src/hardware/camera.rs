@@ -9,7 +9,6 @@ use crate::hardware::camera::apple::*;
 #[cfg(target_os = "android")]
 mod android;
 
-
 #[cfg(target_os = "android")]
 use crate::hardware::camera::android::*;
 
@@ -46,6 +45,11 @@ impl Camera {
         return Camera(camera)
     }
 
+    #[cfg(not(any(target_os = "macos", target_os = "ios", target_os = "android")))]
+    pub fn new() -> Self {
+        todo!("Camera not supported on this platform")
+    }
+
     #[cfg(any(target_os = "macos", target_os = "ios"))]
     pub fn get_frame(&mut self) -> Result<RgbaImage, CameraError> {
         self.0.get_latest_frame().ok_or(CameraError::FailedToGetFrame)
@@ -57,6 +61,11 @@ impl Camera {
         return self.0.get_latest_frame().map_err(|_| CameraError::FailedToGetFrame);
 
         Err(CameraError::FailedToGetFrame)
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "ios", target_os = "android")))]
+    pub fn get_frame(&mut self) -> Result<RgbaImage, CameraError> {
+        todo!("Camera not supported on this platform")
     }
 }
 
