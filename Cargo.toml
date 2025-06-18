@@ -9,7 +9,8 @@ repository = "https://github.com/ramp-stack/maverick_os"
 
 
 [dependencies]
-air = "0.2.2"
+#air = "0.2.2"
+air = {path="../air"}
 async-trait = "0.1.88"
 log = "0.4.27"
 raw-window-handle = "0.6.2"
