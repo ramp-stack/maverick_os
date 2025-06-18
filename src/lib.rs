@@ -1,11 +1,13 @@
+use std::collections::BTreeMap;
 use std::sync::{Mutex, Arc};
 use std::future::Future;
+use std::any::TypeId;
 
 #[cfg(target_os = "android")]
 use winit::platform::android::activity::AndroidApp;
 
 mod state;
-pub use state::{Field, State};
+pub use state::State;
 
 pub mod hardware;
 pub use crate::hardware::{
@@ -18,7 +20,7 @@ pub use crate::hardware::{
     {Camera, CameraError},
 };
 pub mod runtime;
-use runtime::Runtime;
+use runtime::{Runtime, Services, ServiceConstructor};
 
 pub mod window;
 use window::{WindowManager, EventHandler, Event, Lifetime};
@@ -27,15 +29,13 @@ pub mod prelude {
     pub use crate::{MaverickOS, Application, start};
 }
 
-//pub mod air;
-//  use air::AirTask;
+pub mod air;
 
-pub trait Application {
+pub trait Application: Services {
     fn new(context: &mut Context) -> impl Future<Output = Self>;
     fn on_event(&mut self, context: &mut Context, event: Event) -> impl Future<Output = ()>;
 }
 
-//TODO: Include service Clients
 pub struct Context {
     pub state: Arc<Mutex<State>>,
     pub window: window::Context,
@@ -43,18 +43,13 @@ pub struct Context {
     pub hardware: hardware::Context,
 }
 
+//TODO: Need seperate cache for OS level
+//TODO: All cloud access needs to go through the OS
 pub struct MaverickOS<A: Application> {
     context: Context,
+    services: BTreeMap<TypeId, ServiceConstructor>,
     app: Option<A>
 }
-
-//  pub struct Test;
-//  #[async_trait::async_trait]
-//  impl runtime::Thread for Test {
-//      async fn run(self: Box<Self>, ctx: runtime::ThreadContext) {
-//          println!("HELE");
-//      }
-//  }
 
 impl<A: Application + 'static> MaverickOS<A> {
     pub fn start(
@@ -63,6 +58,7 @@ impl<A: Application + 'static> MaverickOS<A> {
     ) {
         let hardware = hardware::Context::new();
         let runtime = Runtime::start(hardware.clone());
+
         WindowManager::start(
             #[cfg(target_os = "android")]
             app,
@@ -71,12 +67,22 @@ impl<A: Application + 'static> MaverickOS<A> {
     }
 
     fn new(context: Context) -> Self {
-        MaverickOS::<A>{context, app: None}
+        let mut services = BTreeMap::new();
+        let mut pre = A::services().0;
+        while let Some((id, (constructor, deps))) = pre.pop_first() {
+            services.entry(id).or_insert_with(|| {
+                pre.extend(deps().0);
+                constructor
+            });
+        }
+        MaverickOS::<A>{context, services, app: None}
     }
 
-    ///Receiving the first Resume should trigger the MaverickOS new function accepting zero args
     async fn on_event(&mut self, event: Event) {
         if self.app.is_none() {
+            for service in self.services.values() {
+                self.context.runtime.spawn(service(&mut self.context.hardware).await); 
+            }
             self.app = Some(A::new(&mut self.context).await);
         }
         self.app.as_mut().unwrap().on_event(&mut self.context, event).await;
@@ -98,7 +104,7 @@ impl<A: Application> MaverickService<A> {
 impl<A: Application + 'static> EventHandler for MaverickService<A> {
     fn event(&mut self, window_ctx: &window::Context, event: Event) {
         if let Some(runtime) = self.runtime.as_mut() {
-            runtime.tick(&mut self.state.lock().unwrap());
+            runtime.tick(&mut self.state.lock().unwrap()).unwrap();
             if self.os.is_none() {
                 self.os = Some(MaverickOS::new(Context{
                     hardware: self.hardware.take().unwrap(),

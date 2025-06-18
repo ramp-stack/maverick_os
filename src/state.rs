@@ -4,8 +4,8 @@ use std::any::TypeId;
 
 use serde::{Serialize, Deserialize};
 
-pub trait Field: Serialize + for<'a> Deserialize <'a> + Default + Debug {}
-impl<I: Serialize + for<'a> Deserialize <'a> + Default + Debug> Field for I {}
+pub trait Field: Serialize + for<'a> Deserialize <'a> + Default {}
+impl<I: Serialize + for<'a> Deserialize <'a> + Default> Field for I {}
 
 #[derive(Debug, Hash, Eq, PartialEq)]
 enum Key {

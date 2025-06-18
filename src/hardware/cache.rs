@@ -30,18 +30,16 @@ impl Cache {
     }
 
     pub async fn set<
-        K: Serialize + for<'a> Deserialize <'a>,
         V: Serialize + for<'a> Deserialize <'a> + Default,
-    >(&self, key: K, value: V) {
+    >(&self, key: &str, value: V) {
         self.0.lock().await.execute(
             "INSERT INTO kvs(key, value) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET value=excluded.value;",
             [hex::encode(serde_json::to_vec(&key).unwrap()), hex::encode(serde_json::to_vec(&value).unwrap())]
         ).unwrap();
     }
     pub async fn get<
-        K: Serialize + for<'a> Deserialize <'a>,
         V: Serialize + for<'a> Deserialize <'a> + Default,
-    >(&self, key: &K) -> V {
+    >(&self, key: &str) -> V {
         let db = self.0.lock().await;
         let mut stmt = db.prepare(
             &format!("SELECT value FROM kvs where key = \'{}\'", hex::encode(serde_json::to_vec(&key).unwrap())),

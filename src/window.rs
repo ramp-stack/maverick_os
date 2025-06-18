@@ -85,7 +85,6 @@ pub trait EventHandler {
 pub struct WindowManager<E: EventHandler + 'static> {
     context: Option<Context>,
     event_handler: E,
-    instant: Instant,
     pause: bool
 }
 
@@ -95,7 +94,7 @@ impl<E: EventHandler> WindowManager<E> {
         app: AndroidApp,
         event_handler: E
     ) {
-        WindowManager{context: None, event_handler, instant: Instant::now(), pause: false}.start_loop(
+        WindowManager{context: None, event_handler, pause: false}.start_loop(
             #[cfg(target_os = "android")]
             app
         )
@@ -170,7 +169,8 @@ impl<E: EventHandler> ApplicationHandler for WindowManager<E> {
                         Event::Lifetime(Lifetime::Close)
                     },
                     WindowEvent::RedrawRequested => {
-                        event_loop.set_control_flow(ControlFlow::WaitUntil(self.instant+TICK));
+                        println!("drawing---------------------");
+                        event_loop.set_control_flow(ControlFlow::WaitUntil(Instant::now()+TICK));
                         Event::Lifetime(Lifetime::Draw)
                     },
                     WindowEvent::Occluded(occluded) => {

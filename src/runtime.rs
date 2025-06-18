@@ -12,8 +12,11 @@ use serde::{Serialize, Deserialize};
 use crate::State;
 use crate::hardware;
 
-pub mod thread;
-pub use thread::{Thread, ThreadRequest, ThreadResponse, ThreadChannelR, Task};
+mod thread;
+use thread::{Thread, ThreadRequest, ThreadResponse, ThreadChannelR, Task};
+pub use thread::{Service, Context as ThreadContext};
+
+//mod service;
 
 pub struct Channel<S, R>(Sender<String>, Receiver<String>, PhantomData<fn() -> S>, PhantomData<fn() -> R>);
 impl< 
@@ -35,6 +38,32 @@ impl<
     }
 }
 
+use std::collections::BTreeMap;
+use std::any::TypeId;
+use std::pin::Pin;
+
+pub type ServiceConstructor = Box<dyn for<'a> Fn(&'a mut hardware::Context) -> Pin<Box<dyn Future<Output = (Box<dyn Thread>, Callback<String>)> + 'a>>>;
+type Dependancies = Box<dyn FnOnce() -> ServiceList>;
+
+#[derive(Default)]
+pub struct ServiceList(pub BTreeMap<TypeId, (ServiceConstructor, Dependancies)>);
+impl ServiceList {
+    pub fn insert<S: thread::Service + 'static>(&mut self) {
+        self.0.insert(TypeId::of::<S>(), (
+            Box::new(|ctx: &mut hardware::Context| Box::pin(async move {
+                let (thread, mut callback) = Task::get(S::new(ctx).await);
+                (thread, Box::new(move |state: &mut State, r: String| {
+                    callback(state, serde_json::from_str(&r).unwrap())
+                }) as Callback<String>)
+            })),
+            Box::new(S::services)
+        ));
+    }
+}
+
+pub trait Services {
+    fn services() -> ServiceList {ServiceList::default()}
+}
 
 pub type Callback<S> = Box<dyn FnMut(&mut State, S)>;
 
@@ -50,12 +79,6 @@ impl<E: std::error::Error> From<E> for Error {
     fn from(error: E) -> Error {Error(error.to_string(), format!("{:?}", error))}
 }
 
-//  //Lives on the background thread
-//  #[async_trait::async_trait]
-//  pub trait BackgroundTask {
-//      async fn run(&mut self, ctx: &mut hardware::Context) -> Result<Duration, Error>;
-//  }
-
 pub type Id = u64;
 
 pub enum RuntimeRequest {
@@ -63,10 +86,10 @@ pub enum RuntimeRequest {
     Spawn(Box<dyn Thread>, Callback<String>)
 }
 
-pub struct Handle<S>(Context, Id, PhantomData<S>);
-impl<S: Serialize> Handle<S> {
-    pub fn send(&self, payload: S) {
-        self.0.send(self.1, serde_json::to_string(&payload).unwrap());
+pub struct Handle<R>(Context, Id, PhantomData<R>);
+impl<R: Serialize> Handle<R> {
+    pub fn send(&self, payload: &R) {
+        self.0._send(self.1, serde_json::to_string(payload).unwrap());
     }
 }
 
@@ -77,7 +100,13 @@ pub struct Context {
     sender: Sender<RuntimeRequest>
 }
 impl Context {
-    fn send(&self, id: Id, payload: String) {
+    pub fn send<
+        T: Thread + 'static,
+    >(&self, payload: &T::Receive) {
+        self.sender.send(RuntimeRequest::Request(T::type_id().expect("Can not send messages to this thread"), serde_json::to_string(payload).unwrap())).unwrap();
+    }
+
+    fn _send(&self, id: Id, payload: String) {
         self.sender.send(RuntimeRequest::Request(id, payload)).unwrap();
     }
 
@@ -105,6 +134,7 @@ pub struct Runtime {
     receiver: Receiver<RuntimeRequest>,
     runtime: tokio::runtime::Runtime,
     threads: HashMap<Id, (ThreadChannelR, Callback<String>, JoinHandle<()>)>,
+    requests: Vec<(Id, Id)>
 }
 
 impl Runtime {
@@ -118,16 +148,17 @@ impl Runtime {
             receiver,
             runtime,
             threads: HashMap::new(),
+            requests: Vec::new()
         }
     }
 
     pub fn context(&self) -> &Context {&self.context}
 
-    pub fn tick(&mut self, state: &mut State) {
+    pub fn tick(&mut self, state: &mut State) -> Result<(), Error> {
         let mut requests = Vec::new();
         while let Ok(request) = self.receiver.try_recv() {
             match request {
-                RuntimeRequest::Spawn(thread, callback) => {self.spawn(thread, callback);},
+                RuntimeRequest::Spawn(thread, callback) => {self._spawn(thread, callback);},
                 RuntimeRequest::Request(id, payload) => {
                     requests.push((id, payload));
                 }
@@ -140,19 +171,35 @@ impl Runtime {
             }
         }
 
-        self.threads = self.threads.drain().filter_map(|(id, mut thread)| {
+        let keys = self.threads.keys().copied().collect::<Vec<Id>>();
+        for id in keys {
+            let mut thread = self.threads.remove(&id).unwrap();
             while let Some(recv) = thread.0.receive() {match recv {
                 ThreadResponse::Response(0, r) => (thread.1)(state, r),
-                _ => todo!()
+                ThreadResponse::Response(id, r) => {
+                    let task_id = self.requests.iter().find_map(|(i, ti)| (*i == id).then_some(ti)).expect("Responded to missing request");
+                    if let Some(thread) = self.threads.get_mut(task_id) {
+                        thread.0.send(ThreadRequest::Response(id, r));
+                    } else {panic!("Responded to missing thread")}
+                },
+                ThreadResponse::Error(e) => return Err(e),
+                ThreadResponse::Request(req_id, task_id, payload) => {
+                    if let Some(thread) = self.threads.get_mut(&task_id) {
+                        thread.0.send(ThreadRequest::Request(req_id, payload));
+                        self.requests.push((req_id, id))
+                    } else {panic!("Requested to missing thread");}
+                },
             }}
             match thread.2.is_finished() {
-                true => {self.runtime.block_on(thread.2).unwrap(); None},
-                false => Some((id, thread))
+                true => {self.runtime.block_on(thread.2).unwrap();},
+                false => {self.threads.insert(id, thread);},
             }
-        }).collect();
+        }
+
+        Ok(())
     }
 
-    fn spawn(&mut self, thread: Box<dyn Thread>, callback: Callback<String>) -> bool {
+    fn _spawn(&mut self, thread: Box<dyn Thread>, callback: Callback<String>) -> bool {
         let id = thread.id();
         if let Entry::Vacant(e) = self.threads.entry(id) {
             let (a, b) = Channel::new();
@@ -160,6 +207,18 @@ impl Runtime {
             e.insert((a, callback, handle));
             true
         } else {false}
+    }
+
+    pub fn spawn<
+        S: Serialize + for<'a> Deserialize <'a> + Send + 'static,
+        R: Serialize + for<'a> Deserialize <'a> + Send + 'static,
+        X: 'static,
+        T: Task<S, R, X> + 'static
+    >(&mut self, task: T) -> bool {
+        let (thread, mut callback) = task.get();
+        self._spawn(thread, Box::new(move |state: &mut State, r: String| {
+            callback(state, serde_json::from_str(&r).unwrap())
+        }))
     }
 
     ///Blocks on non wasm on wasm local spawned threads block until completed
