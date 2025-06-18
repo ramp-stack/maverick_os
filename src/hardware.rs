@@ -50,7 +50,6 @@ impl Context {
         })
     }
 
-    /// Creates a new hardware context for non-Android platforms
     #[cfg(not(target_os = "android"))]
     pub(crate) fn new() -> Self {
         Self {
@@ -71,7 +70,6 @@ impl Context {
         self.create_camera()
     }
 
-    // Existing helper functions
     pub fn paste(&self) -> String {
         Clipboard::get()
     }
@@ -93,9 +91,7 @@ impl Context {
 
         #[cfg(not(any(target_os = "ios", target_os = "android")))]
         {
-            // Explicitly use the parameter to avoid unused variable warning
             let _ = text;
-            // Could log or handle unsupported platform here
         }
     }
 
