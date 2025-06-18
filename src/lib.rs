@@ -55,8 +55,6 @@ impl<A: Application + 'static> MaverickOS<A> {
     ) {
         #[cfg(target_os = "android")]
         {
-            // This is a placeholder - in a real implementation, you'd get these from the JNI layer
-            // You might need to restructure this to accept JNI parameters or get them differently
             panic!("Android JNI context initialization needs to be implemented");
         }
 

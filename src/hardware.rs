@@ -13,6 +13,7 @@ use jni::{JNIEnv, objects::JObject};
 
 use std::sync::mpsc::Sender;
 
+
 pub use cache::Cache;
 pub use clipboard::Clipboard;
 pub use camera::{Camera, CameraError};
@@ -62,12 +63,15 @@ impl Context {
         }
     }
 
-
-
     pub fn create_camera(&self) -> Camera {
         Camera::new()
     }
 
+    pub fn open_camera(&self) -> Camera {
+        self.create_camera()
+    }
+
+    // Existing helper functions
     pub fn paste(&self) -> String {
         Clipboard::get()
     }
@@ -176,13 +180,12 @@ impl Context {
         Clipboard::initialize(env, context)?;
 
         Share::initialize().map_err(|e| {
-            jni::errors::Error::JavaException // Convert the error appropriately
+            jni::errors::Error::JavaException 
         })?;
 
         if let Ok(vm) = unsafe { jni::JavaVM::from_raw(env.get_java_vm()?.get_java_vm_pointer()) } {
             if let Err(e) = CloudStorage::init_java_vm(vm) {
                 eprintln!("Warning: Failed to initialize CloudStorage JavaVM: {}", e);
-                // Don't fail the entire initialization if cloud storage fails
             }
         }
 

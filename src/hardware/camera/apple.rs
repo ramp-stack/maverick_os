@@ -3,16 +3,24 @@
 use std::sync::Mutex;
 use std::slice::from_raw_parts;
 
+#[cfg(any(target_os = "ios", target_os = "macos"))]
 use dispatch2::DispatchQueue;
 use image::{Rgba, RgbaImage};
 
+#[cfg(any(target_os = "ios", target_os = "macos"))]
 use objc2::__framework_prelude::NSObject;
+#[cfg(any(target_os = "ios", target_os = "macos"))]
 use objc2::rc::Retained;
+#[cfg(any(target_os = "ios", target_os = "macos"))]
 use objc2::runtime::{NSObjectProtocol, ProtocolObject};
+#[cfg(any(target_os = "ios", target_os = "macos"))]
 use objc2::{define_class, AllocAnyThread, DeclaredClass};
+#[cfg(any(target_os = "ios", target_os = "macos"))]
 use objc2_foundation::{ NSArray, NSDictionary, NSNumber, NSString};
+#[cfg(any(target_os = "ios", target_os = "macos"))]
 use objc2_core_media::CMSampleBuffer;
 
+#[cfg(any(target_os = "ios", target_os = "macos"))]
 use objc2_av_foundation::{
     AVCaptureConnection,
     AVCaptureDeviceDiscoverySession,
@@ -26,6 +34,7 @@ use objc2_av_foundation::{
     AVCaptureDevicePosition
 };
 
+#[cfg(any(target_os = "ios", target_os = "macos"))]
 use objc2_core_video::{
     kCVPixelFormatType_32BGRA,
     CVPixelBufferGetHeight,
@@ -147,12 +156,14 @@ impl Processor {
     // }
 }
 
+#[cfg(any(target_os = "ios", target_os = "macos"))]
 #[derive(Debug, Clone)]
 pub struct AppleCamera {
     pub session: Retained<AVCaptureSession>,
     processor: Retained<Processor>,
 }
 
+#[cfg(any(target_os = "ios", target_os = "macos"))]
 impl AppleCamera {
     pub fn new() -> Self {
         unsafe {

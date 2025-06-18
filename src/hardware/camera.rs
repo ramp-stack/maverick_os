@@ -1,82 +1,189 @@
-use image::RgbaImage;
-
-#[cfg(any(target_os = "ios", target_os = "macos"))]
-mod apple;
-
-#[cfg(any(target_os = "ios", target_os = "macos"))]
-use crate::hardware::camera::apple::*;
+mod cache;
+mod camera;
+mod share;
+mod clipboard;
+mod app_support;
+mod cloud;
+mod haptics;
+mod photo_picker;
+mod safe_area;
 
 #[cfg(target_os = "android")]
-mod android;
+use jni::{JNIEnv, objects::JObject};
 
-#[cfg(target_os = "android")]
-use crate::hardware::camera::android::*;
+use std::sync::mpsc::Sender;
 
-#[derive(Debug)]
-pub enum CameraError {
-    AccessDenied,
-    WaitingForAccess,
-    FailedToGetFrame
+
+pub use cache::Cache;
+pub use clipboard::Clipboard;
+pub use camera::{Camera, CameraError};
+pub use share::Share;
+pub use app_support::ApplicationSupport;
+pub use cloud::CloudStorage;
+pub use photo_picker::{PhotoPicker, ImageOrientation};
+
+/// Hardware context contains interfaces to various hardware.
+/// All interfaces should be clonable or internally synchronized and safe to call from multiple places.
+#[derive(Clone)]
+pub struct Context {
+    pub cache: Cache,
+    #[cfg(target_os = "android")]
+    pub clipboard: Clipboard,
+    #[cfg(not(target_os = "android"))]
+    pub clipboard: Clipboard,
+    pub share: Share,
+    pub app_support: ApplicationSupport,
+    pub cloud: CloudStorage,
+    pub photo_picker: PhotoPicker,
 }
 
-#[derive(Debug, Clone)]
-pub struct Camera (
-    #[cfg(any(target_os = "macos", target_os = "ios"))]
-    AppleCamera,
+impl Context {
     #[cfg(target_os = "android")]
-    AndroidCamera,
-);
-
-impl Camera {
-    #[cfg(any(target_os = "macos", target_os = "ios"))]
-    pub fn new() -> Self {
-        // #[cfg(target_os = "ios")]
-        // start_camera_apple();
-
-        let camera = AppleCamera::new();
-        camera.open_camera();
-        Camera(camera)
+    pub(crate) fn new(env: &mut JNIEnv, context: JObject) -> Result<Self, jni::errors::Error> {
+        Ok(Self {
+            cache: Cache::new(),
+            clipboard: Clipboard::new(env, context)?,
+            share: Share::new(),
+            app_support: ApplicationSupport,
+            cloud: CloudStorage::default(),
+            photo_picker: PhotoPicker,
+        })
     }
 
-    #[cfg(target_os = "android")]
-    pub fn new() -> Self {
-        let mut camera = AndroidCamera::new().expect("Failed to create Android camera");
-        camera.open_camera();
-        return Camera(camera)
+    #[cfg(not(target_os = "android"))]
+    pub(crate) fn new() -> Self {
+        Self {
+            cache: Cache::new(),
+            clipboard: Clipboard::new(),
+            share: Share::new(),
+            app_support: ApplicationSupport,
+            cloud: CloudStorage::default(),
+            photo_picker: PhotoPicker,
+        }
     }
 
-    #[cfg(not(any(target_os = "macos", target_os = "ios", target_os = "android")))]
-    pub fn new() -> Self {
-        todo!("Camera not supported on this platform")
+    pub fn open_camera(&self) -> Result<RgbaImage, CameraError> {
+        Camera::open_and_get_frame()
     }
 
-    #[cfg(any(target_os = "macos", target_os = "ios"))]
-    pub fn get_frame(&mut self) -> Result<RgbaImage, CameraError> {
-        self.0.get_latest_frame().ok_or(CameraError::FailedToGetFrame)
+    pub fn paste(&self) -> String {
+        Clipboard::get()
     }
 
-    #[cfg(target_os = "android")]
-    pub fn get_frame(&mut self) -> Result<RgbaImage, CameraError> {
+    pub fn copy(&self, text: String) {
+        Clipboard::set(text);
+    }
+
+    pub fn share(&self, text: &str) {
+        #[cfg(target_os = "ios")]
+        {
+            Share::share(text);
+        }
+
         #[cfg(target_os = "android")]
-        return self.0.get_latest_frame().map_err(|_| CameraError::FailedToGetFrame);
+        {
+            self.share.share(text);
+        }
 
-        Err(CameraError::FailedToGetFrame)
+        #[cfg(not(any(target_os = "ios", target_os = "android")))]
+        {
+            // Explicitly use the parameter to avoid unused variable warning
+            let _ = text;
+            // Could log or handle unsupported platform here
+        }
     }
 
-    #[cfg(not(any(target_os = "macos", target_os = "ios", target_os = "android")))]
-    pub fn get_frame(&mut self) -> Result<RgbaImage, CameraError> {
-        todo!("Camera not supported on this platform")
+    pub fn get_app_support_path(&self) -> Option<std::path::PathBuf> {
+        ApplicationSupport::get()
     }
-}
 
-impl Default for Camera {
-    fn default() -> Self {
-        Self::new()
+    pub fn open_photo_picker(&self, sender: Sender<(Vec<u8>, ImageOrientation)>) {
+        PhotoPicker::open(sender);
     }
-}
 
-impl Drop for Camera {
-    fn drop(&mut self) {
-        println!("Stopping Camera");
+    pub fn cloud_save(&self, key: &str, value: &str) -> Result<(), Box<dyn std::error::Error>> {
+        #[cfg(any(target_os = "macos", target_os = "ios"))]
+        {
+            CloudStorage::save(key, value).map_err(|e| e.into())
+        }
+
+        #[cfg(target_os = "android")]
+        {
+            CloudStorage::save(key, value).map_err(|e| format!("{:?}", e).into())
+        }
+
+        #[cfg(not(any(target_os = "macos", target_os = "ios", target_os = "android")))]
+        {
+            Err("CloudStorage not supported on this platform".into())
+        }
+    }
+
+    pub fn cloud_get(&self, key: &str) -> Result<Option<String>, Box<dyn std::error::Error>> {
+        #[cfg(any(target_os = "macos", target_os = "ios"))]
+        {
+            CloudStorage::get(key).map_err(|e| e.into())
+        }
+
+        #[cfg(target_os = "android")]
+        {
+            CloudStorage::get(key).map_err(|e| format!("{:?}", e).into())
+        }
+
+        #[cfg(not(any(target_os = "macos", target_os = "ios", target_os = "android")))]
+        {
+            Err("CloudStorage not supported on this platform".into())
+        }
+    }
+
+    pub fn cloud_remove(&self, key: &str) -> Result<(), Box<dyn std::error::Error>> {
+        #[cfg(any(target_os = "macos", target_os = "ios"))]
+        {
+            CloudStorage::remove(key).map_err(|e| e.into())
+        }
+
+        #[cfg(target_os = "android")]
+        {
+            CloudStorage::remove(key).map_err(|e| format!("{:?}", e).into())
+        }
+
+        #[cfg(not(any(target_os = "macos", target_os = "ios", target_os = "android")))]
+        {
+            Err("CloudStorage not supported on this platform".into())
+        }
+    }
+
+    pub fn cloud_clear(&self) -> Result<(), Box<dyn std::error::Error>> {
+        #[cfg(any(target_os = "macos", target_os = "ios"))]
+        {
+            CloudStorage::clear().map_err(|e| e.into())
+        }
+
+        #[cfg(target_os = "android")]
+        {
+            CloudStorage::clear().map_err(|e| format!("{:?}", e).into())
+        }
+
+        #[cfg(not(any(target_os = "macos", target_os = "ios", target_os = "android")))]
+        {
+            Err("CloudStorage not supported on this platform".into())
+        }
+    }
+
+    #[cfg(target_os = "android")]
+    pub fn initialize(env: &mut JNIEnv, context: JObject) -> Result<(), jni::errors::Error> {
+        Clipboard::initialize(env, context)?;
+
+        Share::initialize().map_err(|e| {
+            jni::errors::Error::JavaException // Convert the error appropriately
+        })?;
+
+        if let Ok(vm) = unsafe { jni::JavaVM::from_raw(env.get_java_vm()?.get_java_vm_pointer()) } {
+            if let Err(e) = CloudStorage::init_java_vm(vm) {
+                eprintln!("Warning: Failed to initialize CloudStorage JavaVM: {}", e);
+                // Don't fail the entire initialization if cloud storage fails
+            }
+        }
+
+        Ok(())
     }
 }
