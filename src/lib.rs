@@ -56,10 +56,8 @@ impl<A: Application + 'static> MaverickOS<A> {
         #[cfg(target_os = "android")]
         app: AndroidApp
     ) {
-        #[cfg(target_os = "android")]
-        {
-            panic!("Android JNI context initialization needs to be implemented");
-        }
+        let hardware = hardware::Context::new();
+        let runtime = Runtime::start(hardware.clone());
 
         WindowManager::start(
             #[cfg(target_os = "android")]
@@ -83,7 +81,7 @@ impl<A: Application + 'static> MaverickOS<A> {
     async fn on_event(&mut self, event: Event) {
         if self.app.is_none() {
             for service in self.services.values() {
-                self.context.runtime.spawn(service(&mut self.context.hardware).await); 
+                self.context.runtime.spawn(service(&mut self.context.hardware).await);
             }
             self.app = Some(A::new(&mut self.context).await);
         }

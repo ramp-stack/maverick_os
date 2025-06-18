@@ -8,11 +8,7 @@ mod haptics;
 mod photo_picker;
 mod safe_area;
 
-#[cfg(target_os = "android")]
-use jni::{JNIEnv, objects::JObject};
-
 use std::sync::mpsc::Sender;
-
 
 pub use cache::Cache;
 pub use clipboard::Clipboard;
@@ -27,9 +23,6 @@ pub use photo_picker::{PhotoPicker, ImageOrientation};
 #[derive(Clone)]
 pub struct Context {
     pub cache: Cache,
-    #[cfg(target_os = "android")]
-    pub clipboard: Clipboard,
-    #[cfg(not(target_os = "android"))]
     pub clipboard: Clipboard,
     pub share: Share,
     pub app_support: ApplicationSupport,
@@ -39,15 +32,15 @@ pub struct Context {
 
 impl Context {
     #[cfg(target_os = "android")]
-    pub(crate) fn new(env: &mut JNIEnv, context: JObject) -> Result<Self, jni::errors::Error> {
-        Ok(Self {
+    pub(crate) fn new() -> Self {
+        Self {
             cache: Cache::new(),
-            clipboard: Clipboard::new(env, context)?,
+            clipboard: Clipboard::new().expect("Clipboard must be initialized before Context::new()"),
             share: Share::new(),
             app_support: ApplicationSupport,
             cloud: CloudStorage::default(),
             photo_picker: PhotoPicker,
-        })
+        }
     }
 
     #[cfg(not(target_os = "android"))]
@@ -169,22 +162,5 @@ impl Context {
         {
             Err("CloudStorage not supported on this platform".into())
         }
-    }
-
-    #[cfg(target_os = "android")]
-    pub fn initialize(env: &mut JNIEnv, context: JObject) -> Result<(), jni::errors::Error> {
-        Clipboard::initialize(env, context)?;
-
-        Share::initialize().map_err(|e| {
-            jni::errors::Error::JavaException 
-        })?;
-
-        if let Ok(vm) = unsafe { jni::JavaVM::from_raw(env.get_java_vm()?.get_java_vm_pointer()) } {
-            if let Err(e) = CloudStorage::init_java_vm(vm) {
-                eprintln!("Warning: Failed to initialize CloudStorage JavaVM: {}", e);
-            }
-        }
-
-        Ok(())
     }
 }
