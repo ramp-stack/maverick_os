@@ -242,11 +242,14 @@ impl<
                     match result {
                         Ok(None) => return,
                         Ok(Some(dur)) => duration = dur,
-                        Err(e) if error_count < 3 => {
+                        Err(e) if error_count < 2 => {
                             error_count += 1; 
                             log::error!("Thread {}, Errored {} :? {:?}", self.id(), e, e)
                         },
-                        Err(e) => ctx.channel.send(ThreadResponse::Error(e))
+                        Err(e) => {
+                            ctx.channel.send(ThreadResponse::Error(e));
+                            break;
+                        }
                     }
                 } else {
                     tokio::time::sleep(duration - elapsed).await
