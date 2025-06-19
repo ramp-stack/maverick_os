@@ -169,7 +169,6 @@ impl<E: EventHandler> ApplicationHandler for WindowManager<E> {
                         Event::Lifetime(Lifetime::Close)
                     },
                     WindowEvent::RedrawRequested => {
-                        println!("drawing---------------------");
                         event_loop.set_control_flow(ControlFlow::WaitUntil(Instant::now()+TICK));
                         Event::Lifetime(Lifetime::Draw)
                     },

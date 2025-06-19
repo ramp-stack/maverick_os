@@ -70,7 +70,7 @@ impl ThreadService for Service {
         for (response, (client, id)) in res.batch()?.into_iter().zip(clients) {
             ctx.respond(id, client.process_response(&mut self.resolver, response).await)
         }
-        Ok(Some(Duration::from_secs(100)))
+        Ok(Some(Duration::from_millis(100)))
     }
 }
 

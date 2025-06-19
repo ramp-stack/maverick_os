@@ -16,8 +16,6 @@ mod thread;
 use thread::{Thread, ThreadRequest, ThreadResponse, ThreadChannelR, Task};
 pub use thread::{Service, Context as ThreadContext};
 
-//mod service;
-
 pub struct Channel<S, R>(Sender<String>, Receiver<String>, PhantomData<fn() -> S>, PhantomData<fn() -> R>);
 impl< 
     S: Serialize + for<'a> Deserialize <'a>,
@@ -51,10 +49,7 @@ impl ServiceList {
     pub fn insert<S: thread::Service + 'static>(&mut self) {
         self.0.insert(TypeId::of::<S>(), (
             Box::new(|ctx: &mut hardware::Context| Box::pin(async move {
-                let (thread, mut callback) = Task::get(S::new(ctx).await);
-                (thread, Box::new(move |state: &mut State, r: String| {
-                    callback(state, serde_json::from_str(&r).unwrap())
-                }) as Callback<String>)
+                Task::get(S::new(ctx).await)
             })),
             Box::new(S::services)
         ));
@@ -66,6 +61,19 @@ pub trait Services {
 }
 
 pub type Callback<S> = Box<dyn FnMut(&mut State, S)>;
+trait StringifyCallback {
+    fn stringify(self) -> Callback<String>;
+}
+impl<
+    S: Serialize + for<'a> Deserialize <'a> + Send + 'static,
+> StringifyCallback for Callback<S> {
+    fn stringify(mut self) -> Callback<String> {
+        Box::new(move |state: &mut State, r: String| {
+            (self)(state, serde_json::from_str(&r).unwrap())
+        })
+    }
+}
+
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct Error(String, String);
@@ -89,7 +97,7 @@ pub enum RuntimeRequest {
 pub struct Handle<R>(Context, Id, PhantomData<R>);
 impl<R: Serialize> Handle<R> {
     pub fn send(&self, payload: &R) {
-        self.0._send(self.1, serde_json::to_string(payload).unwrap());
+        self.0.sender.send(RuntimeRequest::Request(self.1, serde_json::to_string(payload).unwrap())).unwrap();
     }
 }
 
@@ -106,23 +114,16 @@ impl Context {
         self.sender.send(RuntimeRequest::Request(T::type_id().expect("Can not send messages to this thread"), serde_json::to_string(payload).unwrap())).unwrap();
     }
 
-    fn _send(&self, id: Id, payload: String) {
-        self.sender.send(RuntimeRequest::Request(id, payload)).unwrap();
-    }
-
     pub fn spawn<
-        S: Serialize + for<'a> Deserialize <'a> + Send + 'static,
-        R: Serialize + for<'a> Deserialize <'a> + Send + 'static,
+        S,
+        R,
         X: 'static,
         T: Task<S, R, X> + 'static
     >(&self, task: T) -> Handle<R> {
-        let (thread, mut callback) = task.get();
+        let (thread, callback) = task.get();
         let id = thread.id();
         self.sender.send(RuntimeRequest::Spawn(
-            thread, 
-            Box::new(move |state: &mut State, r: String| {
-                callback(state, serde_json::from_str(&r).unwrap())
-            })
+            thread, callback
         )).unwrap();
         Handle(self.clone(), id, PhantomData::<R>)
     }
@@ -207,18 +208,6 @@ impl Runtime {
             e.insert((a, callback, handle));
             true
         } else {false}
-    }
-
-    pub fn spawn<
-        S: Serialize + for<'a> Deserialize <'a> + Send + 'static,
-        R: Serialize + for<'a> Deserialize <'a> + Send + 'static,
-        X: 'static,
-        T: Task<S, R, X> + 'static
-    >(&mut self, task: T) -> bool {
-        let (thread, mut callback) = task.get();
-        self._spawn(thread, Box::new(move |state: &mut State, r: String| {
-            callback(state, serde_json::from_str(&r).unwrap())
-        }))
     }
 
     ///Blocks on non wasm on wasm local spawned threads block until completed

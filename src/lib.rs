@@ -20,7 +20,7 @@ pub use crate::hardware::{
     {Camera, CameraError},
 };
 pub mod runtime;
-use runtime::{Runtime, Services, ServiceConstructor};
+use runtime::{Runtime, Services, ServiceConstructor, Service};
 
 pub mod window;
 use window::{WindowManager, EventHandler, Event, Lifetime};
@@ -80,6 +80,7 @@ impl<A: Application + 'static> MaverickOS<A> {
 
     async fn on_event(&mut self, event: Event) {
         if self.app.is_none() {
+            self.context.runtime.spawn(air::Service::new(&mut self.context.hardware).await);
             for service in self.services.values() {
                 self.context.runtime.spawn(service(&mut self.context.hardware).await);
             }
