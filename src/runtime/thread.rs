@@ -10,7 +10,7 @@ use serde::{Serialize, Deserialize};
 use rand::Rng;
 
 use crate::{State, hardware};
-use super::{StringifyCallback, Callback, Id, Error, Channel, Services};
+use super::{StringifyCallback, Callback, Id, Error, Channel, Services, BackgroundList};
 
 pub type ThreadChannel = Channel<ThreadResponse, ThreadRequest>;
 pub type ThreadChannelR = Channel<ThreadRequest, ThreadResponse>;
@@ -209,12 +209,12 @@ pub trait Service: Services + Send {
 
     fn callback(_state: &mut State, _payload: Self::Send) where Self: Sized {}
 
-  //fn background_tasks(&self) -> Vec<Box<dyn BackgroundTask>> {vec![]}
+    fn background_tasks() -> BackgroundList where Self: Sized {BackgroundList::default()}
 }
 
 impl<
     SE: Service + 'static
-> Task<SE::Send, SE::Receive, SE> for SE {
+> Task<SE::Send, SE::Receive, u32> for SE {
     fn get(self) -> (Box<dyn Thread>, Callback<String>){
         (Box::new(self), (Box::new(SE::callback) as Callback<SE::Send>).stringify())
     }
@@ -261,6 +261,57 @@ impl<
     fn type_id() -> Option<Id> {
         let mut hasher = DefaultHasher::default();
         TypeId::of::<SE>().hash(&mut hasher);
+        Some(hasher.finish())
+    }
+
+    fn id(&self) -> Id {Self::type_id().unwrap()}
+}
+
+//BACKGROUND TASK
+#[async_trait::async_trait]
+pub trait BackgroundTask: Send {
+    async fn new(ctx: &mut hardware::Context) -> Self where Self: Sized;
+
+    async fn run(&mut self, ctx: &mut hardware::Context) -> Result<Option<Duration>, Error>;
+}
+
+impl<
+    BT: BackgroundTask + 'static
+> Task<(), (), i32> for BT {
+    fn get(self) -> (Box<dyn Thread>, Callback<String>){
+        (Box::new(_BackgroundTask(self)), Box::new(|_: &mut State, _: String| {}))
+    }
+}
+
+struct _BackgroundTask<BT: BackgroundTask>(BT);
+
+#[async_trait::async_trait]
+impl<
+    BT: BackgroundTask + 'static
+> Thread for _BackgroundTask<BT> {
+    type Send = ();
+    type Receive = ();
+
+    async fn run(mut self: Box<Self>, mut hardware: hardware::Context, _channel: ThreadChannel) {
+        let mut last_run = Instant::now();
+        let mut duration = Duration::ZERO;
+        loop {
+            let elapsed = last_run.elapsed();
+            if elapsed > duration {
+                last_run = Instant::now();
+                let result = self.0.run(&mut hardware).await;
+                match result {
+                    Ok(None) => return,
+                    Ok(Some(dur)) => duration = dur,
+                    Err(e) => log::error!("Thread {}, Errored {} :? {:?}", self.id(), e, e),
+                }
+            }
+        }
+    }
+
+    fn type_id() -> Option<Id> {
+        let mut hasher = DefaultHasher::default();
+        TypeId::of::<BT>().hash(&mut hasher);
         Some(hasher.finish())
     }
 

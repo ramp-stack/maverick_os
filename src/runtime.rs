@@ -1,8 +1,11 @@
 use std::sync::mpsc::{channel, Sender, Receiver};
 use std::collections::hash_map::Entry;
+use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::marker::PhantomData;
 use std::future::Future;
+use std::any::TypeId;
+use std::pin::Pin;
 
 pub use async_trait::async_trait;
 pub use tokio::time::Duration;
@@ -14,7 +17,7 @@ use crate::hardware;
 
 mod thread;
 use thread::{Thread, ThreadRequest, ThreadResponse, ThreadChannelR, Task};
-pub use thread::{Service, Context as ThreadContext};
+pub use thread::{Service, Context as ThreadContext, BackgroundTask};
 
 pub struct Channel<S, R>(Sender<String>, Receiver<String>, PhantomData<fn() -> S>, PhantomData<fn() -> R>);
 impl< 
@@ -36,21 +39,30 @@ impl<
     }
 }
 
-use std::collections::BTreeMap;
-use std::any::TypeId;
-use std::pin::Pin;
+#[derive(Default)]
+pub struct BackgroundList(pub BTreeMap<TypeId, ThreadConstructor>);
+impl BackgroundList {
+    pub fn insert<BT: thread::BackgroundTask + 'static>(&mut self) {
+        self.0.insert(TypeId::of::<BT>(),
+            Box::new(|ctx: &mut hardware::Context| Box::pin(async move {
+                Task::get(BT::new(ctx).await)
+            }))
+        );
+    }
+}
 
-pub type ServiceConstructor = Box<dyn for<'a> Fn(&'a mut hardware::Context) -> Pin<Box<dyn Future<Output = (Box<dyn Thread>, Callback<String>)> + 'a>>>;
+pub type ThreadConstructor = Box<dyn for<'a> Fn(&'a mut hardware::Context) -> Pin<Box<dyn Future<Output = (Box<dyn Thread>, Callback<String>)> + 'a>>>;
 type Dependancies = Box<dyn FnOnce() -> ServiceList>;
 
 #[derive(Default)]
-pub struct ServiceList(pub BTreeMap<TypeId, (ServiceConstructor, Dependancies)>);
+pub struct ServiceList(pub BTreeMap<TypeId, (ThreadConstructor, BackgroundList, Dependancies)>);
 impl ServiceList {
     pub fn insert<S: thread::Service + 'static>(&mut self) {
         self.0.insert(TypeId::of::<S>(), (
             Box::new(|ctx: &mut hardware::Context| Box::pin(async move {
                 Task::get(S::new(ctx).await)
             })),
+            S::background_tasks(),
             Box::new(S::services)
         ));
     }
@@ -153,13 +165,30 @@ impl Runtime {
         }
     }
 
+    pub fn background(mut self, hardware: &mut hardware::Context, tasks: Vec<ThreadConstructor>) {
+        let mut threads = Vec::new();
+        self.runtime.block_on(async {
+            for bt in tasks {
+                threads.push(bt(hardware).await);
+            }
+        });
+        for (thread, callback) in threads {
+            self.spawn(thread, callback);
+        }
+        self.runtime.block_on(async {
+            for thread in self.threads.into_values() {
+                thread.2.await.unwrap()
+            }
+        });
+    }
+
     pub fn context(&self) -> &Context {&self.context}
 
     pub fn tick(&mut self, state: &mut State) -> Result<(), Error> {
         let mut requests = Vec::new();
         while let Ok(request) = self.receiver.try_recv() {
             match request {
-                RuntimeRequest::Spawn(thread, callback) => {self._spawn(thread, callback);},
+                RuntimeRequest::Spawn(thread, callback) => {self.spawn(thread, callback);},
                 RuntimeRequest::Request(id, payload) => {
                     requests.push((id, payload));
                 }
@@ -200,7 +229,7 @@ impl Runtime {
         Ok(())
     }
 
-    fn _spawn(&mut self, thread: Box<dyn Thread>, callback: Callback<String>) -> bool {
+    fn spawn(&mut self, thread: Box<dyn Thread>, callback: Callback<String>) -> bool {
         let id = thread.id();
         if let Entry::Vacant(e) = self.threads.entry(id) {
             let (a, b) = Channel::new();
@@ -223,12 +252,6 @@ impl Runtime {
         self.threads.values_mut().for_each(|t| t.0.send(ThreadRequest::Resume));
     }   
     pub fn close(self) {
-      //self.runtime.block_on(async {
-      //    self.threads.values_mut().for_each(|t| t.0.send(ThreadRequest::Close));
-      //    for thread in self.threads.into_values() {
-      //        thread.2.await.unwrap()
-      //    }
-      //});
         self.runtime.shutdown_background();
     }
 }

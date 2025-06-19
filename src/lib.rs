@@ -20,7 +20,7 @@ pub use crate::hardware::{
     {Camera, CameraError},
 };
 pub mod runtime;
-use runtime::{Runtime, Services, ServiceConstructor, Service};
+use runtime::{Runtime, Services, ThreadConstructor, Service};
 
 pub mod window;
 use window::{WindowManager, EventHandler, Event, Lifetime};
@@ -47,7 +47,7 @@ pub struct Context {
 //TODO: All cloud access needs to go through the OS
 pub struct MaverickOS<A: Application> {
     context: Context,
-    services: BTreeMap<TypeId, ServiceConstructor>,
+    services: BTreeMap<TypeId, ThreadConstructor>,
     app: Option<A>
 }
 
@@ -56,25 +56,37 @@ impl<A: Application + 'static> MaverickOS<A> {
         #[cfg(target_os = "android")]
         app: AndroidApp
     ) {
-        let hardware = hardware::Context::new();
+        let mut hardware = hardware::Context::new();
         let runtime = Runtime::start(hardware.clone());
 
-        WindowManager::start(
-            #[cfg(target_os = "android")]
-            app,
-            MaverickService::<A>::new(runtime, hardware)
-        )
-    }
 
-    fn new(context: Context) -> Self {
         let mut services = BTreeMap::new();
+        let mut background_tasks = BTreeMap::new();
         let mut pre = A::services().0;
-        while let Some((id, (constructor, deps))) = pre.pop_first() {
+        while let Some((id, (constructor, backgrounds, deps))) = pre.pop_first() {
             services.entry(id).or_insert_with(|| {
+                for (id, background) in backgrounds.0 {
+                    background_tasks.insert(id, background);
+                }
                 pre.extend(deps().0);
                 constructor
             });
         }
+
+        #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+        if std::env::args().len() > 1 {
+            runtime.background(&mut hardware, background_tasks.into_values().collect());
+            return
+        }
+
+        WindowManager::start(
+            #[cfg(target_os = "android")]
+            app,
+            MaverickService::<A>::new(runtime, services, hardware)
+        )
+    }
+
+    fn new(services: BTreeMap<TypeId, ThreadConstructor>, context: Context) -> Self {
         MaverickOS::<A>{context, services, app: None}
     }
 
@@ -93,12 +105,13 @@ impl<A: Application + 'static> MaverickOS<A> {
 struct MaverickService<A: Application> {
     state: Arc<Mutex<State>>,
     runtime: Option<Runtime>,
+    services: Option<BTreeMap<TypeId, ThreadConstructor>>,
     hardware: Option<hardware::Context>,
     os: Option<MaverickOS::<A>>
 }
 impl<A: Application> MaverickService<A> {
-    fn new(runtime: Runtime, hardware: hardware::Context) -> Self {
-        MaverickService{runtime: Some(runtime), hardware: Some(hardware), state: Arc::new(Mutex::new(State::default())), os: None}
+    fn new(runtime: Runtime, services: BTreeMap<TypeId, ThreadConstructor>, hardware: hardware::Context) -> Self {
+        MaverickService{runtime: Some(runtime), services: Some(services), hardware: Some(hardware), state: Arc::new(Mutex::new(State::default())), os: None}
     }
 }
 
@@ -107,7 +120,7 @@ impl<A: Application + 'static> EventHandler for MaverickService<A> {
         if let Some(runtime) = self.runtime.as_mut() {
             runtime.tick(&mut self.state.lock().unwrap()).unwrap();
             if self.os.is_none() {
-                self.os = Some(MaverickOS::new(Context{
+                self.os = Some(MaverickOS::new(self.services.take().unwrap(), Context{
                     hardware: self.hardware.take().unwrap(),
                     runtime: runtime.context().clone(),
                     window: window_ctx.clone(),
