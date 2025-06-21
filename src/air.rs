@@ -14,23 +14,6 @@ pub use air::orange_name::OrangeName;
 pub use air::storage::{PublicItem, Filter, Op};
 pub use air::storage::records::{RecordPath, Permissions, Protocol, Error, Record, Header, ValidationError};
 
-
-
-#[derive(Serialize, Deserialize, Debug)]
-pub enum Request {
-    CreatePublic(PublicItem),
-    ReadPublic(Filter),
-    UpdatePublic(Id, PublicItem),
-    Discover(RecordPath, u32, Vec<Protocol>),
-  //CreatePrivate(RecordPath, Protocol, u32, Permissions, Vec<u8>),
-  //CreatePointer(RecordPath, RecordPath, u32),
-  //ReadPrivate(RecordPath),
-  //UpdatePrivate(RecordPath, Permissions, Vec<u8>),
-  //DeletePrivate(RecordPath),
-  //Share(OrangeName, Permissions, RecordPath),
-  //Receive(DateTime)
-}
-
 enum Client {
     Public(Box<storage::Client>),
     Private(Box<records::Client>)
@@ -47,6 +30,21 @@ impl Client {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
+pub enum Request {
+    CreatePublic(PublicItem),
+    ReadPublic(Filter),
+    UpdatePublic(Id, PublicItem),
+    Discover(RecordPath, u32, Vec<Protocol>),
+    CreatePrivate(RecordPath, Protocol, u32, Permissions, Vec<u8>),
+    CreatePointer(RecordPath, RecordPath, u32),
+    ReadPrivate(RecordPath),
+    UpdatePrivate(RecordPath, Permissions, Vec<u8>),
+    DeletePrivate(RecordPath),
+    Share(OrangeName, Permissions, RecordPath),
+    Receive(DateTime)
+}
+
+#[derive(Serialize, Deserialize, Debug)]
 pub enum Response {
     CreatePublic(Id),
     ReadPublic(Vec<(Id, OrangeName, PublicItem, DateTime)>),
@@ -55,19 +53,8 @@ pub enum Response {
     UpdatePrivate(bool),
     DeletePrivate(bool),
     Discover(Option<(RecordPath, DateTime)>),
-    Share,
     Receive(Vec<(OrangeName, RecordPath)>),
-
-  //PrivateItem(Option<(PrivateItem, DateTime)>),
-  //DeleteKey(Option<PublicKey>),
-  //ReadDM(Vec<(OrangeName, Vec<u8>)>),
     Empty
-}
-
-impl Response {
-  //pub fn create_public(self) -> Id {match self {Self::Public(storage::Processed::CreatePublic(id)) => id, _ => panic!("Not Create Public")}}
-  //pub fn read_public(self) -> Vec<(Id, OrangeName, PublicItem, DateTime)> {match self {Self::Public(storage::Processed::ReadPublic(items)) => items, _ => panic!("Not Read Public")}}
-    //pub fn assert_empty(self) {if !(matches!(self, Self::Public(Processed::Empty)) || matches!(self, Self::Private(Processed::Empty))) {panic!("Not Empty")}}
 }
 
 pub struct Service{
@@ -75,6 +62,18 @@ pub struct Service{
     secret: OrangeSecret,
     purser: Purser,
     cache: Cache
+}
+
+impl Service {
+    pub async fn create_public<
+        S: Serialize + for<'a> Deserialize <'a> + Send + 'static,
+        R: Serialize + for<'a> Deserialize <'a> + Send + 'static,
+    >(ctx: &mut ThreadContext<S, R>, item: PublicItem) -> Result<Id, Error> {
+        match ctx.blocking_request::<Service>(Request::CreatePublic(item)).await? {
+            Response::CreatePublic(id) => Ok(id),
+            r => Err(Error::MaliciousResponse(format!("{:?}", r))),
+        }
+    }
 }
 
 #[async_trait::async_trait]
@@ -109,7 +108,14 @@ impl ThreadService for Service {
                 Request::CreatePublic(item) => storage::Client::create_public(&mut self.resolver, &self.secret, item).await?.into(),
                 Request::ReadPublic(filter) => storage::Client::read_public(filter).into(),
                 Request::UpdatePublic(id, item) => storage::Client::update_public(&mut self.resolver, &self.secret, id, item).await?.into(),
-                Request::Discover(path, index, protocols) => records::Client::discover(&mut self.cache, &path, index, protocols)?.into()
+                Request::Discover(path, index, protocols) => records::Client::discover(&mut self.cache, &path, index, protocols)?.into(),
+                Request::CreatePrivate(parent, protocol, index, perms, payload) => records::Client::create(&mut self.cache, &parent, protocol, index, &perms, payload)?.into(),
+                Request::CreatePointer(parent, path, index) => records::Client::create_pointer(&mut self.cache, &parent, &path, index)?.into(),
+                Request::ReadPrivate(path) => records::Client::read(&mut self.cache, &path)?.into(),
+                Request::UpdatePrivate(path, perms, payload) => records::Client::update(&mut self.cache, &path, &perms, payload)?.into(),
+                Request::DeletePrivate(path) => records::Client::delete(&mut self.cache, &path)?.into(),
+                Request::Share(name, perms, path) => records::Client::share(&mut self.cache, &mut self.resolver, &self.secret, &name, &perms, &path).await?.into(),
+                Request::Receive(since) => records::Client::receive(&mut self.resolver, &self.secret, since).await?.into(),
             };
             requests.push(client.build_request());
             clients.push((client, id));
