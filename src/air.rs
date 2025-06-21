@@ -4,35 +4,82 @@ use crate::runtime::{self, Service as ThreadService, ThreadContext, Services, Se
 use crate::hardware;
 
 use air::orange_name::{OrangeSecret, OrangeResolver};
-use air::server::{Purser, Error, Request as AirRequest};
-use air::storage::{PublicItem, Filter, Client, Processed};
-use air::Id;
+use air::server::{Purser, Request as AirRequest};
+use air::storage::records::{self, Cache, PathedKey};
+use air::storage;
 use serde::{Serialize, Deserialize};
 
-pub extern crate air;
+pub use air::{DateTime, Id};
+pub use air::orange_name::OrangeName;
+pub use air::storage::{PublicItem, Filter, Op};
+pub use air::storage::records::{RecordPath, Permissions, Protocol, Error, Record, Header, ValidationError};
 
-pub struct Service{
-    pub resolver: OrangeResolver,
-    secret: OrangeSecret,
-    pub purser: Purser
-}
 
-impl Service {
-  //pub fn my_name(&self) -> OrangeName {self.secret.name()}
-}
 
 #[derive(Serialize, Deserialize, Debug)]
 pub enum Request {
     CreatePublic(PublicItem),
     ReadPublic(Filter),
     UpdatePublic(Id, PublicItem),
+    Discover(RecordPath, u32, Vec<Protocol>),
+  //CreatePrivate(RecordPath, Protocol, u32, Permissions, Vec<u8>),
+  //CreatePointer(RecordPath, RecordPath, u32),
+  //ReadPrivate(RecordPath),
+  //UpdatePrivate(RecordPath, Permissions, Vec<u8>),
+  //DeletePrivate(RecordPath),
+  //Share(OrangeName, Permissions, RecordPath),
+  //Receive(DateTime)
 }
 
-//In order to aggrigate api calls Turn the Air Service into a Compiler(again) and accept cmds
+enum Client {
+    Public(Box<storage::Client>),
+    Private(Box<records::Client>)
+}
+
+impl From<storage::Client> for Client {fn from(c: storage::Client) -> Self {Client::Public(Box::new(c))}}
+impl From<records::Client> for Client {fn from(c: records::Client) -> Self {Client::Private(Box::new(c))}}
+
+impl Client {
+    pub fn build_request(&self) -> AirRequest {match self {
+        Self::Public(client) => client.build_request(),
+        Self::Private(client) => client.build_request(),
+    }}
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub enum Response {
+    CreatePublic(Id),
+    ReadPublic(Vec<(Id, OrangeName, PublicItem, DateTime)>),
+    CreatePrivate(RecordPath, Option<(Result<Record, ValidationError>, DateTime)>),
+    ReadPrivate(Option<(Record, DateTime)>),
+    UpdatePrivate(bool),
+    DeletePrivate(bool),
+    Discover(Option<(RecordPath, DateTime)>),
+    Share,
+    Receive(Vec<(OrangeName, RecordPath)>),
+
+  //PrivateItem(Option<(PrivateItem, DateTime)>),
+  //DeleteKey(Option<PublicKey>),
+  //ReadDM(Vec<(OrangeName, Vec<u8>)>),
+    Empty
+}
+
+impl Response {
+  //pub fn create_public(self) -> Id {match self {Self::Public(storage::Processed::CreatePublic(id)) => id, _ => panic!("Not Create Public")}}
+  //pub fn read_public(self) -> Vec<(Id, OrangeName, PublicItem, DateTime)> {match self {Self::Public(storage::Processed::ReadPublic(items)) => items, _ => panic!("Not Read Public")}}
+    //pub fn assert_empty(self) {if !(matches!(self, Self::Public(Processed::Empty)) || matches!(self, Self::Private(Processed::Empty))) {panic!("Not Empty")}}
+}
+
+pub struct Service{
+    resolver: OrangeResolver,
+    secret: OrangeSecret,
+    purser: Purser,
+    cache: Cache
+}
 
 #[async_trait::async_trait]
 impl ThreadService for Service {
-    type Send = Result<Processed, Error>;
+    type Send = Result<Response, Error>;
     type Receive = Request;
 
     async fn new(hardware: &mut hardware::Context) -> Self {
@@ -43,10 +90,12 @@ impl ThreadService for Service {
             sec
         };
         hardware.cache.set("OrangeName", Some(secret.name())).await;
+        let cache = Cache::new(PathedKey::new(RecordPath::root(), OrangeResolver.secret_key(&secret, None, None).await.unwrap()));
         Service{
             resolver: OrangeResolver,
             secret,
-            purser: Purser::new()
+            purser: Purser::new(),
+            cache
         }
     }
 
@@ -56,10 +105,11 @@ impl ThreadService for Service {
         let mut requests = Vec::new();
 
         while let Some((id, request)) = ctx.get_request() {
-            let client = match request {
-                Request::CreatePublic(item) => Client::create_public(&mut self.resolver, &self.secret, item).await?,
-                Request::ReadPublic(filter) => Client::read_public(filter),
-                Request::UpdatePublic(id, item) => Client::update_public(&mut self.resolver, &self.secret, id, item).await?,
+            let client: Client = match request {
+                Request::CreatePublic(item) => storage::Client::create_public(&mut self.resolver, &self.secret, item).await?.into(),
+                Request::ReadPublic(filter) => storage::Client::read_public(filter).into(),
+                Request::UpdatePublic(id, item) => storage::Client::update_public(&mut self.resolver, &self.secret, id, item).await?.into(),
+                Request::Discover(path, index, protocols) => records::Client::discover(&mut self.cache, &path, index, protocols)?.into()
             };
             requests.push(client.build_request());
             clients.push((client, id));
@@ -68,7 +118,24 @@ impl ThreadService for Service {
         let endpoint = self.resolver.endpoint(&self.secret.name(), None, None).await?;
         let res = self.purser.send(&mut self.resolver, &endpoint, batch).await?;
         for (response, (client, id)) in res.batch()?.into_iter().zip(clients) {
-            ctx.respond(id, client.process_response(&mut self.resolver, response).await)
+            ctx.respond(id, match client {
+                Client::Public(client) => match client.process_response(&mut self.resolver, response).await {
+                    Ok(storage::Processed::CreatePublic(id)) => Ok(Response::CreatePublic(id)),
+                    Ok(storage::Processed::ReadPublic(results)) => Ok(Response::ReadPublic(results)),
+                    Ok(storage::Processed::Empty) => Ok(Response::Empty),
+                    Ok(r) => Err(Error::MaliciousResponse(format!("{:?}", r))),
+                    Err(e) => Err(e.into())
+                },
+                Client::Private(client) => client.process_response(&mut self.cache, &mut self.resolver, response).await.map(|r| match r {
+                    records::Processed::Discover(record) => Response::Discover(record),
+                    records::Processed::Create(path, conflict) => Response::CreatePrivate(path, conflict),
+                    records::Processed::Read(record) => Response::ReadPrivate(record),
+                    records::Processed::Update(s) => Response::UpdatePrivate(s),
+                    records::Processed::Delete(s) => Response::DeletePrivate(s),
+                    records::Processed::Receive(records) => Response::Receive(records),
+                    records::Processed::Empty => Response::Empty,
+                }),
+            })
         }
         Ok(Some(Duration::from_millis(100)))
     }

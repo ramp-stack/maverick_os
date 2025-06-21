@@ -34,7 +34,7 @@ impl Cache {
     >(&self, key: &str, value: V) {
         self.0.lock().await.execute(
             "INSERT INTO kvs(key, value) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET value=excluded.value;",
-            [hex::encode(serde_json::to_vec(&key).unwrap()), hex::encode(serde_json::to_vec(&value).unwrap())]
+            [key, &hex::encode(serde_json::to_vec(&value).unwrap())]
         ).unwrap();
     }
     pub async fn get<
@@ -42,7 +42,7 @@ impl Cache {
     >(&self, key: &str) -> V {
         let db = self.0.lock().await;
         let mut stmt = db.prepare(
-            &format!("SELECT value FROM kvs where key = \'{}\'", hex::encode(serde_json::to_vec(&key).unwrap())),
+            &format!("SELECT value FROM kvs where key = \'{}\'", key),
         ).unwrap();
         let result = stmt.query_and_then([], |row| {
             let item: String = row.get(0).unwrap();

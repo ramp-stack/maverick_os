@@ -1,3 +1,4 @@
+mod logger;
 mod cache;
 mod camera;
 mod share;
@@ -33,6 +34,7 @@ pub struct Context {
 impl Context {
     #[cfg(target_os = "android")]
     pub(crate) fn new() -> Self {
+        logger::Logger::start(None);
         Self {
             cache: Cache::new(),
             clipboard: Clipboard::new().expect("Clipboard must be initialized before Context::new()"),
@@ -45,6 +47,7 @@ impl Context {
 
     #[cfg(not(target_os = "android"))]
     pub(crate) fn new() -> Self {
+        logger::Logger::start(None);
         Self {
             cache: Cache::new(),
             clipboard: Clipboard::new(),
