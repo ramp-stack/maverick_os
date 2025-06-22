@@ -3,16 +3,16 @@ use std::time::Duration;
 use crate::runtime::{self, Service as ThreadService, ThreadContext, Services, ServiceList};
 use crate::hardware;
 
-use air::orange_name::{OrangeSecret, OrangeResolver};
+use air::orange_name::OrangeResolver;
 use air::server::{Purser, Request as AirRequest};
 use air::storage::records::{self, Cache, PathedKey};
 use air::storage;
 use serde::{Serialize, Deserialize};
 
 pub use air::{DateTime, Id};
-pub use air::orange_name::OrangeName;
+pub use air::orange_name::{OrangeName, OrangeSecret};
 pub use air::storage::{PublicItem, Filter, Op};
-pub use air::storage::records::{RecordPath, Permissions, Protocol, Error, Record, Header, ValidationError};
+pub use air::storage::records::{RecordPath, Permissions, Protocol, Error, Record, Header, HeaderInfo, ValidationError, Validation, ChildrenValidation};
 
 enum Client {
     Public(Box<storage::Client>),
@@ -65,6 +65,16 @@ pub struct Service{
 }
 
 impl Service {
+    pub async fn create_private<
+        S: Serialize + for<'a> Deserialize <'a> + Send + 'static,
+        R: Serialize + for<'a> Deserialize <'a> + Send + 'static,
+    >(ctx: &mut ThreadContext<S, R>, path: RecordPath, protocol: Protocol, index: u32, perms: Permissions, payload: Vec<u8>) -> Result<(RecordPath, Option<(Result<Record, ValidationError>, DateTime)>), Error> {
+        match ctx.blocking_request::<Service>(Request::CreatePrivate(path, protocol, index, perms, payload)).await? {
+            Response::CreatePrivate(path, result) => Ok((path, result)),
+            r => Err(Error::MaliciousResponse(format!("{:?}", r))),
+        }
+    }
+
     pub async fn create_public<
         S: Serialize + for<'a> Deserialize <'a> + Send + 'static,
         R: Serialize + for<'a> Deserialize <'a> + Send + 'static,
@@ -72,6 +82,26 @@ impl Service {
         match ctx.blocking_request::<Service>(Request::CreatePublic(item)).await? {
             Response::CreatePublic(id) => Ok(id),
             r => Err(Error::MaliciousResponse(format!("{:?}", r))),
+        }
+    }
+
+    pub async fn read_public<
+        S: Serialize + for<'a> Deserialize <'a> + Send + 'static,
+        R: Serialize + for<'a> Deserialize <'a> + Send + 'static,
+    >(ctx: &mut ThreadContext<S, R>, filter: Filter) -> Result<Vec<(Id, OrangeName, PublicItem, DateTime)>, Error> {
+        match ctx.blocking_request::<Service>(Request::ReadPublic(filter)).await? {
+            Response::ReadPublic(results) => Ok(results),
+            r => Err(Error::MaliciousResponse(format!("{:?}", r))),
+        }
+    }
+
+    pub async fn discover<
+        S: Serialize + for<'a> Deserialize <'a> + Send + 'static,
+        R: Serialize + for<'a> Deserialize <'a> + Send + 'static,
+    >(ctx: &mut ThreadContext<S, R>, path: RecordPath, index: u32, protocols: Vec<Protocol>) -> Result<Option<(RecordPath, DateTime)>, Error> {
+        match ctx.blocking_request::<Service>(Request::Discover(path, index, protocols)).await? {
+            Response::Discover(result) => Ok(result),
+            r => Err(Error::MaliciousResponse(format!("{:?}", r)))
         }
     }
 }
@@ -85,10 +115,10 @@ impl ThreadService for Service {
         //TODO: check cloud too
         let secret = if let Some(s) = hardware.cache.get("OrangeSecret").await {s} else {
             let sec = OrangeSecret::new();
-            hardware.cache.set("OrangeSecret", sec.clone()).await;
+            hardware.cache.set("OrangeSecret", &sec.clone()).await;
             sec
         };
-        hardware.cache.set("OrangeName", Some(secret.name())).await;
+        hardware.cache.set("OrangeName", &Some(secret.name())).await;
         let cache = Cache::new(PathedKey::new(RecordPath::root(), OrangeResolver.secret_key(&secret, None, None).await.unwrap()));
         Service{
             resolver: OrangeResolver,
