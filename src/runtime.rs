@@ -1,91 +1,22 @@
 use std::sync::mpsc::{channel, Sender, Receiver};
 use std::collections::hash_map::Entry;
-use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::marker::PhantomData;
 use std::future::Future;
-use std::any::TypeId;
-use std::pin::Pin;
 
 pub use async_trait::async_trait;
 pub use tokio::time::Duration;
 use tokio::task::JoinHandle;
 use serde::{Serialize, Deserialize};
 
-use crate::State;
-use crate::hardware;
+use crate::{hardware, State, Id};
 
 mod thread;
-use thread::{Thread, ThreadRequest, ThreadResponse, ThreadChannelR, Task};
-pub use thread::{Service, Context as ThreadContext, BackgroundTask};
+use thread::{Thread, ThreadRequest, ThreadResponse, Channel, IntoThread, Callback};
+pub use thread::{Context as ThreadContext, Constructor as ThreadConstructor};
+pub use thread::service::{Service, ServiceList, BackgroundTask, BackgroundList, Services}; 
 
-pub struct Channel<S, R>(Sender<String>, Receiver<String>, PhantomData<fn() -> S>, PhantomData<fn() -> R>);
-impl< 
-    S: Serialize + for<'a> Deserialize <'a>,
-    R: Serialize + for<'a> Deserialize <'a>,
-> Channel<S, R> {
-    pub fn new() -> (Self, Channel<R, S>) {
-        let (a, b) = channel();
-        let (c, d) = channel();
-        (Channel(a, d, PhantomData::<fn() -> S>, PhantomData::<fn() -> R>), Channel(c, b, PhantomData::<fn() -> R>, PhantomData::<fn() -> S>))
-    }
-
-    fn send(&mut self, payload: S) {
-        let _ = self.0.send(serde_json::to_string(&payload).unwrap());
-    }
-
-    fn receive(&mut self) -> Option<R> {
-        self.1.try_recv().ok().map(|r| serde_json::from_str(&r).unwrap())
-    }
-}
-
-#[derive(Default)]
-pub struct BackgroundList(pub BTreeMap<TypeId, ThreadConstructor>);
-impl BackgroundList {
-    pub fn insert<BT: thread::BackgroundTask + 'static>(&mut self) {
-        self.0.insert(TypeId::of::<BT>(),
-            Box::new(|ctx: &mut hardware::Context| Box::pin(async move {
-                Task::get(BT::new(ctx).await)
-            }))
-        );
-    }
-}
-
-pub type ThreadConstructor = Box<dyn for<'a> Fn(&'a mut hardware::Context) -> Pin<Box<dyn Future<Output = (Box<dyn Thread>, Callback<String>)> + 'a>>>;
-type Dependancies = Box<dyn FnOnce() -> ServiceList>;
-
-#[derive(Default)]
-pub struct ServiceList(pub BTreeMap<TypeId, (ThreadConstructor, BackgroundList, Dependancies)>);
-impl ServiceList {
-    pub fn insert<S: thread::Service + 'static>(&mut self) {
-        self.0.insert(TypeId::of::<S>(), (
-            Box::new(|ctx: &mut hardware::Context| Box::pin(async move {
-                Task::get(S::new(ctx).await)
-            })),
-            S::background_tasks(),
-            Box::new(S::services)
-        ));
-    }
-}
-
-pub trait Services {
-    fn services() -> ServiceList {ServiceList::default()}
-}
-
-pub type Callback<S> = Box<dyn FnMut(&mut State, S)>;
-trait StringifyCallback {
-    fn stringify(self) -> Callback<String>;
-}
-impl<
-    S: Serialize + for<'a> Deserialize <'a> + Send + 'static,
-> StringifyCallback for Callback<S> {
-    fn stringify(mut self) -> Callback<String> {
-        Box::new(move |state: &mut State, r: String| {
-            (self)(state, serde_json::from_str(&r).unwrap())
-        })
-    }
-}
-
+type ThreadChannel = Channel<ThreadRequest, ThreadResponse>;
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct Error(String, String);
@@ -98,8 +29,6 @@ impl std::fmt::Debug for Error {
 impl<E: std::error::Error> From<E> for Error {
     fn from(error: E) -> Error {Error(error.to_string(), format!("{:?}", error))}
 }
-
-pub type Id = u64;
 
 pub enum RuntimeRequest {
     Request(Id, String),
@@ -126,13 +55,8 @@ impl Context {
         self.sender.send(RuntimeRequest::Request(T::type_id().expect("Can not send messages to this thread"), serde_json::to_string(payload).unwrap())).unwrap();
     }
 
-    pub fn spawn<
-        S,
-        R,
-        X: 'static,
-        T: Task<S, R, X> + 'static
-    >(&self, task: T) -> Handle<R> {
-        let (thread, callback) = task.get();
+    pub fn spawn<S, R, X: 'static, T: IntoThread<S, R, X> + 'static>(&self, task: T) -> Handle<R> {
+        let (thread, callback) = task.into();
         let id = thread.id();
         self.sender.send(RuntimeRequest::Spawn(
             thread, callback
@@ -146,7 +70,7 @@ pub struct Runtime {
     context: Context,
     receiver: Receiver<RuntimeRequest>,
     runtime: tokio::runtime::Runtime,
-    threads: HashMap<Id, (ThreadChannelR, Callback<String>, JoinHandle<()>)>,
+    threads: HashMap<Id, (ThreadChannel, Callback<String>, JoinHandle<()>)>,
     requests: Vec<(Id, Id)>
 }
 
@@ -197,7 +121,7 @@ impl Runtime {
 
         for (id, payload) in requests {
             if let Some(thread) = self.threads.get_mut(&id) {
-                thread.0.send(ThreadRequest::Request(0, payload));
+                thread.0.send(ThreadRequest::Request(Id::MIN, payload));
             }
         }
 
@@ -205,7 +129,7 @@ impl Runtime {
         for id in keys {
             let mut thread = self.threads.remove(&id).unwrap();
             while let Some(recv) = thread.0.receive() {match recv {
-                ThreadResponse::Response(0, r) => (thread.1)(state, r),
+                ThreadResponse::Response(Id::MIN, r) => (thread.1)(state, r),
                 ThreadResponse::Response(id, r) => {
                     let task_id = self.requests.iter().find_map(|(i, ti)| (*i == id).then_some(ti)).expect("Responded to missing request");
                     if let Some(thread) = self.threads.get_mut(task_id) {
@@ -232,7 +156,7 @@ impl Runtime {
     fn spawn(&mut self, thread: Box<dyn Thread>, callback: Callback<String>) -> bool {
         let id = thread.id();
         if let Entry::Vacant(e) = self.threads.entry(id) {
-            let (a, b) = Channel::new();
+            let (a, b) = ThreadChannel::new();
             let handle = self.runtime.spawn(thread.run(self.hardware.clone(), b));
             e.insert((a, callback, handle));
             true

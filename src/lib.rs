@@ -1,5 +1,4 @@
 use std::collections::BTreeMap;
-use std::sync::{Mutex, Arc};
 use std::future::Future;
 use std::any::TypeId;
 
@@ -30,6 +29,7 @@ pub mod prelude {
 }
 
 pub mod air;
+pub use air::Id;
 
 pub trait Application: Services {
     fn new(context: &mut Context) -> impl Future<Output = Self>;
@@ -37,7 +37,7 @@ pub trait Application: Services {
 }
 
 pub struct Context {
-    pub state: Arc<Mutex<State>>,
+    pub state: Option<State>,
     pub window: window::Context,
     pub runtime: runtime::Context,
     pub hardware: hardware::Context,
@@ -103,7 +103,6 @@ impl<A: Application + 'static> MaverickOS<A> {
 }
 
 struct MaverickService<A: Application> {
-    state: Arc<Mutex<State>>,
     runtime: Option<Runtime>,
     services: Option<BTreeMap<TypeId, ThreadConstructor>>,
     hardware: Option<hardware::Context>,
@@ -111,22 +110,22 @@ struct MaverickService<A: Application> {
 }
 impl<A: Application> MaverickService<A> {
     fn new(runtime: Runtime, services: BTreeMap<TypeId, ThreadConstructor>, hardware: hardware::Context) -> Self {
-        MaverickService{runtime: Some(runtime), services: Some(services), hardware: Some(hardware), state: Arc::new(Mutex::new(State::default())), os: None}
+        MaverickService{runtime: Some(runtime), services: Some(services), hardware: Some(hardware), os: None}
     }
 }
 
 impl<A: Application + 'static> EventHandler for MaverickService<A> {
     fn event(&mut self, window_ctx: &window::Context, event: Event) {
         if let Some(runtime) = self.runtime.as_mut() {
-            runtime.tick(&mut self.state.lock().unwrap()).unwrap();
             if self.os.is_none() {
                 self.os = Some(MaverickOS::new(self.services.take().unwrap(), Context{
                     hardware: self.hardware.take().unwrap(),
                     runtime: runtime.context().clone(),
                     window: window_ctx.clone(),
-                    state: self.state.clone(),
+                    state: Some(State::default())
                 }))
             }
+            runtime.tick(self.os.as_mut().unwrap().context.state.as_mut().unwrap()).unwrap();
             let os = self.os.as_mut().unwrap();
             os.context.window = window_ctx.clone();
             runtime.block_on(os.on_event(event.clone()));
