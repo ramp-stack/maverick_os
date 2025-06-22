@@ -31,10 +31,10 @@ impl Cache {
 
     pub async fn set<
         V: Serialize + for<'a> Deserialize <'a> + Default,
-    >(&self, key: &str, value: V) {
+    >(&self, key: &str, value: &V) {
         self.0.lock().await.execute(
             "INSERT INTO kvs(key, value) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET value=excluded.value;",
-            [key, &hex::encode(serde_json::to_vec(&value).unwrap())]
+            [key, &hex::encode(serde_json::to_vec(value).unwrap())]
         ).unwrap();
     }
     pub async fn get<
