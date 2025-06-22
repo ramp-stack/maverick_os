@@ -177,7 +177,7 @@ impl<
         let task: TaskBuffer<S> = Box::new(move |ctx: &mut Context<S, ()>| Box::pin(self(ctx)));
         let id = Id::random();
         (Box::new(BufferedTask(id, task)), (Box::new(|state: &mut State, result: S| {
-            state.get_mut::<VecDeque<S>>().push_front(result);
+            state.get_mut_or_default::<VecDeque<S>>().push_front(result);
         }) as Callback<S>).stringify())
     }
 }
