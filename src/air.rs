@@ -89,7 +89,9 @@ impl Service {
         S: Serialize + for<'a> Deserialize <'a> + Send + 'static,
         R: Serialize + for<'a> Deserialize <'a> + Send + 'static,
     >(ctx: &mut ThreadContext<S, R>, filter: Filter) -> Result<Vec<(Id, OrangeName, PublicItem, DateTime)>, Error> {
-        match ctx.blocking_request::<Service>(Request::ReadPublic(filter)).await? {
+        let a = ctx.blocking_request::<Service>(Request::ReadPublic(filter)).await?;
+        println!("Blocking request completed");
+        match a {
             Response::ReadPublic(results) => Ok(results),
             r => Err(Error::MaliciousResponse(format!("{:?}", r))),
         }
@@ -139,6 +141,7 @@ impl ThreadService for Service {
         let mut requests = Vec::new();
 
         while let Some((id, request)) = ctx.get_request() {
+            panic!("id {:?} request {:?}", id, request);
             let client: Client = match request {
                 Request::CreatePublic(item) => storage::Client::create_public(&mut self.resolver, &self.secret, item).await?.into(),
                 Request::ReadPublic(filter) => storage::Client::read_public(filter).into(),
@@ -179,6 +182,7 @@ impl ThreadService for Service {
             })
         }
         ctx.hardware.cache.set("Cache", &Some(self.cache.clone())).await;
+        println!("Cache finished");
         Ok(Some(Duration::from_millis(100)))
     }
 }
