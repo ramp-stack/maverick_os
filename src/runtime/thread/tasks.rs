@@ -8,7 +8,7 @@ use serde::{Serialize, Deserialize};
 
 use crate::{hardware, State, Id};
 use super::{Thread, Context, IntoThread, ThreadChannel, Callback, ThreadResponse, StringifyCallback, Error};
-
+use crate::runtime::{Handle, Context as RuntimeContext};
 
 //TICKING TASK
 trait AsyncFnMutSend<I>: FnMut(I) -> Self::Fut {
@@ -137,13 +137,28 @@ impl<
 
 //BUFFERED TASK
 
+//  pub struct BufferedTask(Handle<()>);
+//  impl BufferedTask {
+//      pub fn new<
+//          S: Serialize + for<'a> Deserialize <'a> + Send + 'static + Debug,
+//          F: for<'b> AsyncFnMutSend<&'b mut Context<S, ()>, Out = Result<S, Error>> + Send + 'static
+//      >(ctx: &mut RuntimeContext, func: F, buffer: u32) -> Self {
+//          let handle = ctx.spawn(func);
+//          for _ in 0..buffer {handle.send(&());}
+//          BufferedTask(handle)
+//      }
+//      pub fn get(&self, ctx: &mut crate::Context) -> S {
+//          state.get_named_mut_or_default::<VecDeque<S>>(&id.to_string()).push_front(result);
+//      }
+//  }
+
 type TaskBuffer<S> = Box<dyn for<'b> FnMut(&'b mut Context<S, ()>) -> Pin<Box<dyn Future<Output = Result<S, Error>> + Send + 'b>> + Send>;
-struct BufferedTask<S>(Id, TaskBuffer<S>);
+struct _BufferedTask<S>(Id, TaskBuffer<S>);
 
 #[async_trait::async_trait]
 impl<
     S: Serialize + for<'a> Deserialize <'a> + Send + 'static,
-> Thread for BufferedTask<S> {
+> Thread for _BufferedTask<S> {
     type Send = S;
     type Receive = ();
 
@@ -176,8 +191,8 @@ impl<
     fn into(mut self) -> (Box<dyn Thread>, Callback<String>){
         let task: TaskBuffer<S> = Box::new(move |ctx: &mut Context<S, ()>| Box::pin(self(ctx)));
         let id = Id::random();
-        (Box::new(BufferedTask(id, task)), (Box::new(|state: &mut State, result: S| {
-            state.get_mut_or_default::<VecDeque<S>>().push_front(result);
+        (Box::new(_BufferedTask(id, task)), (Box::new(move |state: &mut State, result: S| {
+            state.get_named_mut_or_default::<VecDeque<S>>(&id.to_string()).push_front(result);
         }) as Callback<S>).stringify())
     }
 }

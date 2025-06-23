@@ -52,7 +52,7 @@ pub enum Response {
     ReadPrivate(Option<(Record, DateTime)>),
     UpdatePrivate(bool),
     DeletePrivate(bool),
-    Discover(Option<(RecordPath, DateTime)>),
+    Discover(Option<RecordPath>, Option<DateTime>),
     Receive(Vec<(OrangeName, RecordPath)>),
     Empty
 }
@@ -98,9 +98,9 @@ impl Service {
     pub async fn discover<
         S: Serialize + for<'a> Deserialize <'a> + Send + 'static,
         R: Serialize + for<'a> Deserialize <'a> + Send + 'static,
-    >(ctx: &mut ThreadContext<S, R>, path: RecordPath, index: u32, protocols: Vec<Protocol>) -> Result<Option<(RecordPath, DateTime)>, Error> {
+    >(ctx: &mut ThreadContext<S, R>, path: RecordPath, index: u32, protocols: Vec<Protocol>) -> Result<(Option<RecordPath>, Option<DateTime>), Error> {
         match ctx.blocking_request::<Service>(Request::Discover(path, index, protocols)).await? {
-            Response::Discover(result) => Ok(result),
+            Response::Discover(result, date) => Ok((result, date)),
             r => Err(Error::MaliciousResponse(format!("{:?}", r)))
         }
     }
@@ -119,7 +119,12 @@ impl ThreadService for Service {
             sec
         };
         hardware.cache.set("OrangeName", &Some(secret.name())).await;
-        let cache = Cache::new(PathedKey::new(RecordPath::root(), OrangeResolver.secret_key(&secret, None, None).await.unwrap()));
+        let cache = match hardware.cache.get("Cache").await {
+            Some(cache) => cache,
+            None => {
+                Cache::new(PathedKey::new(RecordPath::root(), OrangeResolver.secret_key(&secret, None, None).await.unwrap()))
+            }
+        };
         Service{
             resolver: OrangeResolver,
             secret,
@@ -163,7 +168,7 @@ impl ThreadService for Service {
                     Err(e) => Err(e.into())
                 },
                 Client::Private(client) => client.process_response(&mut self.cache, &mut self.resolver, response).await.map(|r| match r {
-                    records::Processed::Discover(record) => Response::Discover(record),
+                    records::Processed::Discover(record, date) => Response::Discover(record, date),
                     records::Processed::Create(path, conflict) => Response::CreatePrivate(path, conflict),
                     records::Processed::Read(record) => Response::ReadPrivate(record),
                     records::Processed::Update(s) => Response::UpdatePrivate(s),
@@ -173,6 +178,7 @@ impl ThreadService for Service {
                 }),
             })
         }
+        ctx.hardware.cache.set("Cache", &Some(self.cache.clone())).await;
         Ok(Some(Duration::from_millis(100)))
     }
 }

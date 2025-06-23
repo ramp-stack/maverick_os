@@ -43,4 +43,11 @@ impl State {
     pub fn get_mut_or_default<F: Field + Default + 'static>(&mut self) -> &mut F {
         self.0.entry(Key::Id(TypeId::of::<F>())).or_insert_with(|| Box::new(F::default())).downcast_mut().unwrap()
     }
+
+    pub fn get_named_or_default<F: Field + Default + 'static>(&mut self, key: &str) -> &F {
+        self.0.entry(Key::Raw(key.to_string())).or_insert_with(|| Box::new(F::default())).downcast_ref().unwrap()
+    }
+    pub fn get_named_mut_or_default<F: Field + Default + 'static>(&mut self, key: &str) -> &mut F {
+        self.0.entry(Key::Raw(key.to_string())).or_insert_with(|| Box::new(F::default())).downcast_mut().unwrap()
+    }
 }
