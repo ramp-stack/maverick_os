@@ -75,6 +75,16 @@ impl Service {
         }
     }
 
+    pub async fn read_private<
+        S: Serialize + for<'a> Deserialize <'a> + Send + 'static,
+        R: Serialize + for<'a> Deserialize <'a> + Send + 'static,
+    >(ctx: &mut ThreadContext<S, R>, path: RecordPath) -> Result<Option<(Record, DateTime)>, Error> {
+        match ctx.blocking_request::<Service>(Request::ReadPrivate(path)).await? {
+            Response::ReadPrivate(result) => Ok(result),
+            r => Err(Error::MaliciousResponse(format!("{:?}", r))),
+        }
+    }
+
     pub async fn create_public<
         S: Serialize + for<'a> Deserialize <'a> + Send + 'static,
         R: Serialize + for<'a> Deserialize <'a> + Send + 'static,
@@ -141,7 +151,6 @@ impl ThreadService for Service {
         let mut requests = Vec::new();
 
         while let Some((id, request)) = ctx.get_request() {
-            panic!("id {:?} request {:?}", id, request);
             let client: Client = match request {
                 Request::CreatePublic(item) => storage::Client::create_public(&mut self.resolver, &self.secret, item).await?.into(),
                 Request::ReadPublic(filter) => storage::Client::read_public(filter).into(),
@@ -181,8 +190,7 @@ impl ThreadService for Service {
                 }),
             })
         }
-        ctx.hardware.cache.set("Cache", &Some(self.cache.clone())).await;
-        println!("Cache finished");
+        // ctx.hardware.cache.set("Cache", &Some(self.cache.clone())).await;
         Ok(Some(Duration::from_millis(100)))
     }
 }
