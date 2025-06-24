@@ -77,8 +77,17 @@ impl<
         let _ = self.0.send(serde_json::to_string(&payload).unwrap());
     }
 
-    pub fn receive(&mut self) -> Option<R> {
+    pub fn try_receive(&mut self) -> Option<R> {
         self.1.try_recv().ok().map(|r| serde_json::from_str(&r).unwrap())
+    }
+
+    pub async fn receive(&mut self) -> R {
+        loop {
+            if let Some(r) = self.try_receive() {
+                break r;
+            }
+            tokio::time::sleep(tokio::time::Duration::ZERO).await
+        }
     }
 }
 
@@ -101,9 +110,12 @@ impl<
     }
     pub async fn blocking_request<T: Thread>(&mut self, request: T::Receive) -> T::Send {
         let req_id = Id::random();
+        println!("req: {:?}", req_id);
         self.channel.send(ThreadResponse::Request(req_id, T::type_id().expect("Cannot send messages to this thread"), serde_json::to_string(&request).unwrap()));
         loop {
-            self.check_received();
+            let res = self.channel.receive().await;
+            println!("check");
+            self.handle(res);
             if let Some(result) = self.received.remove(&req_id) {
                 break serde_json::from_str(&result).unwrap();
             }
@@ -137,11 +149,17 @@ impl<
     }
 
     fn check_received(&mut self) {
-        while let Some(request) = self.channel.receive() {match request {
+        while let Some(request) = self.channel.try_receive() {
+            self.handle(request);
+        }
+    }
+
+    fn handle(&mut self, request: ThreadRequest) {
+        match request {
             ThreadRequest::Response(id, payload) => {self.received.insert(id, payload);},
             ThreadRequest::Request(id, payload) => self.receive.push_front((id, serde_json::from_str(&payload).unwrap())),
             ThreadRequest::Pause => self.paused = true,
             ThreadRequest::Resume => self.paused = false,
-        }}
+        }
     }
 }

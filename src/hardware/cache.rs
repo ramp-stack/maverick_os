@@ -40,14 +40,12 @@ impl Cache {
     pub async fn get<
         V: Serialize + for<'a> Deserialize <'a> + Default,
     >(&self, key: &str) -> V {
-        let db = self.0.lock().await;
-        let mut stmt = db.prepare(
+        self.0.lock().await.prepare(
             &format!("SELECT value FROM kvs where key = \'{}\'", key),
-        ).unwrap();
-        let result = stmt.query_and_then([], |row| {
+        ).unwrap().query_and_then([], |row| {
             let item: String = row.get(0).unwrap();
             Ok(hex::decode(item).unwrap())
-        }).unwrap().collect::<Result<Vec<Vec<u8>>, rusqlite::Error>>().unwrap();
-        result.first().and_then(|b| serde_json::from_slice(b).ok()).unwrap_or_default()
+        }).unwrap().collect::<Result<Vec<Vec<u8>>, rusqlite::Error>>().unwrap()
+        .first().and_then(|b| serde_json::from_slice(b).ok()).unwrap_or_default()
     }
 }

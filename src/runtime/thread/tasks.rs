@@ -1,6 +1,4 @@
-use std::collections::VecDeque;
 use std::future::Future;
-use std::fmt::Debug;
 use std::pin::Pin;
 
 pub use tokio::time::{Instant, Duration};
@@ -8,7 +6,6 @@ use serde::{Serialize, Deserialize};
 
 use crate::{hardware, State, Id};
 use super::{Thread, Context, IntoThread, ThreadChannel, Callback, ThreadResponse, StringifyCallback, Error};
-use crate::runtime::{Handle, Context as RuntimeContext};
 
 //TICKING TASK
 trait AsyncFnMutSend<I>: FnMut(I) -> Self::Fut {
@@ -152,47 +149,50 @@ impl<
 //      }
 //  }
 
-type TaskBuffer<S> = Box<dyn for<'b> FnMut(&'b mut Context<S, ()>) -> Pin<Box<dyn Future<Output = Result<S, Error>> + Send + 'b>> + Send>;
-struct _BufferedTask<S>(Id, TaskBuffer<S>);
+//  type TaskPoll<S, R> = Box<dyn for<'b> FnMut(&'b mut hardware::Context, R) -> Pin<Box<dyn Future<Output = Result<S, Error>> + Send + 'b>> + Send>;
+//  struct PolledTask<S>(Id, TaskBuffer<S>);
 
-#[async_trait::async_trait]
-impl<
-    S: Serialize + for<'a> Deserialize <'a> + Send + 'static,
-> Thread for _BufferedTask<S> {
-    type Send = S;
-    type Receive = ();
+//  #[async_trait::async_trait]
+//  impl<
+//      S: Serialize + for<'a> Deserialize <'a> + Send + 'static,
+//  > Thread for PolledTask<S> {
+//      type Send = S;
+//      type Receive = ();
 
-    async fn run(mut self: Box<Self>, hardware: hardware::Context, channel: ThreadChannel) {
-        let mut ctx = Context::new(hardware, channel);
-        loop {
-            ctx.check_received();
-            if !ctx.paused {
-                let len = ctx.receive.drain(..).len();
-                for _ in 0..len {
-                    match (self.1)(&mut ctx).await {
-                        Ok(r) => ctx.callback(r),
-                        Err(e) => ctx.channel.send(ThreadResponse::Error(e))
-                    }
-                }
-                tokio::time::sleep(Duration::from_millis(16)).await
-            }
-        }
-    }
+//      async fn run(mut self: Box<Self>, hardware: hardware::Context, channel: ThreadChannel) {
+//          let mut ctx = Context::new(hardware, channel);
+//          loop {
+//              ctx.check_received();
+//              if !ctx.paused {
+//                  let len = ctx.receive.drain(..).len();
+//                  for _ in 0..len {
+//                      match (self.1)(&mut ctx).await {
+//                          Ok(r) => ctx.callback(r),
+//                          Err(e) => ctx.channel.send(ThreadResponse::Error(e))
+//                      }
+//                  }
+//                  tokio::time::sleep(Duration::from_millis(16)).await
+//              }
+//          }
+//      }
 
-    fn type_id() -> Option<Id> {None}
+//      fn type_id() -> Option<Id> {None}
 
-    fn id(&self) -> Id {self.0}
-}
+//      fn id(&self) -> Id {self.0}
+//  }
 
-impl<
-    S: Serialize + for<'a> Deserialize <'a> + Send + 'static + Debug,
-    F: for<'b> AsyncFnMutSend<&'b mut Context<S, ()>, Out = Result<S, Error>> + Send + 'static
-> IntoThread<Result<S, Error>, (), TaskBuffer<S>> for F {
-    fn into(mut self) -> (Box<dyn Thread>, Callback<String>){
-        let task: TaskBuffer<S> = Box::new(move |ctx: &mut Context<S, ()>| Box::pin(self(ctx)));
-        let id = Id::random();
-        (Box::new(_BufferedTask(id, task)), (Box::new(move |state: &mut State, result: S| {
-            state.get_named_mut_or_default::<VecDeque<S>>(&id.to_string()).push_front(result);
-        }) as Callback<S>).stringify())
-    }
-}
+//  impl<'b,
+//      S: Serialize + for<'a> Deserialize <'a> + Send + 'static + Debug,
+//      R: Serialize + for<'a> Deserialize <'a> + Send + 'static + Debug,
+//      Fut: Future<Output = Result<S, Error>> + Send + 'b,
+//      F: FnMut(&'b mut hardware::Context, R) -> Fut
+//      //F: for<'b> AsyncFnMutSend<&'b mut Context<S, ()>, Out = Result<S, Error>> + Send + 'static
+//  > IntoThread<Result<S, Error>, (), TaskPoll<S, R>> for F {
+//      fn into(mut self) -> (Box<dyn Thread>, Callback<String>){
+//          let task: TaskPoll<S, R> = Box::new(move |ctx: &mut hardware::Context, req: R| Box::pin(self(ctx, req)));
+//        //let id = Id::random();
+//        //(Box::new(_BufferedTask(id, task)), (Box::new(move |state: &mut State, result: S| {
+//        //    state.get_named_mut_or_default::<VecDeque<S>>(&id.to_string()).push_front(result);
+//        //}) as Callback<S>).stringify())
+//      }
+//  }

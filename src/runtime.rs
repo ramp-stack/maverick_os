@@ -128,7 +128,7 @@ impl Runtime {
         let keys = self.threads.keys().copied().collect::<Vec<Id>>();
         for id in keys {
             let mut thread = self.threads.remove(&id).unwrap();
-            while let Some(recv) = thread.0.receive() {match recv {
+            while let Some(recv) = thread.0.try_receive() {match recv {
                 ThreadResponse::Response(Id::MIN, r) => (thread.1)(state, r),
                 ThreadResponse::Response(id, r) => {
                     let task_id = self.requests.iter().find_map(|(i, ti)| (*i == id).then_some(ti)).expect("Responded to missing request");
@@ -145,7 +145,7 @@ impl Runtime {
                 },
             }}
             match thread.2.is_finished() {
-                true => {self.runtime.block_on(thread.2).unwrap();},
+                true => {self.runtime.block_on(thread.2)?;},
                 false => {self.threads.insert(id, thread);},
             }
         }
