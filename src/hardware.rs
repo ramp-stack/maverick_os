@@ -18,6 +18,7 @@ pub use share::Share;
 pub use app_support::ApplicationSupport;
 pub use cloud::CloudStorage;
 pub use photo_picker::{PhotoPicker, ImageOrientation};
+pub use safe_area::SafeAreaInsets;
 
 /// Hardware context contains interfaces to various hardware.
 /// All interfaces should be clonable or internally synchronized and safe to call from multiple places.
@@ -58,6 +59,10 @@ impl Context {
         }
     }
 
+    pub fn safe_area_insets(&self) -> (f32, f32, f32, f32) {
+        SafeAreaInsets::get()
+    }
+
     pub fn create_camera(&self) -> Camera {
         Camera::new()
     }
@@ -84,15 +89,6 @@ impl Context {
         {
             self.share.share(text);
         }
-
-        #[cfg(not(any(target_os = "ios", target_os = "android")))]
-        {
-            let _ = text;
-        }
-    }
-
-    pub fn get_app_support_path(&self) -> Option<std::path::PathBuf> {
-        ApplicationSupport::get()
     }
 
     pub fn open_photo_picker(&self, sender: Sender<(Vec<u8>, ImageOrientation)>) {

@@ -1,4 +1,4 @@
-#[cfg(any(target_os = "ios", target_os = "macos"))]
+#[cfg(target_os = "macos")]
 use cli_clipboard;
 
 #[cfg(target_os = "ios")]

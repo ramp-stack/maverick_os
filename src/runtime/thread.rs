@@ -117,6 +117,7 @@ impl<
             println!("check");
             self.handle(res);
             if let Some(result) = self.received.remove(&req_id) {
+                println!("Found Result {:?}", result);
                 break serde_json::from_str(&result).unwrap();
             }
         }

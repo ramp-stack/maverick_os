@@ -144,24 +144,24 @@ macro_rules! start {
     ($app:ty) => {
         #[cfg(target_arch = "wasm32")]
         #[cfg_attr(target_arch = "wasm32", wasm_bindgen(start))]
-        pub fn wasm_main() {
+        pub fn maverick_main() {
             MaverickOS::<$app>::start()
         }
 
         #[cfg(target_os = "ios")]
-        #[no_mangle]
-        pub extern "C" fn ios_main() {
+        #[unsafe(no_mangle)]
+        pub extern "C" fn maverick_main() {
             MaverickOS::<$app>::start()
         }
 
         #[cfg(target_os = "android")]
         #[no_mangle]
-        pub fn android_main(app: AndroidApp) {
+        pub fn maverick_main(app: AndroidApp) {
             MaverickOS::<$app>::start(app)
         }
 
         #[cfg(not(any(target_os = "android", target_os="ios", target_arch = "wasm32")))]
-        pub fn main() {
+        pub fn maverick_main() {
             MaverickOS::<$app>::start()
         }
     };

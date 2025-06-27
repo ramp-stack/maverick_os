@@ -4,6 +4,8 @@ use std::fmt::Debug;
 
 use serde::{Serialize, Deserialize};
 
+use crate::ApplicationSupport;
+
 #[cfg(target_os = "android")]
 use winit::platform::android::activity::AndroidApp;
 
@@ -19,7 +21,11 @@ pub struct Cache(
 #[cfg(not(target_arch = "wasm32"))]
 impl Cache {
     pub(crate) fn new() -> Self {
-        let storage_path = PathBuf::from("./");
+        println!("CREATING NEW CACHE");
+        let storage_path = ApplicationSupport::get().unwrap(); 
+
+        // if path.exists() { std::fs::remove_file(&path).expect("Failed to delete file"); }   
+
         std::fs::create_dir_all(&storage_path).unwrap();
         let path = storage_path.join("cache.db");
         let db = rusqlite::Connection::open(path).unwrap();

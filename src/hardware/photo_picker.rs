@@ -1,18 +1,12 @@
 use std::sync::mpsc::Sender;
 
-#[cfg(any(target_os = "ios", target_os = "macos"))]
-use objc2::{msg_send, class};
-#[cfg(any(target_os = "ios", target_os = "macos"))]
-use objc2::runtime::{AnyObject, AnyClass};
-
 #[cfg(target_os = "ios")]
 use block::{ConcreteBlock, RcBlock};
 #[cfg(target_os = "ios")]
 use dispatch2;
-#[cfg(target_os = "ios")]
+#[cfg(any(target_os = "ios", target_os="macos"))]
 use objc2::{
     class, msg_send, sel,
-    rc::autoreleasepool,
     runtime::{AnyClass, AnyObject, ClassBuilder, Sel},
 };
 #[cfg(target_os = "ios")]
@@ -25,6 +19,8 @@ use objc2::ffi::objc_retain;
 use std::ffi::c_void;
 #[cfg(target_os = "ios")]
 use std::ffi::{CStr, CString};
+#[cfg(target_os = "ios")]
+use objc2::rc::autoreleasepool;
 
 #[cfg(any(target_os = "linux", target_os = "windows"))]
 use std::process::Command;

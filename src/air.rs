@@ -65,6 +65,36 @@ pub struct Service{
 }
 
 impl Service {
+    pub async fn create_pointer<
+        S: Serialize + for<'a> Deserialize <'a> + Send + 'static,
+        R: Serialize + for<'a> Deserialize <'a> + Send + 'static,
+    >(ctx: &mut ThreadContext<S, R>, path_a: RecordPath, path_b: RecordPath, index: u32) -> Result<(), Error> {
+        match ctx.blocking_request::<Service>(Request::CreatePointer(path_a, path_b, index)).await? {
+            Response::Empty => Ok(()),
+            r => Err(Error::MaliciousResponse(format!("{:?}", r))),
+        }
+    }
+
+    pub async fn receive<
+        S: Serialize + for<'a> Deserialize <'a> + Send + 'static,
+        R: Serialize + for<'a> Deserialize <'a> + Send + 'static,
+    >(ctx: &mut ThreadContext<S, R>, datetime: DateTime) -> Result<Vec<(OrangeName, RecordPath)>, Error> {
+        match ctx.blocking_request::<Service>(Request::Receive(datetime)).await? {
+            Response::Receive(result) => Ok(result),
+            r => Err(Error::MaliciousResponse(format!("{:?}", r))),
+        }
+    }
+
+    pub async fn share<
+        S: Serialize + for<'a> Deserialize <'a> + Send + 'static,
+        R: Serialize + for<'a> Deserialize <'a> + Send + 'static,
+    >(ctx: &mut ThreadContext<S, R>, name: OrangeName, perms: Permissions, path: RecordPath) -> Result<(), Error> {
+        match ctx.blocking_request::<Service>(Request::Share(name, perms, path)).await? {
+            Response::Empty => Ok(()),
+            r => Err(Error::MaliciousResponse(format!("{:?}", r))),
+        }
+    }
+
     pub async fn create_private<
         S: Serialize + for<'a> Deserialize <'a> + Send + 'static,
         R: Serialize + for<'a> Deserialize <'a> + Send + 'static,
@@ -111,8 +141,12 @@ impl Service {
         S: Serialize + for<'a> Deserialize <'a> + Send + 'static,
         R: Serialize + for<'a> Deserialize <'a> + Send + 'static,
     >(ctx: &mut ThreadContext<S, R>, path: RecordPath, index: u32, protocols: Vec<Protocol>) -> Result<(Option<RecordPath>, Option<DateTime>), Error> {
+        println!("Inside Discover");
         match ctx.blocking_request::<Service>(Request::Discover(path, index, protocols)).await? {
-            Response::Discover(result, date) => Ok((result, date)),
+            Response::Discover(result, date) => {
+                println!("Finished.");
+                Ok((result, date))
+            },
             r => Err(Error::MaliciousResponse(format!("{:?}", r)))
         }
     }
@@ -151,6 +185,7 @@ impl ThreadService for Service {
         let mut requests = Vec::new();
 
         while let Some((id, request)) = ctx.get_request() {
+            println!("!! Request {:?}", request);
             let client: Client = match request {
                 Request::CreatePublic(item) => storage::Client::create_public(&mut self.resolver, &self.secret, item).await?.into(),
                 Request::ReadPublic(filter) => storage::Client::read_public(filter).into(),
@@ -167,10 +202,12 @@ impl ThreadService for Service {
             requests.push(client.build_request());
             clients.push((client, id));
         }
+        println!("!! FINISHED");
         let batch = AirRequest::batch(requests);
         let endpoint = self.resolver.endpoint(&self.secret.name(), None, None).await?;
         let res = self.purser.send(&mut self.resolver, &endpoint, batch).await?;
         for (response, (client, id)) in res.batch()?.into_iter().zip(clients) {
+            println!("!! NOW RESPONSE {:?}", response);
             ctx.respond(id, match client {
                 Client::Public(client) => match client.process_response(&mut self.resolver, response).await {
                     Ok(storage::Processed::CreatePublic(id)) => Ok(Response::CreatePublic(id)),
@@ -180,7 +217,10 @@ impl ThreadService for Service {
                     Err(e) => Err(e.into())
                 },
                 Client::Private(client) => client.process_response(&mut self.cache, &mut self.resolver, response).await.map(|r| match r {
-                    records::Processed::Discover(record, date) => Response::Discover(record, date),
+                    records::Processed::Discover(record, date) => {
+                        println!("Proccessing Discover");
+                        Response::Discover(record, date)
+                    },
                     records::Processed::Create(path, conflict) => Response::CreatePrivate(path, conflict),
                     records::Processed::Read(record) => Response::ReadPrivate(record),
                     records::Processed::Update(s) => Response::UpdatePrivate(s),
@@ -190,6 +230,7 @@ impl ThreadService for Service {
                 }),
             })
         }
+        println!("RUN COMPLETE");
         // ctx.hardware.cache.set("Cache", &Some(self.cache.clone())).await;
         Ok(Some(Duration::from_millis(100)))
     }
