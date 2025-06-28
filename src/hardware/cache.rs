@@ -24,13 +24,10 @@ pub struct Cache(
 #[cfg(not(target_arch = "wasm32"))]
 impl Cache {
     pub(crate) fn new() -> Self {
-        println!("CREATING NEW CACHE");
         let storage_path = ApplicationSupport::get().unwrap(); 
-
-        // if path.exists() { std::fs::remove_file(&path).expect("Failed to delete file"); }   
-
         std::fs::create_dir_all(&storage_path).unwrap();
         let path = storage_path.join("cache.db");
+        // if path.exists() { std::fs::remove_file(&path).expect("Failed to delete file"); }   
         let db = rusqlite::Connection::open(path).unwrap();
         db.busy_timeout(Duration::ZERO).unwrap();
         db.execute(

@@ -110,14 +110,11 @@ impl<
     }
     pub async fn blocking_request<T: Thread>(&mut self, request: T::Receive) -> T::Send {
         let req_id = Id::random();
-        println!("req: {:?}", req_id);
         self.channel.send(ThreadResponse::Request(req_id, T::type_id().expect("Cannot send messages to this thread"), serde_json::to_string(&request).unwrap()));
         loop {
             let res = self.channel.receive().await;
-            println!("check");
             self.handle(res);
             if let Some(result) = self.received.remove(&req_id) {
-                println!("Found Result {:?}", result);
                 break serde_json::from_str(&result).unwrap();
             }
         }
