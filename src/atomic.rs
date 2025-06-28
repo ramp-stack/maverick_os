@@ -9,8 +9,10 @@ impl std::fmt::Display for Error {
 pub trait Atomic {
     fn merge(&mut self, other: Self) -> Result<(), Error> where Self: Sized;
 
-    async fn sync(&mut self) -> Result<(), Error>;
+    fn state(&self) -> BTreeMap<String, u64>;
 }
+
+pub struct State(BTreeMap<String, u64>);
 
 //Create wallet, Default values required for structure before it loads but should accept requests
 //for things like get new address
@@ -56,8 +58,26 @@ pub struct Cache {
     latest: u32
 }
 
-pub struct Ordering {
-    Static,
-    Latest,
-    Max
+pub struct State {
+    Max(u64)
+}
+
+
+
+struct Profile {
+    name: String,
+    abtme: String,
+    age: u32
+}
+
+struct StoredProfile {
+    name: (String, DateTime),
+    abtme: (String, DateTime),
+    age: (String, DateTime),
+}
+
+struct ProfileState {
+    name: DateTime,
+    abtme: DateTime,
+    age: DateTime,
 }
