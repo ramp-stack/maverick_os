@@ -19,6 +19,7 @@ pub use app_support::ApplicationSupport;
 pub use cloud::CloudStorage;
 pub use photo_picker::{PhotoPicker, ImageOrientation};
 pub use safe_area::SafeAreaInsets;
+pub use haptics::Haptics;
 
 /// Hardware context contains interfaces to various hardware.
 /// All interfaces should be clonable or internally synchronized and safe to call from multiple places.
@@ -57,6 +58,10 @@ impl Context {
             cloud: CloudStorage,
             photo_picker: PhotoPicker,
         }
+    }
+
+    pub fn haptic(&self) {
+        Haptics::vibrate()
     }
 
     pub fn safe_area_insets(&self) -> (f32, f32, f32, f32) {
