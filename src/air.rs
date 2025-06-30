@@ -215,10 +215,7 @@ impl ThreadService for Service {
                     records::Processed::Read(record) => Response::ReadPrivate(record),
                     records::Processed::Update(s) => Response::UpdatePrivate(s),
                     records::Processed::Delete(s) => Response::DeletePrivate(s),
-                    records::Processed::Receive(records) => {
-                        println!("Received records {:?}", records);
-                        Response::Receive(records)
-                    }
+                    records::Processed::Receive(records) => Response::Receive(records),
                     records::Processed::Empty => Response::Empty,
                 }),
             })
