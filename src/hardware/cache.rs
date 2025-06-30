@@ -7,7 +7,7 @@ use std::ops::Add;
 use serde::{Serialize, Deserialize};
 
 use crate::ApplicationSupport;
-use rusqlite::Connection;
+pub use rusqlite::Connection;
 
 #[cfg(target_os = "android")]
 use winit::platform::android::activity::AndroidApp;
@@ -39,27 +39,42 @@ impl Cache {
     pub async fn set<
         V: Serialize + for<'a> Deserialize <'a> + Default,
     >(&self, key: &str, value: &V) {
-        self.0.lock().await.execute(
-            "INSERT INTO kvs(key, value) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET value=excluded.value;",
-            [key, &hex::encode(serde_json::to_vec(value).unwrap())]
-        ).unwrap();
+        self.0.lock().await.set(key, value)
     }
 
     pub async fn get<
         V: Serialize + for<'a> Deserialize <'a> + Default,
     >(&self, key: &str) -> V {
-        self.0.lock().await.prepare(
-            &format!("SELECT value FROM kvs where key = \'{}\'", key),
-        ).unwrap().query_and_then([], |row| {
-            let item: String = row.get(0).unwrap();
-            Ok(hex::decode(item).unwrap())
-        }).unwrap().collect::<Result<Vec<Vec<u8>>, rusqlite::Error>>().unwrap()
-        .first().and_then(|b| serde_json::from_slice(b).ok()).unwrap_or_default()
+        self.0.lock().await.get(key)
     }
 
     pub async fn lock(&mut self, callback: impl FnOnce(&Connection)) {
         let mut guard = self.0.lock().await;
         let tx = guard.transaction_with_behavior(rusqlite::TransactionBehavior::Exclusive).unwrap();
         callback(&tx)
+    }
+}
+
+pub trait RustSqlite {
+    fn set<V: Serialize + for<'a> Deserialize <'a> + Default>(&self, key: &str, value: &V);
+    fn get<V: Serialize + for<'a> Deserialize <'a> + Default>(&self, key: &str) -> V;
+}
+
+impl RustSqlite for Connection {
+    fn set<V: Serialize + for<'a> Deserialize <'a> + Default>(&self, key: &str, value: &V) {
+        self.execute(
+            "INSERT INTO kvs(key, value) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET value=excluded.value;",
+            [key, &hex::encode(serde_json::to_vec(value).unwrap())]
+        ).unwrap();
+    }
+
+    fn get<V: Serialize + for<'a> Deserialize <'a> + Default>(&self, key: &str) -> V {
+        self.prepare(
+            &format!("SELECT value FROM kvs where key = \'{}\'", key),
+        ).unwrap().query_and_then([], |row| {
+            let item: String = row.get(0).unwrap();
+            Ok(hex::decode(item).unwrap())
+        }).unwrap().collect::<Result<Vec<Vec<u8>>, rusqlite::Error>>().unwrap()
+        .first().and_then(|b| serde_json::from_slice(b).ok()).unwrap_or_default()
     }
 }
