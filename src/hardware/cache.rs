@@ -28,11 +28,20 @@ impl Cache {
         std::fs::create_dir_all(&storage_path).unwrap();
         let path = storage_path.join("cache.db");
         // if path.exists() { std::fs::remove_file(&path).expect("Failed to delete file"); }   
-        let db = rusqlite::Connection::open(path).unwrap();
+        let mut db = rusqlite::Connection::open(&path).unwrap();
         db.busy_timeout(Duration::ZERO).unwrap();
         db.execute(
             "CREATE TABLE if not exists kvs(key TEXT NOT NULL UNIQUE, value TEXT);", []
         ).unwrap();
+        if db.get::<Option<String>>("v3").is_none() {
+            drop(db);
+            std::fs::remove_file(&path).expect("Failed to delete file");
+            db = rusqlite::Connection::open(path).unwrap();
+            db.execute(
+                "CREATE TABLE if not exists kvs(key TEXT NOT NULL UNIQUE, value TEXT);", []
+            ).unwrap();
+            db.set("v3", &"".to_string());
+        }
         Cache(Arc::new(Mutex::new(db)))
     }
 
