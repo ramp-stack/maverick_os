@@ -8,6 +8,7 @@ mod cloud;
 mod haptics;
 mod photo_picker;
 mod safe_area;
+mod notifications;
 
 use std::sync::mpsc::Sender;
 
@@ -20,6 +21,7 @@ pub use cloud::CloudStorage;
 pub use photo_picker::{PhotoPicker, ImageOrientation};
 pub use safe_area::SafeAreaInsets;
 pub use haptics::Haptics;
+pub use notifications::Notifications;
 
 /// Hardware context contains interfaces to various hardware.
 /// All interfaces should be clonable or internally synchronized and safe to call from multiple places.
@@ -58,6 +60,14 @@ impl Context {
             cloud: CloudStorage,
             photo_picker: PhotoPicker,
         }
+    }
+
+    // pub fn silent_notification(&self, msg: &str) {
+    //     Notifications::silent(msg);
+    // }
+
+    pub fn push_notification(&self, title: &str, msg: &str) {
+        Notifications::push(title, msg);
     }
 
     pub fn haptic(&self) {

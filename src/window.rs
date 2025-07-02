@@ -132,7 +132,6 @@ impl<E: EventHandler> ApplicationHandler for WindowManager<E> {
         println!("SUSPENDED");
         if !self.pause {
             if let Some(context) = &self.context {
-                println!("SUSPENDED PAUSE STATE {:?}", self.pause);
                 self.pause = true;
                 self.event_handler.event(context, Event::Lifetime(Lifetime::Paused));
             }
@@ -140,7 +139,6 @@ impl<E: EventHandler> ApplicationHandler for WindowManager<E> {
     }
 
     fn device_event(&mut self, _event_loop: &ActiveEventLoop, device_id: DeviceId, event: DeviceEvent) {
-        println!("PAUSE STATE {:?}", self.pause);
         if !self.pause {
             if let Some(context) = &self.context {
                 self.event_handler.event(context, Event::Input(Input::Device{device_id, event}));
