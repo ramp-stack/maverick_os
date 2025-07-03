@@ -95,7 +95,7 @@ impl Context {
     }
 
     pub fn share(&self, text: &str) {
-        #[cfg(target_os = "ios")]
+        #[cfg(not(target_os = "android"))]
         {
             Share::share(text);
         }

@@ -20,15 +20,11 @@ use objc2_ui_kit::UIApplication;
 use std::cell::Cell;
 
 #[cfg(target_os = "macos")]
-use objc2::rc::Id;
-#[cfg(target_os = "macos")]
 use objc2_foundation::{NSString, NSError, NSBundle};
 #[cfg(target_os = "macos")]
 use objc2_user_notifications::{UNAuthorizationOptions, UNUserNotificationCenter, UNNotificationRequest, UNMutableNotificationContent, UNTimeIntervalNotificationTrigger};
 #[cfg(target_os = "macos")]
 use block2::StackBlock;
-#[cfg(target_os = "macos")]
-use objc2_app_kit::NSApp;
 #[cfg(target_os = "macos")]
 use objc2::rc::autoreleasepool;
 
