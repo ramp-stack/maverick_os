@@ -66,6 +66,10 @@ impl Context {
     //     Notifications::silent(msg);
     // }
 
+    pub fn register_notifs(&self) {
+        Notifications::register();
+    }
+
     pub fn push_notification(&self, title: &str, msg: &str) {
         Notifications::push(title, msg);
     }

@@ -56,6 +56,7 @@ pub enum Lifetime {
 
 #[derive(Clone, Debug)]
 pub enum Input {
+    Tick,
     Focused(bool),
     DroppedFile(PathBuf),
     HoveredFile(PathBuf),
