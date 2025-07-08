@@ -56,6 +56,7 @@ pub enum Lifetime {
 
 #[derive(Clone, Debug)]
 pub enum Input {
+    Tick,
     Focused(bool),
     DroppedFile(PathBuf),
     HoveredFile(PathBuf),
@@ -115,6 +116,7 @@ impl<E: EventHandler> WindowManager<E> {
 
     #[cfg(not(any(target_os = "android", target_arch = "wasm32")))]
     fn start_loop(mut self) {
+        println!("START LOOP");
         let event_loop = EventLoop::new().unwrap();
         event_loop.run_app(&mut self).unwrap();
     }
@@ -128,6 +130,7 @@ impl<E: EventHandler> ApplicationHandler for WindowManager<E> {
     }
 
     fn suspended(&mut self, _event_loop: &ActiveEventLoop) {
+        println!("SUSPENDED");
         if !self.pause {
             if let Some(context) = &self.context {
                 self.pause = true;
@@ -145,13 +148,18 @@ impl<E: EventHandler> ApplicationHandler for WindowManager<E> {
     }
 
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        self.pause = false;
+        println!("RESUMED");
         let window = Arc::new(event_loop.create_window(
             Window::default_attributes().with_title("orange")
         ).unwrap());
+        println!("CREATED WINDOW");
         let context = Context::from_window(window);
+        println!("RECEIVED CONTEXT");
         self.event_handler.event(&context, Event::Lifetime(Lifetime::Resumed));
+        println!("SENT EVENT HANDLER RESUMED");
         self.context = Some(context);
-        self.pause = false;
+        println!("SET CONTEXT");
     }
 
     fn memory_warning(&mut self, _event_loop: &ActiveEventLoop) {
@@ -165,6 +173,7 @@ impl<E: EventHandler> ApplicationHandler for WindowManager<E> {
             if i == context.handle.id() && (!self.pause || matches!(event, WindowEvent::Occluded(false))) {
                 let event = match event {
                     WindowEvent::CloseRequested | WindowEvent::Destroyed => {
+                        println!("CLOSE REQUESTED");
                         event_loop.exit();
                         Event::Lifetime(Lifetime::Close)
                     },
@@ -173,12 +182,15 @@ impl<E: EventHandler> ApplicationHandler for WindowManager<E> {
                         Event::Lifetime(Lifetime::Draw)
                     },
                     WindowEvent::Occluded(occluded) => {
+                        println!("OCCLUDED PAUSE STATE {:?}", self.pause);
                         if occluded {
+                            println!("PAUSED");
                             self.pause = true;
                             Event::Lifetime(Lifetime::Paused)
                         } else {
                             self.pause = false;
                             //Only on IOS is this called and it is prior to an actual Resume event
+                            println!("UNPAUSED");
                             Event::Lifetime(Lifetime::Resumed)
                         }
                     },

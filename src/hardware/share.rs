@@ -91,6 +91,11 @@ impl Share {
         });
     }
 
+    #[cfg(target_os = "macos")]
+    pub fn share(_text: &str) {}
+    #[cfg(target_os = "linux")]
+    pub fn share(_text: &str) {}
+
     #[cfg(target_os = "android")]
     pub fn share(&self, text: &str) {
         if JAVA_VM.get().is_none() {

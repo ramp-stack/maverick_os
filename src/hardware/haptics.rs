@@ -1,9 +1,11 @@
 
 #![allow(dead_code)]
 #[cfg(target_os = "ios")]
-use objc2_ui_kit::UIImpactFeedbackGenerator;
+use objc2_ui_kit::{UIImpactFeedbackGenerator, UIImpactFeedbackStyle};
 #[cfg(target_os = "ios")]
-use objc2::MainThreadMarker;
+use objc2::{MainThreadMarker, MainThreadOnly, msg_send};
+#[cfg(target_os = "ios")]
+use objc2::rc::{Retained, Allocated};
 
 pub struct Haptics;
 
@@ -11,11 +13,12 @@ impl Haptics {
     #[cfg(target_os = "ios")]
     pub fn vibrate() {
         unsafe {
-            let mtm = MainThreadMarker::new().expect("must be on the main thread");
-            let generator = UIImpactFeedbackGenerator::new(mtm);
-            let intensity = 0.75;
-            generator.prepare();
-            generator.impactOccurredWithIntensity(intensity);
+            if let Some(mtm) = MainThreadMarker::new() {
+                let alloc: Allocated<UIImpactFeedbackGenerator> = UIImpactFeedbackGenerator::alloc(mtm);
+                let generator: Retained<UIImpactFeedbackGenerator> = msg_send![alloc, initWithStyle: UIImpactFeedbackStyle::Rigid];
+                generator.prepare();
+                generator.impactOccurred();
+            }
         }
     }
 

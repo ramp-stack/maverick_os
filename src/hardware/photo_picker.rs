@@ -5,10 +5,9 @@ use block::{ConcreteBlock, RcBlock};
 #[cfg(target_os = "ios")]
 use dispatch2;
 #[cfg(any(target_os = "ios", target_os="macos"))]
-use objc2::{
-    class, msg_send, sel,
-    runtime::{AnyClass, AnyObject, ClassBuilder, Sel},
-};
+use objc2::{class, msg_send, runtime::{AnyClass, AnyObject}};
+#[cfg(target_os = "ios")]
+use objc2::{sel, runtime::{ClassBuilder, Sel}};
 #[cfg(target_os = "ios")]
 use objc2_foundation::NSArray;
 #[cfg(target_os = "ios")]

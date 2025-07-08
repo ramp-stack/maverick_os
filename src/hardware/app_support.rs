@@ -3,7 +3,7 @@ use objc2_foundation::{NSString, NSURL};
 #[cfg(any(target_os = "ios", target_os = "macos"))]
 use objc2::msg_send;
 use std::path::PathBuf;
-#[cfg(any(target_os = "ios", target_os = "macos"))]
+#[cfg(target_os = "ios")]
 use objc2::__framework_prelude::AnyObject;
 #[cfg(any(target_os = "ios", target_os = "macos"))]
 use objc2::rc::Retained;

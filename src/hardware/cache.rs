@@ -1,8 +1,6 @@
 use std::sync::Arc;
-use std::path::PathBuf;
 use std::time::Duration;
 use std::fmt::Debug;
-use std::ops::Add;
 
 use serde::{Serialize, Deserialize};
 
@@ -13,7 +11,7 @@ pub use rusqlite::Connection;
 use winit::platform::android::activity::AndroidApp;
 
 #[cfg(not(target_arch = "wasm32"))]
-use tokio::sync::{Mutex, MutexGuard, MappedMutexGuard};
+use tokio::sync::Mutex;
 
 #[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug, Clone)]
@@ -28,11 +26,20 @@ impl Cache {
         std::fs::create_dir_all(&storage_path).unwrap();
         let path = storage_path.join("cache.db");
         // if path.exists() { std::fs::remove_file(&path).expect("Failed to delete file"); }   
-        let db = rusqlite::Connection::open(path).unwrap();
+        let mut db = rusqlite::Connection::open(&path).unwrap();
         db.busy_timeout(Duration::ZERO).unwrap();
         db.execute(
             "CREATE TABLE if not exists kvs(key TEXT NOT NULL UNIQUE, value TEXT);", []
         ).unwrap();
+        if db.get::<Option<String>>("v3").is_none() {
+            drop(db);
+            std::fs::remove_file(&path).expect("Failed to delete file");
+            db = rusqlite::Connection::open(path).unwrap();
+            db.execute(
+                "CREATE TABLE if not exists kvs(key TEXT NOT NULL UNIQUE, value TEXT);", []
+            ).unwrap();
+            db.set("v3", &"".to_string());
+        }
         Cache(Arc::new(Mutex::new(db)))
     }
 
