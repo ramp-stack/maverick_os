@@ -197,30 +197,32 @@ impl ThreadService for Service {
             clients.push((client, id));
         }
         // println!("!! FINISHED");
-        let batch = AirRequest::batch(requests);
-        let endpoint = self.resolver.endpoint(&self.secret.name(), None, None).await?;
-        let res = self.purser.send(&mut self.resolver, &endpoint, batch).await?;
-        for (response, (client, id)) in res.batch()?.into_iter().zip(clients) {
-            ctx.respond(id, match client {
-                Client::Public(client) => match client.process_response(&mut self.resolver, response).await {
-                    Ok(storage::Processed::CreatePublic(id)) => Ok(Response::CreatePublic(id)),
-                    Ok(storage::Processed::ReadPublic(results)) => Ok(Response::ReadPublic(results)),
-                    Ok(storage::Processed::Empty) => Ok(Response::Empty),
-                    Ok(r) => Err(Error::MaliciousResponse(format!("{:?}", r))),
-                    Err(e) => Err(e.into())
-                },
-                Client::Private(client) => client.process_response(&mut self.cache, &mut self.resolver, response).await.map(|r| match r {
-                    records::Processed::Discover(record, date) => Response::Discover(record, date),
-                    records::Processed::Create(path, conflict) => Response::CreatePrivate(path, conflict),
-                    records::Processed::Read(record) => Response::ReadPrivate(record),
-                    records::Processed::Update(s) => Response::UpdatePrivate(s),
-                    records::Processed::Delete(s) => Response::DeletePrivate(s),
-                    records::Processed::Receive(records) => Response::Receive(records),
-                    records::Processed::Empty => Response::Empty,
-                }),
-            })
+        if !requests.is_empty() {
+            let batch = AirRequest::batch(requests);
+            let endpoint = self.resolver.endpoint(&self.secret.name(), None, None).await?;
+            let res = self.purser.send(&mut self.resolver, &endpoint, batch).await?;
+            for (response, (client, id)) in res.batch()?.into_iter().zip(clients) {
+                ctx.respond(id, match client {
+                    Client::Public(client) => match client.process_response(&mut self.resolver, response).await {
+                        Ok(storage::Processed::CreatePublic(id)) => Ok(Response::CreatePublic(id)),
+                        Ok(storage::Processed::ReadPublic(results)) => Ok(Response::ReadPublic(results)),
+                        Ok(storage::Processed::Empty) => Ok(Response::Empty),
+                        Ok(r) => Err(Error::MaliciousResponse(format!("{:?}", r))),
+                        Err(e) => Err(e.into())
+                    },
+                    Client::Private(client) => client.process_response(&mut self.cache, &mut self.resolver, response).await.map(|r| match r {
+                        records::Processed::Discover(record, date) => Response::Discover(record, date),
+                        records::Processed::Create(path, conflict) => Response::CreatePrivate(path, conflict),
+                        records::Processed::Read(record) => Response::ReadPrivate(record),
+                        records::Processed::Update(s) => Response::UpdatePrivate(s),
+                        records::Processed::Delete(s) => Response::DeletePrivate(s),
+                        records::Processed::Receive(records) => Response::Receive(records),
+                        records::Processed::Empty => Response::Empty,
+                    }),
+                })
+            }
+            ctx.hardware.cache.set("Cache", &Some(self.cache.clone())).await;
         }
-        ctx.hardware.cache.set("Cache", &Some(self.cache.clone())).await;
         Ok(Some(Duration::from_millis(100)))
     }
 }

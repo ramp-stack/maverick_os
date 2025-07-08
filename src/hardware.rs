@@ -1,5 +1,5 @@
 mod logger;
-mod cache;
+pub mod cache;
 mod camera;
 mod share;
 mod clipboard;

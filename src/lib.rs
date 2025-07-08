@@ -31,6 +31,8 @@ pub mod prelude {
 pub mod air;
 pub use air::Id;
 
+//mod atomic;
+
 pub trait Application: Services {
     fn new(context: &mut Context) -> impl Future<Output = Self>;
     fn on_event(&mut self, context: &mut Context, event: Event) -> impl Future<Output = ()>;
