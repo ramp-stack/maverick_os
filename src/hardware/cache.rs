@@ -55,10 +55,12 @@ impl Cache {
         self.0.lock().await.get(key)
     }
 
-    pub async fn lock(&mut self, callback: impl FnOnce(&Connection)) {
+    pub async fn lock<T>(&mut self, callback: impl FnOnce(&Connection) -> T) -> T {
         let mut guard = self.0.lock().await;
         let tx = guard.transaction_with_behavior(rusqlite::TransactionBehavior::Exclusive).unwrap();
-        callback(&tx)
+        let res = callback(&tx);
+        tx.commit();
+        res
     }
 }
 

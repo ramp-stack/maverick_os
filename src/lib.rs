@@ -1,3 +1,5 @@
+#![feature(specialization)]
+
 use std::collections::BTreeMap;
 use std::future::Future;
 use std::any::TypeId;
@@ -32,6 +34,7 @@ pub mod air;
 pub use air::Id;
 
 //mod atomic;
+//mod active_record;
 
 pub trait Application: Services {
     fn new(context: &mut Context) -> impl Future<Output = Self>;

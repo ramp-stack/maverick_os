@@ -1,0 +1,35 @@
+/// Locations
+///
+/// Locations are places that data can be stored
+///
+/// Sqlite: Sqlite is a location and can store data in series of tables columns and rows
+/// 
+/// Air: Air servers are locations that store data in a tree
+///      Air servers also require a protocol for each node in the tree
+///
+/// CRD: All locations need to accept a create, read, and delete calls using just paths
+///
+/// Paths: Paths are used to identify a particular spot in the data tree Vec<String>
+///
+/// All locations have a custom trait that must be implemented
+/// They can have a custom derive macro to make it easy or blanket implementations
+/// 
+
+
+/// Data
+///
+/// Data is a tree with nodes that are either a field or a map
+
+/// State
+///
+/// State is a small peice of data that is required along with the state function
+/// in order to choose the data from one location and another
+///
+/// State function is a function that given two states determines which 
+/// field is the latest
+/// alt: api calls need to be carried out on sub data
+
+///Update
+///
+///Update also called Sync is when you read the state and based on the state
+///Decide to Create, Read, Or Delete
