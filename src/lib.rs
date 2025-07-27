@@ -125,7 +125,10 @@ impl<A: Application + 'static> EventHandler for MaverickService<A> {
                     state: Some(State::default())
                 }))
             }
-            runtime.tick(self.os.as_mut().unwrap().context.state.as_mut().unwrap()).unwrap();
+            self.os.as_mut().map(|a| {
+                runtime.tick(a.context.state.as_mut().unwrap())
+            });
+
             let os = self.os.as_mut().unwrap();
             os.context.window = window_ctx.clone();
             runtime.block_on(os.on_event(event.clone()));
