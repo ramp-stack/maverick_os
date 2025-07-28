@@ -4,102 +4,190 @@ use image::RgbaImage;
 mod apple;
 
 #[cfg(any(target_os = "ios", target_os = "macos"))]
-use crate::hardware::camera::apple::*;
+mod apple_custom_image;
 
 #[cfg(target_os = "android")]
 mod android;
 
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+use crate::hardware::camera::apple::AppleCamera;
+
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+use crate::hardware::camera::apple_custom_image::AppleCustomCamera;
+
 #[cfg(target_os = "android")]
-use crate::hardware::camera::android::*;
+use crate::hardware::camera::android::AndroidCamera;
 
 #[derive(Debug)]
 pub enum CameraError {
     AccessDenied,
     WaitingForAccess,
-    FailedToGetFrame
+    FailedToGetFrame,
+    FailedToOpenCamera,
 }
 
 #[derive(Debug, Clone)]
-pub struct Camera (
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+pub enum AppleCameraBackend {
+    Standard(AppleCamera),
+    Custom(AppleCustomCamera),
+}
+
+#[derive(Debug, Clone)]
+pub struct Camera(
     #[cfg(any(target_os = "macos", target_os = "ios"))]
-    AppleCamera,
+    AppleCameraBackend,
+    
     #[cfg(target_os = "android")]
     AndroidCamera,
 );
 
 impl Camera {
     #[cfg(any(target_os = "macos", target_os = "ios"))]
-    pub fn new() -> Self {
-        // #[cfg(target_os = "ios")]
-        // start_camera_apple();
-
+    pub fn new() -> Result<Self, CameraError> {
+        println!("Creating standard Apple camera");
         let camera = AppleCamera::new();
         camera.open_camera();
-        Camera(camera)
-    }
-
-    #[cfg(target_os = "android")]
-    pub fn new() -> Self {
-        let mut camera = AndroidCamera::new().expect("Failed to create Android camera");
-        camera.open_camera();
-        return Camera(camera)
-    }
-
-    #[cfg(not(any(target_os = "macos", target_os = "ios", target_os = "android")))]
-    pub fn new() -> Self {
-        todo!("Camera not supported on this platform")
+        Ok(Camera(AppleCameraBackend::Standard(camera)))
     }
 
     #[cfg(any(target_os = "macos", target_os = "ios"))]
-    pub fn get_frame(&mut self) -> Result<RgbaImage, CameraError> {
-        self.0.get_latest_frame().ok_or(CameraError::FailedToGetFrame)
+    pub fn new_custom() -> Result<Self, CameraError> {
+        println!("Creating custom Apple camera");
+        let mut camera = AppleCustomCamera::new();
+        camera.open_camera().map_err(|e| {
+            println!("Failed to open custom camera: {}", e);
+            CameraError::FailedToOpenCamera
+        })?;
+        println!("Custom camera opened successfully");
+        Ok(Camera(AppleCameraBackend::Custom(camera)))
     }
 
     #[cfg(target_os = "android")]
-    pub fn get_frame(&mut self) -> Result<RgbaImage, CameraError> {
-        #[cfg(target_os = "android")]
-        return self.0.get_latest_frame().map_err(|_| CameraError::FailedToGetFrame);
+    pub fn new() -> Result<Self, CameraError> {
+        let mut camera = AndroidCamera::new().map_err(|_| CameraError::AccessDenied)?;
+        camera.open_camera();
+        Ok(Camera(camera))
+    }
 
+    #[cfg(not(any(target_os = "macos", target_os = "ios", target_os = "android")))]
+    pub fn new() -> Result<Self, CameraError> {
+        Err(CameraError::AccessDenied)
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    pub fn get_frame(&mut self) -> Option<RgbaImage> {
+        match &mut self.0 {
+            AppleCameraBackend::Standard(_cam) => {
+                println!("Standard camera not supported for frame output");
+                None
+            }
+            AppleCameraBackend::Custom(cam) => {
+                println!("Getting frame from custom camera");
+                cam.get_frame()
+            }
+        }
+    }
+
+    #[cfg(target_os = "android")]
+    pub fn get_frame(&mut self) -> Result<(Vec<u8>, usize, usize), CameraError> {
+        self.0.get_latest_frame().map_err(|_| CameraError::FailedToGetFrame)
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "ios", target_os = "android")))]
+    pub fn get_frame(&mut self) -> Option<RgbaImage> {
+        None
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    pub fn get_latest_raw_frame(&self) -> Option<RgbaImage> {
+        match &self.0 {
+            AppleCameraBackend::Standard(_cam) => {
+                println!("Standard camera does not support raw frames");
+                None
+            }
+            AppleCameraBackend::Custom(cam) => {
+                cam.get_frame()
+            }
+        }
+    }
+
+    #[cfg(target_os = "android")]
+    pub fn get_latest_raw_frame(&self) -> Option<RgbaImage> {
+        None
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "ios", target_os = "android")))]
+    pub fn get_latest_raw_frame(&self) -> Option<RgbaImage> {
+        None
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    pub fn open_and_get_frame() -> Result<(Vec<u8>, usize, usize), CameraError> {
+        println!("Opening standard camera and getting frame (not supported)");
         Err(CameraError::FailedToGetFrame)
     }
 
-    #[cfg(not(any(target_os = "macos", target_os = "ios", target_os = "android")))]
-    pub fn get_frame(&mut self) -> Result<RgbaImage, CameraError> {
-        todo!("Camera not supported on this platform")
-    }
-
-    /// Opens the camera and immediately gets a frame
     #[cfg(any(target_os = "macos", target_os = "ios"))]
-    pub fn open_and_get_frame() -> Result<RgbaImage, CameraError> {
-        let camera = AppleCamera::new();
-        camera.open_camera();
-        let mut camera_wrapper = Camera(camera);
-        camera_wrapper.get_frame()
+    pub fn open_and_get_custom_frame() -> Option<RgbaImage> {
+        println!("Opening custom camera and getting frame");
+        let mut camera = AppleCustomCamera::new();
+        if let Err(e) = camera.open_camera() {
+            println!("Failed to open custom camera: {}", e);
+            return None;
+        }
+
+        let mut wrapper = Camera(AppleCameraBackend::Custom(camera));
+        println!("Waiting for custom camera to capture first frame...");
+        for attempt in 1..=10 {
+            std::thread::sleep(std::time::Duration::from_millis(200));
+            println!("Attempt {} to get frame", attempt);
+            if let Some(frame) = wrapper.get_frame() {
+                println!("Successfully got frame on attempt {}", attempt);
+                return Some(frame);
+            }
+        }
+        println!("Failed to get frame after 10 attempts");
+        None
     }
 
-    /// Opens the camera and immediately gets a frame
     #[cfg(target_os = "android")]
-    pub fn open_and_get_frame() -> Result<RgbaImage, CameraError> {
+    pub fn open_and_get_frame() -> Result<(Vec<u8>, usize, usize), CameraError> {
         let mut camera = AndroidCamera::new().map_err(|_| CameraError::AccessDenied)?;
         camera.open_camera();
-        let mut camera_wrapper = Camera(camera);
-        camera_wrapper.get_frame()
+        let mut wrapper = Camera(camera);
+        wrapper.get_frame()
     }
 
     #[cfg(not(any(target_os = "macos", target_os = "ios", target_os = "android")))]
-    pub fn open_and_get_frame() -> Result<RgbaImage, CameraError> {
-        todo!("Camera not supported on this platform")
+    pub fn open_and_get_frame() -> Option<RgbaImage> {
+        None
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    pub fn stop_camera(&self) {
+        match &self.0 {
+            AppleCameraBackend::Standard(_cam) => {
+                println!("Stopping standard camera");
+            }
+            AppleCameraBackend::Custom(cam) => {
+                println!("Stopping custom camera");
+                cam.stop_camera();
+            }
+        }
     }
 }
 
 impl Default for Camera {
     fn default() -> Self {
-        Self::new()
+        Self::new().unwrap_or_else(|_| panic!("Failed to create default camera"))
     }
 }
 
 impl Drop for Camera {
     fn drop(&mut self) {
-        println!("Stopping Camera");
+        println!("Dropping Camera");
+        #[cfg(any(target_os = "macos", target_os = "ios"))]
+        self.stop_camera();
     }
 }
