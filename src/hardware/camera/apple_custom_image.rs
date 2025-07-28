@@ -15,12 +15,12 @@ use {
     objc2_core_video::*,
 };
 
-/// Bayer color filter array patterns
+// Bayer color filter array patterns
 #[derive(Debug, Clone, Copy)]
 pub enum BayerPattern { RGGB, BGGR, GRBG, GBRG }
 
 impl BayerPattern {
-    /// Convert to the bayer crate's CFA enum
+    // Convert to the bayer crate's CFA enum
     fn to_cfa(self) -> CFA {
         match self {
             BayerPattern::RGGB => CFA::RGGB,
@@ -47,7 +47,7 @@ define_class!(
 
     //! Point of intrest: This class handles video frame processing from the camera
     unsafe impl AVCaptureVideoDataOutputSampleBufferDelegate for Processor {
-        /// Handle incoming video frames from the camera
+        // Handle incoming video frames from the camera
         #[unsafe(method(captureOutput:didOutputSampleBuffer:fromConnection:))]
         fn captureOutput_didOutputSampleBuffer_fromConnection(
             &self, _output: &AVCaptureOutput, sample_buffer: &CMSampleBuffer, _connection: &AVCaptureConnection,
@@ -121,7 +121,7 @@ define_class!(
     }
 
     unsafe impl AVCapturePhotoCaptureDelegate for Processor {
-        /// Handle captured photos from the camera
+        // Handle captured photos from the camera
         #[unsafe(method(captureOutput:didFinishProcessingPhoto:error:))]
         fn captureOutput_didFinishProcessingPhoto_error(
             &self, _output: &AVCapturePhotoOutput, photo: &objc2_av_foundation::AVCapturePhoto, error: Option<&objc2_foundation::NSError>,
@@ -176,7 +176,8 @@ impl Processor {
         unsafe { objc2::msg_send![super(this), init] }
     }
 
-    /// Process raw Bayer sensor data into RGB
+    // Process Bayer data from the camera frame
+    // Returns an RGBA image if successful, or an error message
     fn process_bayer_data(&self, base_address: *const u8, width: usize, height: usize, bytes_per_row: usize, pattern: BayerPattern) -> Result<RgbaImage, String> {
         let mut bayer_data = vec![0u16; (width * height) as usize];
         
@@ -197,7 +198,8 @@ impl Processor {
         Self::demosaic_bayer(&bayer_data, width, height, pattern)
     }
 
-    /// Convert Bayer pattern data to full color RGB image
+    // Convert Bayer pattern data to full color RGB image
+    // This function applies demosaicing, gamma correction, and white balance
     fn demosaic_bayer(bayer_data: &[u16], width: usize, height: usize, pattern: BayerPattern) -> Result<RgbaImage, String> {
         
         let mut bayer_bytes = Vec::with_capacity(bayer_data.len() * 2);
@@ -313,7 +315,7 @@ impl AppleCustomCamera {
         }
     }
 
-    /// Capture a high quality raw photo
+    // Capture a high quality raw photo
     pub fn capture_raw_photo(&self) -> Result<(), String> {
         let Some(photo_output) = &self.photo_output else {
             return Err("Photo capture isn't set up".to_string());
@@ -327,7 +329,7 @@ impl AppleCustomCamera {
         Ok(())
     }
 
-    /// Get the most recent processed raw image
+    // Get the most recent processed raw image
     pub fn get_latest_raw_frame(&self) -> Option<RgbaImage> {
         self.processor.ivars().last_raw_frame.lock().unwrap().clone()
     }
