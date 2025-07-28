@@ -1,8 +1,9 @@
 #![allow(non_snake_case)]
 
-use std::{sync::Mutex, slice::from_raw_parts, sync::atomic::{AtomicU64, Ordering}};
+use std::{sync::Mutex, slice::from_raw_parts};
 use image::{Rgba, RgbaImage};
 use bayer::{BayerDepth, CFA, Demosaic, RasterMut, RasterDepth, run_demosaic};
+use std::io::Cursor;
 
 #[cfg(any(target_os = "ios", target_os = "macos"))]
 use {
@@ -30,13 +31,9 @@ impl BayerPattern {
     }
 }
 
-/// Core data structure for the camera processor
 #[derive(Debug)]
 pub struct ProcessorClass {
-    pub last_frame: Mutex<Option<(Vec<u8>, usize, usize)>>,
     pub last_raw_frame: Mutex<Option<RgbaImage>>,
-    pub video_frame_count: AtomicU64,
-    pub raw_frame_count: AtomicU64,
 }
 
 #[cfg(any(target_os = "ios", target_os = "macos"))]
@@ -48,14 +45,13 @@ define_class!(
 
     unsafe impl NSObjectProtocol for Processor {}
 
+    //! Point of intrest: This class handles video frame processing from the camera
     unsafe impl AVCaptureVideoDataOutputSampleBufferDelegate for Processor {
         /// Handle incoming video frames from the camera
         #[unsafe(method(captureOutput:didOutputSampleBuffer:fromConnection:))]
         fn captureOutput_didOutputSampleBuffer_fromConnection(
             &self, _output: &AVCaptureOutput, sample_buffer: &CMSampleBuffer, _connection: &AVCaptureConnection,
         ) {
-            let frame_count = self.ivars().video_frame_count.fetch_add(1, Ordering::Relaxed) + 1;
-            
             let Some(pixel_buffer) = (unsafe { CMSampleBuffer::image_buffer(sample_buffer) }) else { 
                 return 
             };
@@ -93,23 +89,29 @@ define_class!(
                 }
                 kCVPixelFormatType_32BGRA => {
                     let slice = unsafe { from_raw_parts(base_address, bytes_per_row * height) };
-                    let mut rgb_data = vec![0u8; (width * height * 3) as usize];
+                    let mut rgba_data = Vec::with_capacity((width * height * 4) as usize);
 
                     for y in 0..height {
                         let row_start = y * bytes_per_row;
                         for x in 0..width {
                             let src_index = row_start + x * 4; 
-                            let dst_index = (y * width + x) * 3; 
                             
-                            if src_index + 3 < slice.len() && dst_index + 2 < rgb_data.len() {
-                                rgb_data[dst_index] = slice[src_index + 2];
-                                rgb_data[dst_index + 1] = slice[src_index + 1];
-                                rgb_data[dst_index + 2] = slice[src_index];
+                            if src_index + 3 < slice.len() {
+                                // Direct BGRA → RGBA conversion
+                                let b = slice[src_index];
+                                let g = slice[src_index + 1]; 
+                                let r = slice[src_index + 2];
+                                let a = slice[src_index + 3];
+                                
+                                rgba_data.extend_from_slice(&[r, g, b, a]);
                             }
                         }
                     }
 
-                    *self.ivars().last_frame.lock().unwrap() = Some((rgb_data, width, height));
+                    // Create RGBA image directly
+                    if let Some(rgba_image) = RgbaImage::from_raw(width as u32, height as u32, rgba_data) {
+                        *self.ivars().last_raw_frame.lock().unwrap() = Some(rgba_image);
+                    }
                 }
                 _ => {}
             }
@@ -124,8 +126,6 @@ define_class!(
         fn captureOutput_didFinishProcessingPhoto_error(
             &self, _output: &AVCapturePhotoOutput, photo: &objc2_av_foundation::AVCapturePhoto, error: Option<&objc2_foundation::NSError>,
         ) {
-            let frame_count = self.ivars().raw_frame_count.fetch_add(1, Ordering::Relaxed) + 1;
-            
             if error.is_some() {
                 return;
             }
@@ -169,13 +169,9 @@ define_class!(
 
 #[cfg(any(target_os = "ios", target_os = "macos"))]
 impl Processor {
-    /// Create a new processor instance
     pub fn new() -> Retained<Self> {
         let this = Self::alloc().set_ivars(ProcessorClass {
-            last_frame: Mutex::new(None),
             last_raw_frame: Mutex::new(None),
-            video_frame_count: AtomicU64::new(0),
-            raw_frame_count: AtomicU64::new(0),
         });
         unsafe { objc2::msg_send![super(this), init] }
     }
@@ -203,7 +199,6 @@ impl Processor {
 
     /// Convert Bayer pattern data to full color RGB image
     fn demosaic_bayer(bayer_data: &[u16], width: usize, height: usize, pattern: BayerPattern) -> Result<RgbaImage, String> {
-        use std::io::Cursor;
         
         let mut bayer_bytes = Vec::with_capacity(bayer_data.len() * 2);
         for &pixel in bayer_data {
@@ -225,8 +220,8 @@ impl Processor {
         ).map_err(|e| format!("Demosaicing process failed: {:?}", e))?;
 
         let mut rgba_data = Vec::with_capacity(width * height * 4);
-        
-        // Apply gamma correction and white balance
+
+        //! Point of intrest: Apply gamma correction and white balance
         let gamma = 1.0 / 2.2;
         let white_balance = [1.2, 1.0, 1.8]; 
         
@@ -243,7 +238,6 @@ impl Processor {
     }
 }
 
-/// Main camera interface for iOS/macOS
 #[cfg(any(target_os = "ios", target_os = "macos"))]
 #[derive(Debug, Clone)]
 pub struct AppleCustomCamera {
@@ -255,7 +249,6 @@ pub struct AppleCustomCamera {
 
 #[cfg(any(target_os = "ios", target_os = "macos"))]
 impl AppleCustomCamera {
-    /// Create a new camera instance
     pub fn new() -> Self {
         Self {
             session: unsafe { AVCaptureSession::new() },
@@ -265,7 +258,6 @@ impl AppleCustomCamera {
         }
     }
 
-    /// Initialize and start the camera session
     pub fn open_camera(&mut self) -> Result<(), String> {
         unsafe {
             let device_types = NSArray::from_slice(&[AVCaptureDeviceTypeBuiltInWideAngleCamera]);
@@ -314,11 +306,9 @@ impl AppleCustomCamera {
         }
     }
 
-    /// Stop the camera and clear stored frames
     pub fn stop_camera(&self) { 
         unsafe { 
             self.session.stopRunning(); 
-            *self.processor.ivars().last_frame.lock().unwrap() = None;
             *self.processor.ivars().last_raw_frame.lock().unwrap() = None;
         }
     }
