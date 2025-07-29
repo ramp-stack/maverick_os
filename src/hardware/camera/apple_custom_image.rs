@@ -45,7 +45,7 @@ define_class!(
 
     unsafe impl NSObjectProtocol for Processor {}
 
-    //! Point of intrest: This class handles video frame processing from the camera
+    //*--> Point of intrest: This class handles video frame processing from the camera
     unsafe impl AVCaptureVideoDataOutputSampleBufferDelegate for Processor {
         // Handle incoming video frames from the camera
         #[unsafe(method(captureOutput:didOutputSampleBuffer:fromConnection:))]
@@ -223,7 +223,7 @@ impl Processor {
 
         let mut rgba_data = Vec::with_capacity(width * height * 4);
 
-        //! Point of intrest: Apply gamma correction and white balance
+        //*--> Point of intrest: Apply gamma correction and white balance
         let gamma = 1.0 / 2.2;
         let white_balance = [1.2, 1.0, 1.8]; 
         
