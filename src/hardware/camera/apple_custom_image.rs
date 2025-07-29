@@ -1,7 +1,8 @@
 #![allow(non_snake_case)]
+#![allow(non_upper_case_globals)]
 
 use std::{sync::Mutex, slice::from_raw_parts};
-use image::{Rgba, RgbaImage};
+use image::{RgbaImage};
 use bayer::{BayerDepth, CFA, Demosaic, RasterMut, RasterDepth, run_demosaic};
 use std::io::Cursor;
 
@@ -316,18 +317,18 @@ impl AppleCustomCamera {
     }
 
     // Capture a high quality raw photo
-    pub fn capture_raw_photo(&self) -> Result<(), String> {
-        let Some(photo_output) = &self.photo_output else {
-            return Err("Photo capture isn't set up".to_string());
-        };
+    // pub fn capture_raw_photo(&self) -> Result<(), String> {
+    //     let Some(photo_output) = &self.photo_output else {
+    //         return Err("Photo capture isn't set up".to_string());
+    //     };
 
-        unsafe {
-            let settings = AVCapturePhotoSettings::photoSettings();
-            photo_output.capturePhotoWithSettings_delegate(&settings, ProtocolObject::from_ref(&*self.processor));
-        }
+    //     unsafe {
+    //         let settings = AVCapturePhotoSettings::photoSettings();
+    //         photo_output.capturePhotoWithSettings_delegate(&settings, ProtocolObject::from_ref(&*self.processor));
+    //     }
         
-        Ok(())
-    }
+    //     Ok(())
+    // }
 
     // Get the most recent processed raw image
     pub fn get_latest_raw_frame(&self) -> Option<RgbaImage> {

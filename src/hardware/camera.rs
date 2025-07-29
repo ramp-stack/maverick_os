@@ -45,7 +45,7 @@ pub struct Camera(
 impl Camera {
     #[cfg(any(target_os = "macos", target_os = "ios"))]
     pub fn new() -> Result<Self, CameraError> {
-        println!("Creating standard Apple camera");
+        // println!("Creating standard Apple camera");
         let camera = AppleCamera::new();
         camera.open_camera();
         Ok(Camera(AppleCameraBackend::Standard(camera)))
@@ -53,13 +53,13 @@ impl Camera {
 
     #[cfg(any(target_os = "macos", target_os = "ios"))]
     pub fn new_custom() -> Result<Self, CameraError> {
-        println!("Creating custom Apple camera");
+        // println!("Creating custom Apple camera");
         let mut camera = AppleCustomCamera::new();
         camera.open_camera().map_err(|e| {
-            println!("Failed to open custom camera: {}", e);
+            // println!("Failed to open custom camera: {}", e);
             CameraError::FailedToOpenCamera
         })?;
-        println!("Custom camera opened successfully");
+        // println!("Custom camera opened successfully");
         Ok(Camera(AppleCameraBackend::Custom(camera)))
     }
 
@@ -79,11 +79,11 @@ impl Camera {
     pub fn get_frame(&mut self) -> Option<RgbaImage> {
         match &mut self.0 {
             AppleCameraBackend::Standard(_cam) => {
-                println!("Standard camera not supported for frame output");
+                // println!("Standard camera not supported for frame output");
                 None
             }
             AppleCameraBackend::Custom(cam) => {
-                println!("Getting frame from custom camera");
+                // println!("Getting frame from custom camera");
                 cam.get_latest_raw_frame()
             }
         }
@@ -103,7 +103,7 @@ impl Camera {
     pub fn get_latest_raw_frame(&self) -> Option<RgbaImage> {
         match &self.0 {
             AppleCameraBackend::Standard(_cam) => {
-                println!("Standard camera does not support raw frames");
+                // println!("Standard camera does not support raw frames");
                 None
             }
             AppleCameraBackend::Custom(cam) => {
@@ -130,24 +130,24 @@ impl Camera {
 
     #[cfg(any(target_os = "macos", target_os = "ios"))]
     pub fn open_and_get_custom_frame() -> Option<RgbaImage> {
-        println!("Opening custom camera and getting frame");
+        // println!("Opening custom camera and getting frame");
         let mut camera = AppleCustomCamera::new();
         if let Err(e) = camera.open_camera() {
-            println!("Failed to open custom camera: {}", e);
+            // println!("Failed to open custom camera: {}", e);
             return None;
         }
 
         let mut wrapper = Camera(AppleCameraBackend::Custom(camera));
-        println!("Waiting for custom camera to capture first frame...");
+        // println!("Waiting for custom camera to capture first frame...");
         for attempt in 1..=10 {
             std::thread::sleep(std::time::Duration::from_millis(200));
-            println!("Attempt {} to get frame", attempt);
+            // println!("Attempt {} to get frame", attempt);
             if let Some(frame) = wrapper.get_frame() {
-                println!("Successfully got frame on attempt {}", attempt);
+                // println!("Successfully got frame on attempt {}", attempt);
                 return Some(frame);
             }
         }
-        println!("Failed to get frame after 10 attempts");
+        // println!("Failed to get frame after 10 attempts");
         None
     }
 
@@ -168,10 +168,10 @@ impl Camera {
     pub fn stop_camera(&self) {
         match &self.0 {
             AppleCameraBackend::Standard(_cam) => {
-                println!("Stopping standard camera");
+                // println!("Stopping standard camera");
             }
             AppleCameraBackend::Custom(cam) => {
-                println!("Stopping custom camera");
+                // println!("Stopping custom camera");
                 cam.stop_camera();
             }
         }
@@ -186,7 +186,8 @@ impl Default for Camera {
 
 impl Drop for Camera {
     fn drop(&mut self) {
-        println!("Dropping Camera");
+        // println!("Dropping Camera");
+        
         #[cfg(any(target_os = "macos", target_os = "ios"))]
         self.stop_camera();
     }

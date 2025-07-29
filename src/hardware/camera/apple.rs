@@ -223,11 +223,11 @@ impl AppleCamera {
         }
     }
 
-    pub fn get_latest_frame(&self) -> Option<RgbaImage> {
-        let lock = self.processor.ivars().last_frame.lock().unwrap();
-        if lock.is_some() {
-            println!("Cloning frame from mutex.");
-        }
-        lock.clone()
-    }
+    // pub fn get_latest_frame(&self) -> Option<RgbaImage> {
+    //     let lock = self.processor.ivars().last_frame.lock().unwrap();
+    //     if lock.is_some() {
+    //         println!("Cloning frame from mutex.");
+    //     }
+    //     lock.clone()
+    // }
 }
