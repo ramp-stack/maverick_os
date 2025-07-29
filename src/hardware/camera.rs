@@ -84,7 +84,7 @@ impl Camera {
             }
             AppleCameraBackend::Custom(cam) => {
                 println!("Getting frame from custom camera");
-                cam.get_frame()
+                cam.get_latest_raw_frame()
             }
         }
     }
@@ -107,7 +107,7 @@ impl Camera {
                 None
             }
             AppleCameraBackend::Custom(cam) => {
-                cam.get_frame()
+                cam.get_latest_raw_frame()
             }
         }
     }
