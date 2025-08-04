@@ -125,152 +125,10 @@ impl ImageSettings {
     }
 }
 
-// Custom implementations for missing photon_rs functions
-fn apply_saturation(photon_img: &mut PhotonImage, saturation: f32) {
-    let raw_pixels = photon_img.get_raw_pixels();
-    let mut new_pixels = raw_pixels.to_vec();
-    
-    for chunk in new_pixels.chunks_exact_mut(4) {
-        let r = chunk[0] as f32 / 255.0;
-        let g = chunk[1] as f32 / 255.0;
-        let b = chunk[2] as f32 / 255.0;
-        
-        // Convert to HSL
-        let max = r.max(g).max(b);
-        let min = r.min(g).min(b);
-        let l = (max + min) / 2.0;
-        
-        if max == min {
-            continue;
-        }
-        
-        let d = max - min;
-        let s = if l > 0.5 {
-            d / (2.0 - max - min)
-        } else {
-            d / (max + min)
-        };
-        
-        // Adjust saturation
-        let new_s = (s + saturation).clamp(0.0, 1.0);
-        
-        // Convert back to RGB (simplified)
-        let c = (1.0 - (2.0 * l - 1.0).abs()) * new_s;
-        let x = c * (1.0 - ((((r - g).abs() + (g - b).abs() + (b - r).abs()) / d * 60.0) % 2.0 - 1.0).abs());
-        let m = l - c / 2.0;
-        
-        chunk[0] = ((r * c + m) * 255.0).clamp(0.0, 255.0) as u8;
-        chunk[1] = ((g * c + m) * 255.0).clamp(0.0, 255.0) as u8;
-        chunk[2] = ((b * c + m) * 255.0).clamp(0.0, 255.0) as u8;
-    }
-    
-    *photon_img = PhotonImage::new(new_pixels, photon_img.get_width(), photon_img.get_height());
-}
-
-fn apply_gamma(photon_img: &mut PhotonImage, gamma: f32) {
-    let raw_pixels = photon_img.get_raw_pixels();
-    let mut new_pixels = raw_pixels.to_vec();
-    
-    let inv_gamma = 1.0 / gamma;
-    
-    for chunk in new_pixels.chunks_exact_mut(4) {
-        chunk[0] = (255.0 * (chunk[0] as f32 / 255.0).powf(inv_gamma)).clamp(0.0, 255.0) as u8;
-        chunk[1] = (255.0 * (chunk[1] as f32 / 255.0).powf(inv_gamma)).clamp(0.0, 255.0) as u8;
-        chunk[2] = (255.0 * (chunk[2] as f32 / 255.0).powf(inv_gamma)).clamp(0.0, 255.0) as u8;
-    }
-    
-    *photon_img = PhotonImage::new(new_pixels, photon_img.get_width(), photon_img.get_height());
-}
-
-fn apply_exposure(photon_img: &mut PhotonImage, exposure: f32) {
-    let raw_pixels = photon_img.get_raw_pixels();
-    let mut new_pixels = raw_pixels.to_vec();
-    
-    let exposure_multiplier = 2.0_f32.powf(exposure);
-    
-    for chunk in new_pixels.chunks_exact_mut(4) {
-        chunk[0] = (chunk[0] as f32 * exposure_multiplier).clamp(0.0, 255.0) as u8;
-        chunk[1] = (chunk[1] as f32 * exposure_multiplier).clamp(0.0, 255.0) as u8;
-        chunk[2] = (chunk[2] as f32 * exposure_multiplier).clamp(0.0, 255.0) as u8;
-    }
-    
-    *photon_img = PhotonImage::new(new_pixels, photon_img.get_width(), photon_img.get_height());
-}
-
 #[derive(Debug)]
 pub struct ProcessorClass {
     pub last_raw_frame: Mutex<Option<RgbaImage>>,
     pub settings: Mutex<ImageSettings>,
-}
-
-//Interpolation ->
-fn demosaic_bilinear(bayer_data: &[u16], width: usize, height: usize, pattern: BayerPattern) -> Vec<u8> {
-    let mut rgb_data = vec![0u8; width * height * 4]; // RGBA
-    
-    for y in 1..height-1 {
-        for x in 1..width-1 {
-            let idx = y * width + x;
-            let rgba_idx = idx * 4;
-            
-            let pixel_val = (bayer_data[idx] >> 8) as u8;
-            
-            match pattern.pixel_type(x, y) {
-                PixelType::Red => {
-                    rgb_data[rgba_idx] = pixel_val;
-                    rgb_data[rgba_idx + 1] = interpolate_green(bayer_data, x, y, width);
-                    rgb_data[rgba_idx + 2] = interpolate_blue(bayer_data, x, y, width);
-                    rgb_data[rgba_idx + 3] = 255;
-                },
-                PixelType::Green => {
-                    rgb_data[rgba_idx] = interpolate_red(bayer_data, x, y, width);
-                    rgb_data[rgba_idx + 1] = pixel_val;
-                    rgb_data[rgba_idx + 2] = interpolate_blue(bayer_data, x, y, width);
-                    rgb_data[rgba_idx + 3] = 255;
-                },
-                PixelType::Blue => {
-                    rgb_data[rgba_idx] = interpolate_red(bayer_data, x, y, width);
-                    rgb_data[rgba_idx + 1] = interpolate_green(bayer_data, x, y, width);
-                    rgb_data[rgba_idx + 2] = pixel_val;
-                    rgb_data[rgba_idx + 3] = 255;
-                },
-            }
-        }
-    }
-    
-    rgb_data
-}
-
-fn interpolate_green(data: &[u16], x: usize, y: usize, width: usize) -> u8 {
-    let neighbors = [
-        data.get((y-1) * width + x).unwrap_or(&0),
-        data.get(y * width + x-1).unwrap_or(&0),
-        data.get(y * width + x+1).unwrap_or(&0),
-        data.get((y+1) * width + x).unwrap_or(&0),
-    ];
-    let avg = neighbors.iter().map(|&v| *v as u32).sum::<u32>() / 4;
-    (avg >> 8) as u8
-}
-
-fn interpolate_red(data: &[u16], x: usize, y: usize, width: usize) -> u8 {
-    let neighbors = [
-        data.get((y-1) * width + x-1).unwrap_or(&0),
-        data.get((y-1) * width + x+1).unwrap_or(&0),
-        data.get((y+1) * width + x-1).unwrap_or(&0),
-        data.get((y+1) * width + x+1).unwrap_or(&0),
-    ];
-    let avg = neighbors.iter().map(|&v| *v as u32).sum::<u32>() / 4;
-    (avg >> 8) as u8
-}
-
-fn interpolate_blue(data: &[u16], x: usize, y: usize, width: usize) -> u8 {
-    let neighbors = [
-        data.get((y-1) * width + x-1).unwrap_or(&0),
-        data.get((y-1) * width + x+1).unwrap_or(&0),
-        data.get((y+1) * width + x-1).unwrap_or(&0),
-        data.get((y+1) * width + x+1).unwrap_or(&0),
-    ];
-    let avg = neighbors.iter().map(|&v| *v as u32).sum::<u32>() / 4;
-    (avg >> 8) as u8
 }
 
 #[cfg(any(target_os = "ios", target_os = "macos"))]
@@ -370,7 +228,7 @@ impl Processor {
             }
         }
 
-        let rgba_data = demosaic_bilinear(&bayer_16bit, width, height, pattern);
+        let rgba_data = self.demosaic_bilinear(&bayer_16bit, width, height, pattern);
         RgbaImage::from_raw(width as u32, height as u32, rgba_data)
     }
 
@@ -413,11 +271,11 @@ impl Processor {
             self.apply_white_balance(&mut photon_img, [settings.white_balance_r, settings.white_balance_g, settings.white_balance_b]);
         }
         
-        if settings.exposure != 0.0 { apply_exposure(&mut photon_img, settings.exposure); }
+        if settings.exposure != 0.0 { self.apply_exposure(&mut photon_img, settings.exposure); }
         if settings.brightness != 0 { adjust_brightness(&mut photon_img, settings.brightness); }
         if settings.contrast != 0.0 { adjust_contrast(&mut photon_img, settings.contrast); }
-        if settings.saturation != 0.0 { apply_saturation(&mut photon_img, settings.saturation); }
-        if settings.gamma != 2.2 { apply_gamma(&mut photon_img, settings.gamma); }
+        if settings.saturation != 0.0 { self.apply_saturation(&mut photon_img, settings.saturation); }
+        if settings.gamma != 2.2 { self.apply_gamma(&mut photon_img, settings.gamma); }
         
         RgbaImage::from_raw(photon_img.get_width(), photon_img.get_height(), photon_img.get_raw_pixels())
             .unwrap_or_else(|| {
@@ -435,7 +293,148 @@ impl Processor {
             chunk[2] = (chunk[2] as f32 * rgb_multipliers[2]).clamp(0.0, 255.0) as u8;
         }
         
-        // Create a new PhotonImage with the modified pixels
+        *photon_img = PhotonImage::new(new_pixels, photon_img.get_width(), photon_img.get_height());
+    }
+
+    // Moved from floating functions - Demosaicing functions
+    fn demosaic_bilinear(&self, bayer_data: &[u16], width: usize, height: usize, pattern: BayerPattern) -> Vec<u8> {
+        let mut rgb_data = vec![0u8; width * height * 4]; // RGBA
+        
+        for y in 1..height-1 {
+            for x in 1..width-1 {
+                let idx = y * width + x;
+                let rgba_idx = idx * 4;
+                
+                let pixel_val = (bayer_data[idx] >> 8) as u8;
+                
+                match pattern.pixel_type(x, y) {
+                    PixelType::Red => {
+                        rgb_data[rgba_idx] = pixel_val;
+                        rgb_data[rgba_idx + 1] = self.interpolate_green(bayer_data, x, y, width);
+                        rgb_data[rgba_idx + 2] = self.interpolate_blue(bayer_data, x, y, width);
+                        rgb_data[rgba_idx + 3] = 255;
+                    },
+                    PixelType::Green => {
+                        rgb_data[rgba_idx] = self.interpolate_red(bayer_data, x, y, width);
+                        rgb_data[rgba_idx + 1] = pixel_val;
+                        rgb_data[rgba_idx + 2] = self.interpolate_blue(bayer_data, x, y, width);
+                        rgb_data[rgba_idx + 3] = 255;
+                    },
+                    PixelType::Blue => {
+                        rgb_data[rgba_idx] = self.interpolate_red(bayer_data, x, y, width);
+                        rgb_data[rgba_idx + 1] = self.interpolate_green(bayer_data, x, y, width);
+                        rgb_data[rgba_idx + 2] = pixel_val;
+                        rgb_data[rgba_idx + 3] = 255;
+                    },
+                }
+            }
+        }
+        
+        rgb_data
+    }
+
+    fn interpolate_green(&self, data: &[u16], x: usize, y: usize, width: usize) -> u8 {
+        let neighbors = [
+            data.get((y-1) * width + x).unwrap_or(&0),
+            data.get(y * width + x-1).unwrap_or(&0),
+            data.get(y * width + x+1).unwrap_or(&0),
+            data.get((y+1) * width + x).unwrap_or(&0),
+        ];
+        let avg = neighbors.iter().map(|&v| *v as u32).sum::<u32>() / 4;
+        (avg >> 8) as u8
+    }
+
+    fn interpolate_red(&self, data: &[u16], x: usize, y: usize, width: usize) -> u8 {
+        let neighbors = [
+            data.get((y-1) * width + x-1).unwrap_or(&0),
+            data.get((y-1) * width + x+1).unwrap_or(&0),
+            data.get((y+1) * width + x-1).unwrap_or(&0),
+            data.get((y+1) * width + x+1).unwrap_or(&0),
+        ];
+        let avg = neighbors.iter().map(|&v| *v as u32).sum::<u32>() / 4;
+        (avg >> 8) as u8
+    }
+
+    fn interpolate_blue(&self, data: &[u16], x: usize, y: usize, width: usize) -> u8 {
+        let neighbors = [
+            data.get((y-1) * width + x-1).unwrap_or(&0),
+            data.get((y-1) * width + x+1).unwrap_or(&0),
+            data.get((y+1) * width + x-1).unwrap_or(&0),
+            data.get((y+1) * width + x+1).unwrap_or(&0),
+        ];
+        let avg = neighbors.iter().map(|&v| *v as u32).sum::<u32>() / 4;
+        (avg >> 8) as u8
+    }
+
+    // Moved from floating functions - Image processing functions
+    fn apply_saturation(&self, photon_img: &mut PhotonImage, saturation: f32) {
+        let raw_pixels = photon_img.get_raw_pixels();
+        let mut new_pixels = raw_pixels.to_vec();
+        
+        for chunk in new_pixels.chunks_exact_mut(4) {
+            let r = chunk[0] as f32 / 255.0;
+            let g = chunk[1] as f32 / 255.0;
+            let b = chunk[2] as f32 / 255.0;
+            
+            // Convert to HSL
+            let max = r.max(g).max(b);
+            let min = r.min(g).min(b);
+            let l = (max + min) / 2.0;
+            
+            if max == min {
+                continue;
+            }
+            
+            let d = max - min;
+            let s = if l > 0.5 {
+                d / (2.0 - max - min)
+            } else {
+                d / (max + min)
+            };
+            
+            // Adjust saturation
+            let new_s = (s + saturation).clamp(0.0, 1.0);
+            
+            // Convert back to RGB (simplified)
+            let c = (1.0 - (2.0 * l - 1.0).abs()) * new_s;
+            let x = c * (1.0 - ((((r - g).abs() + (g - b).abs() + (b - r).abs()) / d * 60.0) % 2.0 - 1.0).abs());
+            let m = l - c / 2.0;
+            
+            chunk[0] = ((r * c + m) * 255.0).clamp(0.0, 255.0) as u8;
+            chunk[1] = ((g * c + m) * 255.0).clamp(0.0, 255.0) as u8;
+            chunk[2] = ((b * c + m) * 255.0).clamp(0.0, 255.0) as u8;
+        }
+        
+        *photon_img = PhotonImage::new(new_pixels, photon_img.get_width(), photon_img.get_height());
+    }
+
+    fn apply_gamma(&self, photon_img: &mut PhotonImage, gamma: f32) {
+        let raw_pixels = photon_img.get_raw_pixels();
+        let mut new_pixels = raw_pixels.to_vec();
+        
+        let inv_gamma = 1.0 / gamma;
+        
+        for chunk in new_pixels.chunks_exact_mut(4) {
+            chunk[0] = (255.0 * (chunk[0] as f32 / 255.0).powf(inv_gamma)).clamp(0.0, 255.0) as u8;
+            chunk[1] = (255.0 * (chunk[1] as f32 / 255.0).powf(inv_gamma)).clamp(0.0, 255.0) as u8;
+            chunk[2] = (255.0 * (chunk[2] as f32 / 255.0).powf(inv_gamma)).clamp(0.0, 255.0) as u8;
+        }
+        
+        *photon_img = PhotonImage::new(new_pixels, photon_img.get_width(), photon_img.get_height());
+    }
+
+    fn apply_exposure(&self, photon_img: &mut PhotonImage, exposure: f32) {
+        let raw_pixels = photon_img.get_raw_pixels();
+        let mut new_pixels = raw_pixels.to_vec();
+        
+        let exposure_multiplier = 2.0_f32.powf(exposure);
+        
+        for chunk in new_pixels.chunks_exact_mut(4) {
+            chunk[0] = (chunk[0] as f32 * exposure_multiplier).clamp(0.0, 255.0) as u8;
+            chunk[1] = (chunk[1] as f32 * exposure_multiplier).clamp(0.0, 255.0) as u8;
+            chunk[2] = (chunk[2] as f32 * exposure_multiplier).clamp(0.0, 255.0) as u8;
+        }
+        
         *photon_img = PhotonImage::new(new_pixels, photon_img.get_width(), photon_img.get_height());
     }
 
