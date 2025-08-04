@@ -538,19 +538,25 @@ impl AppleCustomCamera {
     }
 }
 
-// // Update individual settings
+// // Get current settings
+// let current_settings = camera.get_settings();
+
+// // Update settings using a closure
 // camera.update_settings(|settings| {
-//     settings.brightness = 25;           // Range: -100 to 100
-//     settings.contrast = 0.3;            // Range: -1.0 to 1.0
-//     settings.saturation = 0.2;          // Range: -1.0 to 1.0
-//     settings.gamma = 2.4;               // Range: 0.1 to 3.0
-//     settings.exposure = 0.5;            // Range: -2.0 to 2.0
-//     settings.temperature = 5500.0;      // Range: 2000.0 to 10000.0 (Kelvin)
+//     // Modify settings here
 // });
 
-// // Or update multiple settings at once
+// // Update brightness
 // camera.update_settings(|settings| {
-//     settings.white_balance_r = 1.1;     // Range: 0.5 to 2.0
-//     settings.white_balance_g = 1.0;     // Range: 0.5 to 2.0
-//     settings.white_balance_b = 0.9;     // Range: 0.5 to 2.0
+//     settings.brightness = 25;  // Range: -100 to 100
+// });
+
+// // Update contrast
+// camera.update_settings(|settings| {
+//     settings.contrast = 0.3;   // Range: -1.0 to 1.0
+// });
+
+// // Update saturation
+// camera.update_settings(|settings| {
+//     settings.saturation = 0.2; // Range: -1.0 to 1.0
 // });
