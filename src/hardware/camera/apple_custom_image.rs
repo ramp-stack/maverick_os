@@ -366,7 +366,6 @@ impl Processor {
         (avg >> 8) as u8
     }
 
-    // Moved from floating functions - Image processing functions
     fn apply_saturation(&self, photon_img: &mut PhotonImage, saturation: f32) {
         let raw_pixels = photon_img.get_raw_pixels();
         let mut new_pixels = raw_pixels.to_vec();
@@ -376,7 +375,6 @@ impl Processor {
             let g = chunk[1] as f32 / 255.0;
             let b = chunk[2] as f32 / 255.0;
             
-            // Convert to HSL
             let max = r.max(g).max(b);
             let min = r.min(g).min(b);
             let l = (max + min) / 2.0;
@@ -392,10 +390,8 @@ impl Processor {
                 d / (max + min)
             };
             
-            // Adjust saturation
             let new_s = (s + saturation).clamp(0.0, 1.0);
             
-            // Convert back to RGB (simplified)
             let c = (1.0 - (2.0 * l - 1.0).abs()) * new_s;
             let x = c * (1.0 - ((((r - g).abs() + (g - b).abs() + (b - r).abs()) / d * 60.0) % 2.0 - 1.0).abs());
             let m = l - c / 2.0;
