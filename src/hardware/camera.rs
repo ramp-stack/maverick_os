@@ -13,7 +13,7 @@ mod android;
 use crate::hardware::camera::apple::AppleCamera;
 
 #[cfg(any(target_os = "macos", target_os = "ios"))]
-use crate::hardware::camera::apple_custom_image::AppleCustomCamera;
+use crate::hardware::camera::apple_custom_image::{AppleCustomCamera, ImageSettings};
 
 #[cfg(target_os = "android")]
 use crate::hardware::camera::android::AndroidCamera;
@@ -103,7 +103,6 @@ impl Camera {
     pub fn get_latest_raw_frame(&self) -> Option<RgbaImage> {
         match &self.0 {
             AppleCameraBackend::Standard(_cam) => {
-                // println!("Standard camera does not support raw frames");
                 None
             }
             AppleCameraBackend::Custom(cam) => {
@@ -120,6 +119,63 @@ impl Camera {
     #[cfg(not(any(target_os = "macos", target_os = "ios", target_os = "android")))]
     pub fn get_latest_raw_frame(&self) -> Option<RgbaImage> {
         None
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    pub fn update_settings<F>(&self, update_fn: F) -> Result<(), CameraError>
+    where F: FnOnce(&mut ImageSettings),
+    {
+        match &self.0 {
+            AppleCameraBackend::Standard(_cam) => {
+                // Standard camera doesn't support settings updates
+                Err(CameraError::FailedToGetFrame) // Reusing error type, could add a new one
+            }
+            AppleCameraBackend::Custom(cam) => {
+                cam.update_settings(update_fn);
+                Ok(())
+            }
+        }
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    pub fn get_settings(&self) -> Result<ImageSettings, CameraError> {
+        match &self.0 {
+            AppleCameraBackend::Standard(_cam) => {
+                // Standard camera doesn't support settings
+                Err(CameraError::FailedToGetFrame) // Reusing error type, could add a new one
+            }
+            AppleCameraBackend::Custom(cam) => {
+                Ok(cam.get_settings())
+            }
+        }
+    }
+
+    #[cfg(target_os = "android")]
+    pub fn update_settings<F>(&self, _update_fn: F) -> Result<(), CameraError>
+    where F: FnOnce(&mut ImageSettings),
+    {
+        // Android camera doesn't support settings updates in current implementation
+        Err(CameraError::FailedToGetFrame)
+    }
+
+    #[cfg(target_os = "android")]
+    pub fn get_settings(&self) -> Result<ImageSettings, CameraError> {
+        // Android camera doesn't support settings in current implementation
+        Err(CameraError::FailedToGetFrame)
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "ios", target_os = "android")))]
+    pub fn update_settings<F>(&self, _update_fn: F) -> Result<(), CameraError>
+    where F: FnOnce(&mut ImageSettings),
+    {
+        Err(CameraError::AccessDenied)
+    }
+
+    /// Get current camera image processing settings
+    /// Not available for unsupported platforms
+    #[cfg(not(any(target_os = "macos", target_os = "ios", target_os = "android")))]
+    pub fn get_settings(&self) -> Result<ImageSettings, CameraError> {
+        Err(CameraError::AccessDenied)
     }
 
     #[cfg(any(target_os = "macos", target_os = "ios"))]
