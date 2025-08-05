@@ -21,7 +21,6 @@ rand = "0.9.1"
 downcast-rs = "2.0.1"
 image = "0.25.6"
 libc = "0.2.172"
-photon-rs = "0.3.3"
 imageproc = "0.25.0"
 #bayer = "0.1.5"
 

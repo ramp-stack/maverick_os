@@ -3,21 +3,26 @@
 
 use std::{sync::Mutex, slice::from_raw_parts};
 use image::RgbaImage;
-
-use photon_rs::{
-    PhotonImage,
-    effects::{adjust_brightness, adjust_contrast},
-};
+use std::time::Instant;
 
 #[cfg(any(target_os = "ios", target_os = "macos"))]
-use {
-    dispatch2::DispatchQueue,
-    objc2::{__framework_prelude::NSObject, rc::Retained, runtime::{NSObjectProtocol, ProtocolObject}, define_class, AllocAnyThread, DeclaredClass},
-    objc2_foundation::{NSArray, NSDictionary, NSNumber, NSString},
-    objc2_core_media::CMSampleBuffer,
-    objc2_av_foundation::*,
-    objc2_core_video::*,
-};
+use dispatch2::DispatchQueue;
+#[cfg(any(target_os = "ios", target_os = "macos"))]
+use objc2::__framework_prelude::NSObject;
+#[cfg(any(target_os = "ios", target_os = "macos"))]
+use objc2::rc::Retained;
+#[cfg(any(target_os = "ios", target_os = "macos"))]
+use objc2::runtime::{NSObjectProtocol, ProtocolObject};
+#[cfg(any(target_os = "ios", target_os = "macos"))]
+use objc2::{define_class, AllocAnyThread, DeclaredClass};
+#[cfg(any(target_os = "ios", target_os = "macos"))]
+use objc2_foundation::{NSArray, NSDictionary, NSNumber, NSString};
+#[cfg(any(target_os = "ios", target_os = "macos"))]
+use objc2_core_media::CMSampleBuffer;
+#[cfg(any(target_os = "ios", target_os = "macos"))]
+use objc2_av_foundation::*;
+#[cfg(any(target_os = "ios", target_os = "macos"))]
+use objc2_core_video::*;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum BayerPattern { RGGB, BGGR, GRBG, GBRG }
@@ -107,18 +112,20 @@ impl ImageSettings {
 
     fn temperature_to_rgb_multipliers(&self) -> [f32; 3] {
         let temp = self.temperature;
+        let temp_scaled = temp / 100.0;
+
         if temp < 6600.0 {
             let r = 1.0;
-            let g = (0.39008157 * (temp / 100.0).ln() - 0.63184144).clamp(0.0, 1.0);
-            let b = if temp < 2000.0 { 
-                0.0 
-            } else { 
-                (0.54320678 * ((temp / 100.0) - 10.0).ln() - 1.19625408).clamp(0.0, 1.0) 
+            let g = (0.39008157 * temp_scaled.ln() - 0.63184144).clamp(0.0, 1.0);
+            let b = if temp < 2000.0 {
+                0.0
+            } else {
+                (0.54320678 * (temp_scaled - 10.0).ln() - 1.19625408).clamp(0.0, 1.0)
             };
             [r, g, b]
         } else {
-            let r = (1.29293618 * ((temp / 100.0) - 60.0).powf(-0.1332047)).clamp(0.0, 1.0);
-            let g = (1.12989086 * ((temp / 100.0) - 60.0).powf(-0.0755148)).clamp(0.0, 1.0);
+            let r = (1.29293618 * (temp_scaled - 60.0).powf(-0.1332047)).clamp(0.0, 1.0);
+            let g = (1.12989086 * (temp_scaled - 60.0).powf(-0.0755148)).clamp(0.0, 1.0);
             let b = 1.0;
             [r, g, b]
         }
@@ -145,8 +152,10 @@ define_class!(
         fn captureOutput_didOutputSampleBuffer_fromConnection(
             &self, _output: &AVCaptureOutput, sample_buffer: &CMSampleBuffer, _connection: &AVCaptureConnection,
         ) {
+            let start = Instant::now(); 
             if let Some(rgba_image) = self.process_sample_buffer(sample_buffer) {
                 *self.ivars().last_raw_frame.lock().unwrap() = Some(rgba_image);
+                 println!("fps: {:?}", start.elapsed().as_millis()); 
             }
         }
     }
@@ -257,48 +266,78 @@ impl Processor {
 
     fn apply_image_settings(&self, rgba_image: RgbaImage) -> RgbaImage {
         let settings = self.ivars().settings.lock().unwrap().clone();
-        
+
         let width = rgba_image.width();
         let height = rgba_image.height();
-        let mut photon_img = PhotonImage::new(rgba_image.into_raw(), width, height);
+        let mut pixels = rgba_image.into_raw();
         
-        if settings.temperature != 6500.0 {
-            let temp_rgb = settings.temperature_to_rgb_multipliers();
-            self.apply_white_balance(&mut photon_img, temp_rgb);
-        }
+        let wb_multipliers = if settings.temperature != 6500.0 {
+            settings.temperature_to_rgb_multipliers()
+        } else {
+            [settings.white_balance_r, settings.white_balance_g, settings.white_balance_b]
+        };
         
-        if settings.white_balance_r != 1.0 || settings.white_balance_g != 1.0 || settings.white_balance_b != 1.0 {
-            self.apply_white_balance(&mut photon_img, [settings.white_balance_r, settings.white_balance_g, settings.white_balance_b]);
-        }
+        let has_wb = wb_multipliers[0] != 1.0 || wb_multipliers[1] != 1.0 || wb_multipliers[2] != 1.0;
         
-        if settings.exposure != 0.0 { self.apply_exposure(&mut photon_img, settings.exposure); }
-        if settings.brightness != 0 { adjust_brightness(&mut photon_img, settings.brightness); }
-        if settings.contrast != 0.0 { adjust_contrast(&mut photon_img, settings.contrast); }
-        if settings.saturation != 0.0 { self.apply_saturation(&mut photon_img, settings.saturation); }
-        if settings.gamma != 2.2 { self.apply_gamma(&mut photon_img, settings.gamma); }
+        pixels.chunks_exact_mut(4).for_each(|pixel| {
+            let mut r = pixel[0] as f32;
+            let mut g = pixel[1] as f32;
+            let mut b = pixel[2] as f32;
+            
+            if has_wb {
+                r = (r * wb_multipliers[0]).clamp(0.0, 255.0);
+                g = (g * wb_multipliers[1]).clamp(0.0, 255.0);
+                b = (b * wb_multipliers[2]).clamp(0.0, 255.0);
+            }
+            
+            if settings.exposure != 0.0 {
+                let exposure_multiplier = 2.0_f32.powf(settings.exposure);
+                r = (r * exposure_multiplier).clamp(0.0, 255.0);
+                g = (g * exposure_multiplier).clamp(0.0, 255.0);
+                b = (b * exposure_multiplier).clamp(0.0, 255.0);
+            }
+            
+            if settings.brightness != 0 {
+                let brightness_f = settings.brightness as f32;
+                r = (r + brightness_f).clamp(0.0, 255.0);
+                g = (g + brightness_f).clamp(0.0, 255.0);
+                b = (b + brightness_f).clamp(0.0, 255.0);
+            }
+            
+            if settings.contrast != 0.0 {
+                let contrast_factor = 1.0 + settings.contrast;
+                r = ((r - 128.0) * contrast_factor + 128.0).clamp(0.0, 255.0);
+                g = ((g - 128.0) * contrast_factor + 128.0).clamp(0.0, 255.0);
+                b = ((b - 128.0) * contrast_factor + 128.0).clamp(0.0, 255.0);
+            }
+            
+            if settings.saturation != 0.0 {
+                let gray = 0.299 * r + 0.587 * g + 0.114 * b;
+                let saturation_factor = 1.0 + settings.saturation;
+                r = (gray + (r - gray) * saturation_factor).clamp(0.0, 255.0);
+                g = (gray + (g - gray) * saturation_factor).clamp(0.0, 255.0);
+                b = (gray + (b - gray) * saturation_factor).clamp(0.0, 255.0);
+            }
+            
+            if settings.gamma != 2.2 {
+                let inv_gamma = 1.0 / settings.gamma;
+                r = (255.0 * (r / 255.0).powf(inv_gamma)).clamp(0.0, 255.0);
+                g = (255.0 * (g / 255.0).powf(inv_gamma)).clamp(0.0, 255.0);
+                b = (255.0 * (b / 255.0).powf(inv_gamma)).clamp(0.0, 255.0);
+            }
+            
+            pixel[0] = r as u8;
+            pixel[1] = g as u8;
+            pixel[2] = b as u8;
+        });
         
-        RgbaImage::from_raw(photon_img.get_width(), photon_img.get_height(), photon_img.get_raw_pixels())
-            .unwrap_or_else(|| {
-                RgbaImage::new(width, height)
-            })
+        RgbaImage::from_raw(width, height, pixels).unwrap_or_else(|| {
+            RgbaImage::new(width, height)
+        })
     }
 
-    fn apply_white_balance(&self, photon_img: &mut PhotonImage, rgb_multipliers: [f32; 3]) {
-        let raw_pixels = photon_img.get_raw_pixels();
-        let mut new_pixels = raw_pixels.to_vec();
-        
-        for chunk in new_pixels.chunks_exact_mut(4) {
-            chunk[0] = (chunk[0] as f32 * rgb_multipliers[0]).clamp(0.0, 255.0) as u8;
-            chunk[1] = (chunk[1] as f32 * rgb_multipliers[1]).clamp(0.0, 255.0) as u8;
-            chunk[2] = (chunk[2] as f32 * rgb_multipliers[2]).clamp(0.0, 255.0) as u8;
-        }
-        
-        *photon_img = PhotonImage::new(new_pixels, photon_img.get_width(), photon_img.get_height());
-    }
-
-    // Moved from floating functions - Demosaicing functions
     fn demosaic_bilinear(&self, bayer_data: &[u16], width: usize, height: usize, pattern: BayerPattern) -> Vec<u8> {
-        let mut rgb_data = vec![0u8; width * height * 4]; // RGBA
+        let mut rgb_data = vec![0u8; width * height * 4]; 
         
         for y in 1..height-1 {
             for x in 1..width-1 {
@@ -364,74 +403,6 @@ impl Processor {
         ];
         let avg = neighbors.iter().map(|&v| *v as u32).sum::<u32>() / 4;
         (avg >> 8) as u8
-    }
-
-    fn apply_saturation(&self, photon_img: &mut PhotonImage, saturation: f32) {
-        let raw_pixels = photon_img.get_raw_pixels();
-        let mut new_pixels = raw_pixels.to_vec();
-        
-        for chunk in new_pixels.chunks_exact_mut(4) {
-            let r = chunk[0] as f32 / 255.0;
-            let g = chunk[1] as f32 / 255.0;
-            let b = chunk[2] as f32 / 255.0;
-            
-            let max = r.max(g).max(b);
-            let min = r.min(g).min(b);
-            let l = (max + min) / 2.0;
-            
-            if max == min {
-                continue;
-            }
-            
-            let d = max - min;
-            let s = if l > 0.5 {
-                d / (2.0 - max - min)
-            } else {
-                d / (max + min)
-            };
-            
-            let new_s = (s + saturation).clamp(0.0, 1.0);
-            
-            let c = (1.0 - (2.0 * l - 1.0).abs()) * new_s;
-            let x = c * (1.0 - ((((r - g).abs() + (g - b).abs() + (b - r).abs()) / d * 60.0) % 2.0 - 1.0).abs());
-            let m = l - c / 2.0;
-            
-            chunk[0] = ((r * c + m) * 255.0).clamp(0.0, 255.0) as u8;
-            chunk[1] = ((g * c + m) * 255.0).clamp(0.0, 255.0) as u8;
-            chunk[2] = ((b * c + m) * 255.0).clamp(0.0, 255.0) as u8;
-        }
-        
-        *photon_img = PhotonImage::new(new_pixels, photon_img.get_width(), photon_img.get_height());
-    }
-
-    fn apply_gamma(&self, photon_img: &mut PhotonImage, gamma: f32) {
-        let raw_pixels = photon_img.get_raw_pixels();
-        let mut new_pixels = raw_pixels.to_vec();
-        
-        let inv_gamma = 1.0 / gamma;
-        
-        for chunk in new_pixels.chunks_exact_mut(4) {
-            chunk[0] = (255.0 * (chunk[0] as f32 / 255.0).powf(inv_gamma)).clamp(0.0, 255.0) as u8;
-            chunk[1] = (255.0 * (chunk[1] as f32 / 255.0).powf(inv_gamma)).clamp(0.0, 255.0) as u8;
-            chunk[2] = (255.0 * (chunk[2] as f32 / 255.0).powf(inv_gamma)).clamp(0.0, 255.0) as u8;
-        }
-        
-        *photon_img = PhotonImage::new(new_pixels, photon_img.get_width(), photon_img.get_height());
-    }
-
-    fn apply_exposure(&self, photon_img: &mut PhotonImage, exposure: f32) {
-        let raw_pixels = photon_img.get_raw_pixels();
-        let mut new_pixels = raw_pixels.to_vec();
-        
-        let exposure_multiplier = 2.0_f32.powf(exposure);
-        
-        for chunk in new_pixels.chunks_exact_mut(4) {
-            chunk[0] = (chunk[0] as f32 * exposure_multiplier).clamp(0.0, 255.0) as u8;
-            chunk[1] = (chunk[1] as f32 * exposure_multiplier).clamp(0.0, 255.0) as u8;
-            chunk[2] = (chunk[2] as f32 * exposure_multiplier).clamp(0.0, 255.0) as u8;
-        }
-        
-        *photon_img = PhotonImage::new(new_pixels, photon_img.get_width(), photon_img.get_height());
     }
 
     pub fn update_settings<F>(&self, update_fn: F) 
@@ -537,26 +508,3 @@ impl AppleCustomCamera {
         self.processor.get_settings()
     }
 }
-
-// // Get current settings
-// let current_settings = camera.get_settings();
-
-// // Update settings using a closure
-// camera.update_settings(|settings| {
-//     // Modify settings here
-// });
-
-// // Update brightness
-// camera.update_settings(|settings| {
-//     settings.brightness = 25;  // Range: -100 to 100
-// });
-
-// // Update contrast
-// camera.update_settings(|settings| {
-//     settings.contrast = 0.3;   // Range: -1.0 to 1.0
-// });
-
-// // Update saturation
-// camera.update_settings(|settings| {
-//     settings.saturation = 0.2; // Range: -1.0 to 1.0
-// });
