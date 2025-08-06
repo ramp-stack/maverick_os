@@ -6,6 +6,9 @@ mod apple;
 #[cfg(any(target_os = "ios", target_os = "macos"))]
 mod apple_custom_image;
 
+#[cfg(any(target_os = "ios", target_os = "macos"))]
+mod apple_custom_utils;
+
 #[cfg(target_os = "android")]
 mod android;
 
@@ -13,7 +16,8 @@ mod android;
 use crate::hardware::camera::apple::AppleCamera;
 
 #[cfg(any(target_os = "macos", target_os = "ios"))]
-use crate::hardware::camera::apple_custom_image::{AppleCustomCamera, ImageSettings};
+use crate::hardware::camera::apple_custom_image::AppleCustomCamera;
+use crate::hardware::camera::apple_custom_utils::ImageSettings;
 
 #[cfg(target_os = "android")]
 use crate::hardware::camera::android::AndroidCamera;

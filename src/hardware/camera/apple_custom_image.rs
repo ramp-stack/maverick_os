@@ -3,7 +3,7 @@
 
 use std::{sync::Mutex, slice::from_raw_parts};
 use image::RgbaImage;
-use std::time::Instant;
+use crate::hardware::camera::apple_custom_utils::{BayerPattern, ImageSettings, ImageProcessor};
 
 #[cfg(any(target_os = "ios", target_os = "macos"))]
 use dispatch2::DispatchQueue;
@@ -24,118 +24,11 @@ use objc2_av_foundation::*;
 #[cfg(any(target_os = "ios", target_os = "macos"))]
 use objc2_core_video::*;
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum BayerPattern { RGGB, BGGR, GRBG, GBRG }
-
-impl BayerPattern {
-    fn pixel_type(&self, x: usize, y: usize) -> PixelType {
-        let even_row = y % 2 == 0;
-        let even_col = x % 2 == 0;
-        
-        match self {
-            BayerPattern::RGGB => match (even_row, even_col) {
-                (true, true) => PixelType::Red,
-                (true, false) => PixelType::Green,
-                (false, true) => PixelType::Green,
-                (false, false) => PixelType::Blue,
-            },
-            BayerPattern::BGGR => match (even_row, even_col) {
-                (true, true) => PixelType::Blue,
-                (true, false) => PixelType::Green,
-                (false, true) => PixelType::Green,
-                (false, false) => PixelType::Red,
-            },
-            BayerPattern::GRBG => match (even_row, even_col) {
-                (true, true) => PixelType::Green,
-                (true, false) => PixelType::Red,
-                (false, true) => PixelType::Blue,
-                (false, false) => PixelType::Green,
-            },
-            BayerPattern::GBRG => match (even_row, even_col) {
-                (true, true) => PixelType::Green,
-                (true, false) => PixelType::Blue,
-                (false, true) => PixelType::Red,
-                (false, false) => PixelType::Green,
-            },
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
-enum PixelType { Red, Green, Blue }
-
-#[derive(Debug, Clone)]
-pub struct ImageSettings {
-    pub brightness: i16, 
-    pub contrast: f32,
-    pub saturation: f32,
-    pub gamma: f32,
-    pub white_balance_r: f32,
-    pub white_balance_g: f32,
-    pub white_balance_b: f32,
-    pub exposure: f32,
-    pub temperature: f32,
-}
-
-impl Default for ImageSettings {
-    fn default() -> Self {
-        Self {
-            brightness: 0,
-            contrast: 0.0,
-            saturation: 0.0,
-            gamma: 2.2,
-            white_balance_r: 1.0,
-            white_balance_g: 1.0,
-            white_balance_b: 1.0,
-            exposure: 0.0,
-            temperature: 6500.0,
-        }
-    }
-}
-
-impl ImageSettings {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    pub fn clamp_values(&mut self) {
-        self.brightness = self.brightness.clamp(-100, 100);
-        self.contrast = self.contrast.clamp(-1.0, 1.0);
-        self.saturation = self.saturation.clamp(-1.0, 1.0);
-        self.gamma = self.gamma.clamp(0.1, 3.0);
-        self.white_balance_r = self.white_balance_r.clamp(0.5, 2.0);
-        self.white_balance_g = self.white_balance_g.clamp(0.5, 2.0);
-        self.white_balance_b = self.white_balance_b.clamp(0.5, 2.0);
-        self.exposure = self.exposure.clamp(-2.0, 2.0);
-        self.temperature = self.temperature.clamp(2000.0, 10000.0);
-    }
-
-    fn temperature_to_rgb_multipliers(&self) -> [f32; 3] {
-        let temp = self.temperature;
-        let temp_scaled = temp / 100.0;
-
-        if temp < 6600.0 {
-            let r = 1.0;
-            let g = (0.39008157 * temp_scaled.ln() - 0.63184144).clamp(0.0, 1.0);
-            let b = if temp < 2000.0 {
-                0.0
-            } else {
-                (0.54320678 * (temp_scaled - 10.0).ln() - 1.19625408).clamp(0.0, 1.0)
-            };
-            [r, g, b]
-        } else {
-            let r = (1.29293618 * (temp_scaled - 60.0).powf(-0.1332047)).clamp(0.0, 1.0);
-            let g = (1.12989086 * (temp_scaled - 60.0).powf(-0.0755148)).clamp(0.0, 1.0);
-            let b = 1.0;
-            [r, g, b]
-        }
-    }
-}
-
 #[derive(Debug)]
 pub struct ProcessorClass {
     pub last_raw_frame: Mutex<Option<RgbaImage>>,
     pub settings: Mutex<ImageSettings>,
+    pub bayer_format_verified: Mutex<bool>,
 }
 
 #[cfg(any(target_os = "ios", target_os = "macos"))]
@@ -150,27 +43,13 @@ define_class!(
     unsafe impl AVCaptureVideoDataOutputSampleBufferDelegate for Processor {
         #[unsafe(method(captureOutput:didOutputSampleBuffer:fromConnection:))]
         fn captureOutput_didOutputSampleBuffer_fromConnection(
-            &self, _output: &AVCaptureOutput, sample_buffer: &CMSampleBuffer, _connection: &AVCaptureConnection,
+            &self,
+            _output: &AVCaptureOutput,
+            sample_buffer: &CMSampleBuffer,
+            _connection: &AVCaptureConnection,
         ) {
-            let start = Instant::now(); 
-            if let Some(rgba_image) = self.process_sample_buffer(sample_buffer) {
-                *self.ivars().last_raw_frame.lock().unwrap() = Some(rgba_image);
-                 println!("fps: {:?}", start.elapsed().as_millis()); 
-            }
-        }
-    }
-
-    unsafe impl AVCapturePhotoCaptureDelegate for Processor {
-        #[unsafe(method(captureOutput:didFinishProcessingPhoto:error:))]
-        fn captureOutput_didFinishProcessingPhoto_error(
-            &self, _output: &AVCapturePhotoOutput, photo: &objc2_av_foundation::AVCapturePhoto, error: Option<&objc2_foundation::NSError>,
-        ) {
-            if error.is_some() { return; }
-            
-            if let Some(pixel_buffer) = unsafe { photo.pixelBuffer() } {
-                if let Some(rgba_image) = self.process_pixel_buffer(&pixel_buffer) {
-                    *self.ivars().last_raw_frame.lock().unwrap() = Some(rgba_image);
-                }
+            if let Some(img) = self.process_sample_buffer(sample_buffer) {
+                *self.ivars().last_raw_frame.lock().unwrap() = Some(img);
             }
         }
     }
@@ -182,239 +61,140 @@ impl Processor {
         let this = Self::alloc().set_ivars(ProcessorClass {
             last_raw_frame: Mutex::new(None),
             settings: Mutex::new(ImageSettings::default()),
+            bayer_format_verified: Mutex::new(false),
         });
         unsafe { objc2::msg_send![super(this), init] }
     }
 
     fn process_sample_buffer(&self, sample_buffer: &CMSampleBuffer) -> Option<RgbaImage> {
-        let pixel_buffer = unsafe { CMSampleBuffer::image_buffer(sample_buffer) }?;
+        let pixel_buffer = unsafe { CMSampleBuffer::image_buffer(sample_buffer)? };
         self.process_pixel_buffer(&pixel_buffer)
     }
 
     fn process_pixel_buffer(&self, pixel_buffer: &CVPixelBuffer) -> Option<RgbaImage> {
-        let pixel_format = unsafe { CVPixelBufferGetPixelFormatType(pixel_buffer) };
-        let (height, width, bytes_per_row) = unsafe {
-            (CVPixelBufferGetHeight(pixel_buffer), CVPixelBufferGetWidth(pixel_buffer), CVPixelBufferGetBytesPerRow(pixel_buffer))
-        };
-        
-        if unsafe { CVPixelBufferLockBaseAddress(pixel_buffer, CVPixelBufferLockFlags(0)) } != 0 {
-            return None;
-        }
-        
-        let base_address = unsafe { CVPixelBufferGetBaseAddress(pixel_buffer) } as *const u8;
-        if base_address.is_null() {
-            unsafe { CVPixelBufferUnlockBaseAddress(pixel_buffer, CVPixelBufferLockFlags(0)) };
-            return None;
-        }
+        unsafe { CVPixelBufferLockBaseAddress(pixel_buffer, CVPixelBufferLockFlags(0)) };
 
-        let result = match pixel_format {
-            kCVPixelFormatType_14Bayer_RGGB => self.process_bayer_data(base_address, width, height, bytes_per_row, BayerPattern::RGGB),
-            kCVPixelFormatType_14Bayer_BGGR => self.process_bayer_data(base_address, width, height, bytes_per_row, BayerPattern::BGGR),
-            kCVPixelFormatType_14Bayer_GRBG => self.process_bayer_data(base_address, width, height, bytes_per_row, BayerPattern::GRBG),
-            kCVPixelFormatType_14Bayer_GBRG => self.process_bayer_data(base_address, width, height, bytes_per_row, BayerPattern::GBRG),
-            kCVPixelFormatType_32BGRA => self.process_bgra_data(base_address, width, height, bytes_per_row),
+        let format = unsafe { CVPixelBufferGetPixelFormatType(pixel_buffer) };
+        let (h, w, row_stride) = unsafe {
+            (
+                CVPixelBufferGetHeight(pixel_buffer),
+                CVPixelBufferGetWidth(pixel_buffer),
+                CVPixelBufferGetBytesPerRow(pixel_buffer),
+            )
+        };
+
+        let result = match format {
+            kCVPixelFormatType_14Bayer_RGGB => self.process_bayer(pixel_buffer, w, h, row_stride, BayerPattern::RGGB),
+            kCVPixelFormatType_14Bayer_BGGR => self.process_bayer(pixel_buffer, w, h, row_stride, BayerPattern::BGGR),
+            kCVPixelFormatType_14Bayer_GRBG => self.process_bayer(pixel_buffer, w, h, row_stride, BayerPattern::GRBG),
+            kCVPixelFormatType_14Bayer_GBRG => self.process_bayer(pixel_buffer, w, h, row_stride, BayerPattern::GBRG),
+            kCVPixelFormatType_32BGRA => self.process_bgra(pixel_buffer, w, h, row_stride),
+            kCVPixelFormatType_420YpCbCr8BiPlanarFullRange |
+            kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange => self.process_yuv(pixel_buffer, w, h),
             _ => None,
         };
-        
+
         unsafe { CVPixelBufferUnlockBaseAddress(pixel_buffer, CVPixelBufferLockFlags(0)) };
-        result.map(|img| self.apply_image_settings(img))
+        result
     }
 
-    fn process_bayer_data(&self, base_address: *const u8, width: usize, height: usize, bytes_per_row: usize, pattern: BayerPattern) -> Option<RgbaImage> {
-        let mut bayer_16bit = vec![0u16; width * height];
-        
-        for y in 0..height {
-            let row_start = y * bytes_per_row;
-            for x in 0..width {
-                let byte_index = row_start + x * 2;
-                let pixel_index = y * width + x;
-                
-                if byte_index + 1 < bytes_per_row * height && pixel_index < bayer_16bit.len() {
-                    let raw_slice = unsafe { from_raw_parts(base_address.add(byte_index), 2) };
-                    let pixel_14bit = u16::from_le_bytes([raw_slice[0], raw_slice[1]]) & 0x3FFF;
-                    bayer_16bit[pixel_index] = pixel_14bit << 2;
-                }
-            }
-        }
-
-        let rgba_data = self.demosaic_bilinear(&bayer_16bit, width, height, pattern);
-        RgbaImage::from_raw(width as u32, height as u32, rgba_data)
-    }
-
-    fn process_bgra_data(&self, base_address: *const u8, width: usize, height: usize, bytes_per_row: usize) -> Option<RgbaImage> {
-        let slice = unsafe { from_raw_parts(base_address, bytes_per_row * height) };
-        let mut rgba_data = Vec::with_capacity(width * height * 4);
-
-        for y in 0..height {
-            let row_start = y * bytes_per_row;
-            for x in 0..width {
-                let src_index = row_start + x * 4;
-                
-                if src_index + 3 < slice.len() {
-                    let b = slice[src_index];
-                    let g = slice[src_index + 1];
-                    let r = slice[src_index + 2];
-                    let a = slice[src_index + 3];
-                    
-                    rgba_data.extend_from_slice(&[r, g, b, a]);
-                }
-            }
-        }
-
-        RgbaImage::from_raw(width as u32, height as u32, rgba_data)
-    }
-
-    fn apply_image_settings(&self, rgba_image: RgbaImage) -> RgbaImage {
-        let settings = self.ivars().settings.lock().unwrap().clone();
-
-        let width = rgba_image.width();
-        let height = rgba_image.height();
-        let mut pixels = rgba_image.into_raw();
-        
-        let wb_multipliers = if settings.temperature != 6500.0 {
-            settings.temperature_to_rgb_multipliers()
+    #[inline(always)]
+    fn process_bayer(
+        &self,
+        pixel_buffer: &CVPixelBuffer,
+        width: usize,
+        height: usize,
+        row_bytes: usize,
+        pattern: BayerPattern,
+    ) -> Option<RgbaImage> {
+        *self.ivars().bayer_format_verified.lock().unwrap() = true;
+        let addr = unsafe { CVPixelBufferGetBaseAddress(pixel_buffer) } as *const u8;
+        if addr.is_null() {
+            None
         } else {
-            [settings.white_balance_r, settings.white_balance_g, settings.white_balance_b]
-        };
-        
-        let has_wb = wb_multipliers[0] != 1.0 || wb_multipliers[1] != 1.0 || wb_multipliers[2] != 1.0;
-        
-        pixels.chunks_exact_mut(4).for_each(|pixel| {
-            let mut r = pixel[0] as f32;
-            let mut g = pixel[1] as f32;
-            let mut b = pixel[2] as f32;
-            
-            if has_wb {
-                r = (r * wb_multipliers[0]).clamp(0.0, 255.0);
-                g = (g * wb_multipliers[1]).clamp(0.0, 255.0);
-                b = (b * wb_multipliers[2]).clamp(0.0, 255.0);
-            }
-            
-            if settings.exposure != 0.0 {
-                let exposure_multiplier = 2.0_f32.powf(settings.exposure);
-                r = (r * exposure_multiplier).clamp(0.0, 255.0);
-                g = (g * exposure_multiplier).clamp(0.0, 255.0);
-                b = (b * exposure_multiplier).clamp(0.0, 255.0);
-            }
-            
-            if settings.brightness != 0 {
-                let brightness_f = settings.brightness as f32;
-                r = (r + brightness_f).clamp(0.0, 255.0);
-                g = (g + brightness_f).clamp(0.0, 255.0);
-                b = (b + brightness_f).clamp(0.0, 255.0);
-            }
-            
-            if settings.contrast != 0.0 {
-                let contrast_factor = 1.0 + settings.contrast;
-                r = ((r - 128.0) * contrast_factor + 128.0).clamp(0.0, 255.0);
-                g = ((g - 128.0) * contrast_factor + 128.0).clamp(0.0, 255.0);
-                b = ((b - 128.0) * contrast_factor + 128.0).clamp(0.0, 255.0);
-            }
-            
-            if settings.saturation != 0.0 {
-                let gray = 0.299 * r + 0.587 * g + 0.114 * b;
-                let saturation_factor = 1.0 + settings.saturation;
-                r = (gray + (r - gray) * saturation_factor).clamp(0.0, 255.0);
-                g = (gray + (g - gray) * saturation_factor).clamp(0.0, 255.0);
-                b = (gray + (b - gray) * saturation_factor).clamp(0.0, 255.0);
-            }
-            
-            if settings.gamma != 2.2 {
-                let inv_gamma = 1.0 / settings.gamma;
-                r = (255.0 * (r / 255.0).powf(inv_gamma)).clamp(0.0, 255.0);
-                g = (255.0 * (g / 255.0).powf(inv_gamma)).clamp(0.0, 255.0);
-                b = (255.0 * (b / 255.0).powf(inv_gamma)).clamp(0.0, 255.0);
-            }
-            
-            pixel[0] = r as u8;
-            pixel[1] = g as u8;
-            pixel[2] = b as u8;
-        });
-        
-        RgbaImage::from_raw(width, height, pixels).unwrap_or_else(|| {
-            RgbaImage::new(width, height)
-        })
+            ImageProcessor::process_bayer_data(addr, width, height, row_bytes, pattern)
+        }
     }
 
-    fn demosaic_bilinear(&self, bayer_data: &[u16], width: usize, height: usize, pattern: BayerPattern) -> Vec<u8> {
-        let mut rgb_data = vec![0u8; width * height * 4]; 
-        
-        for y in 1..height-1 {
-            for x in 1..width-1 {
-                let idx = y * width + x;
-                let rgba_idx = idx * 4;
-                
-                let pixel_val = (bayer_data[idx] >> 8) as u8;
-                
-                match pattern.pixel_type(x, y) {
-                    PixelType::Red => {
-                        rgb_data[rgba_idx] = pixel_val;
-                        rgb_data[rgba_idx + 1] = self.interpolate_green(bayer_data, x, y, width);
-                        rgb_data[rgba_idx + 2] = self.interpolate_blue(bayer_data, x, y, width);
-                        rgb_data[rgba_idx + 3] = 255;
-                    },
-                    PixelType::Green => {
-                        rgb_data[rgba_idx] = self.interpolate_red(bayer_data, x, y, width);
-                        rgb_data[rgba_idx + 1] = pixel_val;
-                        rgb_data[rgba_idx + 2] = self.interpolate_blue(bayer_data, x, y, width);
-                        rgb_data[rgba_idx + 3] = 255;
-                    },
-                    PixelType::Blue => {
-                        rgb_data[rgba_idx] = self.interpolate_red(bayer_data, x, y, width);
-                        rgb_data[rgba_idx + 1] = self.interpolate_green(bayer_data, x, y, width);
-                        rgb_data[rgba_idx + 2] = pixel_val;
-                        rgb_data[rgba_idx + 3] = 255;
-                    },
-                }
+    #[inline(always)]
+    fn process_bgra(
+        &self,
+        pixel_buffer: &CVPixelBuffer,
+        width: usize,
+        height: usize,
+        row_bytes: usize,
+    ) -> Option<RgbaImage> {
+        let start = std::time::Instant::now();
+        let addr = unsafe { CVPixelBufferGetBaseAddress(pixel_buffer) } as *const u8;
+        if addr.is_null() {
+            return None;
+        }
+
+        let data = unsafe { from_raw_parts(addr, height * row_bytes) };
+        let mut rgba = Vec::with_capacity(width * height * 4);
+
+        for y in 0..height {
+            let row = &data[y * row_bytes..][..width * 4];
+            for px in row.chunks_exact(4) {
+                rgba.extend_from_slice(&[px[2], px[1], px[0], px[3]]); 
             }
         }
-        
-        rgb_data
+        println!("FPS for process_bgra: {} ms", start.elapsed().as_millis());
+        RgbaImage::from_raw(width as u32, height as u32, rgba)
     }
 
-    fn interpolate_green(&self, data: &[u16], x: usize, y: usize, width: usize) -> u8 {
-        let neighbors = [
-            data.get((y-1) * width + x).unwrap_or(&0),
-            data.get(y * width + x-1).unwrap_or(&0),
-            data.get(y * width + x+1).unwrap_or(&0),
-            data.get((y+1) * width + x).unwrap_or(&0),
-        ];
-        let avg = neighbors.iter().map(|&v| *v as u32).sum::<u32>() / 4;
-        (avg >> 8) as u8
+    #[inline(always)]
+    fn process_yuv(
+        &self,
+        pb: &CVPixelBuffer,
+        width: usize,
+        height: usize,
+    ) -> Option<RgbaImage> {
+        let start = std::time::Instant::now();
+        let y_base = unsafe { CVPixelBufferGetBaseAddressOfPlane(pb, 0) } as *const u8;
+        let uv_base = unsafe { CVPixelBufferGetBaseAddressOfPlane(pb, 1) } as *const u8;
+        if y_base.is_null() || uv_base.is_null() {
+            return None;
+        }
+
+        let y_stride = unsafe { CVPixelBufferGetBytesPerRowOfPlane(pb, 0) };
+        let uv_stride = unsafe { CVPixelBufferGetBytesPerRowOfPlane(pb, 1) };
+
+        let y = unsafe { from_raw_parts(y_base, y_stride * height) };
+        let uv = unsafe { from_raw_parts(uv_base, uv_stride * height / 2) };
+        let mut out = Vec::with_capacity(width * height * 4);
+
+        for j in 0..height {
+            for i in 0..width {
+                let yv = y[j * y_stride + i] as f32;
+                let uv_idx = (j / 2) * uv_stride + (i & !1);
+                let u = uv[uv_idx] as f32;
+                let v = uv[uv_idx + 1] as f32;
+
+                let r = (yv + 1.402 * (v - 128.0)).clamp(0.0, 255.0) as u8;
+                let g = (yv - 0.344 * (u - 128.0) - 0.714 * (v - 128.0)).clamp(0.0, 255.0) as u8;
+                let b = (yv + 1.772 * (u - 128.0)).clamp(0.0, 255.0) as u8;
+
+                out.extend_from_slice(&[r, g, b, 255]);
+            }
+        }
+        println!("process_yuv fps for process_bgra: {} ms", start.elapsed().as_millis());
+        RgbaImage::from_raw(width as u32, height as u32, out)
     }
 
-    fn interpolate_red(&self, data: &[u16], x: usize, y: usize, width: usize) -> u8 {
-        let neighbors = [
-            data.get((y-1) * width + x-1).unwrap_or(&0),
-            data.get((y-1) * width + x+1).unwrap_or(&0),
-            data.get((y+1) * width + x-1).unwrap_or(&0),
-            data.get((y+1) * width + x+1).unwrap_or(&0),
-        ];
-        let avg = neighbors.iter().map(|&v| *v as u32).sum::<u32>() / 4;
-        (avg >> 8) as u8
-    }
-
-    fn interpolate_blue(&self, data: &[u16], x: usize, y: usize, width: usize) -> u8 {
-        let neighbors = [
-            data.get((y-1) * width + x-1).unwrap_or(&0),
-            data.get((y-1) * width + x+1).unwrap_or(&0),
-            data.get((y+1) * width + x-1).unwrap_or(&0),
-            data.get((y+1) * width + x+1).unwrap_or(&0),
-        ];
-        let avg = neighbors.iter().map(|&v| *v as u32).sum::<u32>() / 4;
-        (avg >> 8) as u8
-    }
-
-    pub fn update_settings<F>(&self, update_fn: F) 
-    where F: FnOnce(&mut ImageSettings),
-    {
-        let mut settings = self.ivars().settings.lock().unwrap();
-        update_fn(&mut *settings);
-        settings.clamp_values();
+    pub fn update_settings<F>(&self, f: F)
+    where F: FnOnce(&mut ImageSettings) {
+        let mut s = self.ivars().settings.lock().unwrap();
+        f(&mut *s);
+        s.clamp_values();
     }
 
     pub fn get_settings(&self) -> ImageSettings {
         self.ivars().settings.lock().unwrap().clone()
+    }
+
+    pub fn is_bayer_verified(&self) -> bool {
+        *self.ivars().bayer_format_verified.lock().unwrap()
     }
 }
 
@@ -423,8 +203,8 @@ impl Processor {
 pub struct AppleCustomCamera {
     pub session: Retained<AVCaptureSession>,
     processor: Retained<Processor>,
-    photo_output: Option<Retained<AVCapturePhotoOutput>>,
     video_output: Option<Retained<AVCaptureVideoDataOutput>>,
+    device: Option<Retained<AVCaptureDevice>>,
 }
 
 #[cfg(any(target_os = "ios", target_os = "macos"))]
@@ -433,64 +213,75 @@ impl AppleCustomCamera {
         Self {
             session: unsafe { AVCaptureSession::new() },
             processor: Processor::new(),
-            photo_output: None,
             video_output: None,
+            device: None,
         }
     }
 
     pub fn open_camera(&mut self) -> Result<(), String> {
         unsafe {
             let device_types = NSArray::from_slice(&[AVCaptureDeviceTypeBuiltInWideAngleCamera]);
-            let discovery_session = AVCaptureDeviceDiscoverySession::discoverySessionWithDeviceTypes_mediaType_position(
-                &device_types, AVMediaTypeVideo, AVCaptureDevicePosition::Back,
-            );
-            let device = discovery_session.devices().into_iter().next().ok_or("No camera found on this device")?;
-            
+            let discovery = AVCaptureDeviceDiscoverySession::discoverySessionWithDeviceTypes_mediaType_position(
+                &device_types, AVMediaTypeVideo, AVCaptureDevicePosition::Back);
+            let device = discovery.devices().into_iter().next().ok_or("No camera device")?;
+
+            self.device = Some(device.clone());
+
             let input = AVCaptureDeviceInput::deviceInputWithDevice_error(&device)
-                .map_err(|_| "Couldn't connect to camera")?;
+                .map_err(|e| format!("Input error: {:?}", e))?;
 
             self.session.beginConfiguration();
-            self.session.setSessionPreset(AVCaptureSessionPresetPhoto);
 
-            if !self.session.canAddInput(&input) { 
-                return Err("Camera input isn't compatible".into()); 
+            for preset in [AVCaptureSessionPresetPhoto, AVCaptureSessionPresetHigh, AVCaptureSessionPresetMedium] {
+                if self.session.canSetSessionPreset(preset) {
+                    self.session.setSessionPreset(preset);
+                    break;
+                }
             }
+
             self.session.addInput(&input);
 
-            let video_output = AVCaptureVideoDataOutput::new();
-            let pixel_format_key = &*(kCVPixelBufferPixelFormatTypeKey as *const _ as *const NSString);
-            let video_settings = NSDictionary::from_slices(
-                &[pixel_format_key], 
-                &[NSNumber::new_u32(kCVPixelFormatType_32BGRA).as_ref()],
-            );
-            video_output.setVideoSettings(Some(&video_settings));
-            video_output.setAlwaysDiscardsLateVideoFrames(true);
-            
-            let queue = DispatchQueue::new("CameraQueue", None);
-            video_output.setSampleBufferDelegate_queue(Some(ProtocolObject::from_ref(&*self.processor)), Some(&queue));
-
-            if self.session.canAddOutput(&video_output) {
-                self.session.addOutput(&video_output);
-                self.video_output = Some(video_output);
+            if device.lockForConfiguration().is_ok() {
+                let _ = device.formats();
+                device.unlockForConfiguration();
             }
 
-            let photo_output = AVCapturePhotoOutput::new();
-            if self.session.canAddOutput(&photo_output) {
-                self.session.addOutput(&photo_output);
-                self.photo_output = Some(photo_output);
+            let output = AVCaptureVideoDataOutput::new();
+            let key = &*(kCVPixelBufferPixelFormatTypeKey as *const _ as *const NSString);
+            let supported = output.availableVideoCVPixelFormatTypes().iter().map(|f| f.unsignedIntValue()).collect::<Vec<_>>();
+
+            for f in [
+                kCVPixelFormatType_14Bayer_RGGB,
+                kCVPixelFormatType_14Bayer_BGGR,
+                kCVPixelFormatType_14Bayer_GRBG,
+                kCVPixelFormatType_14Bayer_GBRG,
+                kCVPixelFormatType_32BGRA,
+                kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
+                kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
+            ] {
+                if supported.contains(&f) {
+                    let settings = NSDictionary::from_slices(&[key], &[NSNumber::new_u32(f).as_ref()]);
+                    let queue = DispatchQueue::new("CameraQueue", None);
+                    output.setVideoSettings(Some(&settings));
+                    output.setAlwaysDiscardsLateVideoFrames(false);
+                    output.setSampleBufferDelegate_queue(Some(ProtocolObject::from_ref(&*self.processor)), Some(&queue));
+                    self.session.addOutput(&output);
+                    self.video_output = Some(output);
+                    break;
+                }
             }
 
             self.session.commitConfiguration();
             self.session.startRunning();
-            
             Ok(())
         }
     }
 
-    pub fn stop_camera(&self) { 
-        unsafe { 
-            self.session.stopRunning(); 
+    pub fn stop_camera(&self) {
+        unsafe {
+            self.session.stopRunning();
             *self.processor.ivars().last_raw_frame.lock().unwrap() = None;
+            *self.processor.ivars().bayer_format_verified.lock().unwrap() = false;
         }
     }
 
@@ -498,10 +289,8 @@ impl AppleCustomCamera {
         self.processor.ivars().last_raw_frame.lock().unwrap().clone()
     }
 
-    pub fn update_settings<F>(&self, update_fn: F) 
-    where F: FnOnce(&mut ImageSettings),
-    {
-        self.processor.update_settings(update_fn);
+    pub fn update_settings<F>(&self, f: F) where F: FnOnce(&mut ImageSettings) {
+        self.processor.update_settings(f);
     }
 
     pub fn get_settings(&self) -> ImageSettings {
