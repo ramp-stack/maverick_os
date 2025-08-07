@@ -137,6 +137,7 @@ impl ImageProcessor {
     }
 
     pub fn process_bgra_data(base_address: *const u8, width: usize, height: usize, bytes_per_row: usize) -> Option<RgbaImage> {
+        let start = Instant::now(); 
         let slice = unsafe { from_raw_parts(base_address, bytes_per_row * height) };
         let mut rgba_data = Vec::with_capacity(width * height * 4);
 
@@ -155,7 +156,8 @@ impl ImageProcessor {
                 }
             }
         }
-
+        //34 mill
+        println!("process_bgra_data: {:?}", start.elapsed().as_millis()); 
         RgbaImage::from_raw(width as u32, height as u32, rgba_data)
     }
 
@@ -230,6 +232,7 @@ impl ImageProcessor {
     }
 
     fn demosaic_bilinear(bayer_data: &[u16], width: usize, height: usize, pattern: BayerPattern) -> Vec<u8> {
+        let start = Instant::now(); 
         let mut rgb_data = vec![0u8; width * height * 4]; 
         
         for y in 1..height-1 {
@@ -262,6 +265,7 @@ impl ImageProcessor {
             }
         }
         
+        println!("demosaic_bilinear: {:?}", start.elapsed().as_millis()); 
         rgb_data
     }
 

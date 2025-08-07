@@ -30,3 +30,13 @@ Getting pixel format/dimensions: 0ms
 Locking pixel buffer: 0ms
 Getting base address: 0ms
 Processing BGRA format
+
+
+process_bgra runs
+process_pixel_buffer runs
+process_bgra runs
+process_pixel_buffer runs
+process_bgra runs
+process_pixel_buffer runs
+process_bgra runs
+
