@@ -15,6 +15,7 @@ use std::sync::mpsc::Sender;
 pub use cache::Cache;
 pub use clipboard::Clipboard;
 pub use camera::{Camera, CameraError};
+pub use camera::ImageSettings;
 pub use share::Share;
 pub use app_support::ApplicationSupport;
 pub use cloud::CloudStorage;

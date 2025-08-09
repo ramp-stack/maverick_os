@@ -57,9 +57,12 @@ define_class!(
             drop(ready_lock);
             
             if let Some(raw_image) = self.process_sample_buffer(sample_buffer) {
-                // Apply image settings to the processed image
                 let settings = self.get_settings();
                 let processed_image = ImageProcessor::apply_image_settings(raw_image, &settings);
+
+                #[cfg(target_os = "ios")]
+                let processed_image = self.rotate_90_cw(&processed_image);
+
                 *self.ivars().last_raw_frame.lock().unwrap() = Some(processed_image);
             }
         }
@@ -142,7 +145,6 @@ impl Processor {
         height: usize,
         row_bytes: usize,
     ) -> Option<RgbaImage> {
-        println!("process_bgra runs");
         let start = std::time::Instant::now();
         let addr = unsafe { CVPixelBufferGetBaseAddress(pixel_buffer) } as *const u8;
         if addr.is_null() {
@@ -218,6 +220,18 @@ impl Processor {
 
     pub fn is_ready(&self) -> bool {
         *self.ivars().ready.lock().unwrap()
+    }
+
+    fn rotate_90_cw(&self, img: &RgbaImage) -> RgbaImage {
+        let (width, height) = img.dimensions();
+        let mut rotated = RgbaImage::new(height, width);
+        for y in 0..height {
+            for x in 0..width {
+                let px = *img.get_pixel(x, y);
+                rotated.put_pixel(height - 1 - y, x, px);
+            }
+        }
+        rotated
     }
 }
 
