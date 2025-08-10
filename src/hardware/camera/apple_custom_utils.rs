@@ -3,6 +3,7 @@ use std::slice::from_raw_parts;
 use image::RgbaImage;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[allow(clippy::upper_case_acronyms)]
 pub enum BayerPattern { RGGB, BGGR, GRBG, GBRG }
 
 impl BayerPattern {
