@@ -1,7 +1,6 @@
 
 use std::slice::from_raw_parts;
 use image::RgbaImage;
-use std::time::Instant;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum BayerPattern { RGGB, BGGR, GRBG, GBRG }
@@ -135,27 +134,27 @@ impl ImageProcessor {
         RgbaImage::from_raw(width as u32, height as u32, rgba_data)
     }
 
-    pub fn process_bgra_data(base_address: *const u8, width: usize, height: usize, bytes_per_row: usize) -> Option<RgbaImage> {
-        let slice = unsafe { from_raw_parts(base_address, bytes_per_row * height) };
-        let mut rgba_data = Vec::with_capacity(width * height * 4);
+    // pub fn process_bgra_data(base_address: *const u8, width: usize, height: usize, bytes_per_row: usize) -> Option<RgbaImage> {
+    //     let slice = unsafe { from_raw_parts(base_address, bytes_per_row * height) };
+    //     let mut rgba_data = Vec::with_capacity(width * height * 4);
 
-        for y in 0..height {
-            let row_start = y * bytes_per_row;
-            for x in 0..width {
-                let src_index = row_start + x * 4;
+    //     for y in 0..height {
+    //         let row_start = y * bytes_per_row;
+    //         for x in 0..width {
+    //             let src_index = row_start + x * 4;
                 
-                if src_index + 3 < slice.len() {
-                    let b = slice[src_index];
-                    let g = slice[src_index + 1];
-                    let r = slice[src_index + 2];
-                    let a = slice[src_index + 3];
+    //             if src_index + 3 < slice.len() {
+    //                 let b = slice[src_index];
+    //                 let g = slice[src_index + 1];
+    //                 let r = slice[src_index + 2];
+    //                 let a = slice[src_index + 3];
                     
-                    rgba_data.extend_from_slice(&[r, g, b, a]);
-                }
-            }
-        }
-        RgbaImage::from_raw(width as u32, height as u32, rgba_data)
-    }
+    //                 rgba_data.extend_from_slice(&[r, g, b, a]);
+    //             }
+    //         }
+    //     }
+    //     RgbaImage::from_raw(width as u32, height as u32, rgba_data)
+    // }
 
     pub fn apply_image_settings(rgba_image: RgbaImage, settings: &ImageSettings) -> RgbaImage {
         let width = rgba_image.width();

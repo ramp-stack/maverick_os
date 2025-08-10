@@ -4,7 +4,6 @@
 use std::{sync::Mutex, slice::from_raw_parts};
 use image::RgbaImage;
 use crate::hardware::camera::apple_custom_utils::{BayerPattern, ImageSettings, ImageProcessor};
-use tokio::time::Instant;
 
 #[cfg(any(target_os = "ios", target_os = "macos"))]
 use dispatch2::DispatchQueue;
@@ -82,14 +81,12 @@ impl Processor {
     }
 
     fn process_sample_buffer(&self, sample_buffer: &CMSampleBuffer) -> Option<RgbaImage> {
-        let start = Instant::now();
         let pixel_buffer = unsafe { CMSampleBuffer::image_buffer(sample_buffer)? };
         self.process_pixel_buffer(&pixel_buffer)
     }
 
     fn process_pixel_buffer(&self, pixel_buffer: &CVPixelBuffer) -> Option<RgbaImage> {
         println!("process_pixel_buffer runs");
-        let start = Instant::now();
         unsafe { CVPixelBufferLockBaseAddress(pixel_buffer, CVPixelBufferLockFlags(0)) };
 
         let format = unsafe { CVPixelBufferGetPixelFormatType(pixel_buffer) };
@@ -113,8 +110,6 @@ impl Processor {
         };
 
         unsafe { CVPixelBufferUnlockBaseAddress(pixel_buffer, CVPixelBufferLockFlags(0)) };
-        //println!("process_pixel_buffer: {} ms", start.elapsed().as_millis());
-
         result
     }
 
@@ -127,7 +122,6 @@ impl Processor {
         row_bytes: usize,
         pattern: BayerPattern,
     ) -> Option<RgbaImage> {
-        println!("process_bayer runs");
         *self.ivars().bayer_format_verified.lock().unwrap() = true;
         let addr = unsafe { CVPixelBufferGetBaseAddress(pixel_buffer) } as *const u8;
         if addr.is_null() {
@@ -145,7 +139,6 @@ impl Processor {
         height: usize,
         row_bytes: usize,
     ) -> Option<RgbaImage> {
-        let start = std::time::Instant::now();
         let addr = unsafe { CVPixelBufferGetBaseAddress(pixel_buffer) } as *const u8;
         if addr.is_null() {
             return None;
@@ -160,7 +153,6 @@ impl Processor {
                 rgba.extend_from_slice(&[px[2], px[1], px[0], px[3]]);
             }
         }
-        //println!("FPS for process_bgra: {} ms", start.elapsed().as_millis());
         RgbaImage::from_raw(width as u32, height as u32, rgba)
     }
 
@@ -171,8 +163,6 @@ impl Processor {
         width: usize,
         height: usize,
     ) -> Option<RgbaImage> {
-        println!("process yuv runs");
-        let start = std::time::Instant::now();
         let y_base = unsafe { CVPixelBufferGetBaseAddressOfPlane(pb, 0) } as *const u8;
         let uv_base = unsafe { CVPixelBufferGetBaseAddressOfPlane(pb, 1) } as *const u8;
         if y_base.is_null() || uv_base.is_null() {
@@ -206,7 +196,7 @@ impl Processor {
     pub fn update_settings<F>(&self, f: F)
     where F: FnOnce(&mut ImageSettings) {
         let mut s = self.ivars().settings.lock().unwrap();
-        f(&mut *s);
+        f(&mut s);
         s.clamp_values();
     }
 
@@ -214,24 +204,8 @@ impl Processor {
         self.ivars().settings.lock().unwrap().clone()
     }
 
-    pub fn is_bayer_verified(&self) -> bool {
-        *self.ivars().bayer_format_verified.lock().unwrap()
-    }
-
     pub fn is_ready(&self) -> bool {
         *self.ivars().ready.lock().unwrap()
-    }
-
-    fn rotate_90_cw(&self, img: &RgbaImage) -> RgbaImage {
-        let (width, height) = img.dimensions();
-        let mut rotated = RgbaImage::new(height, width);
-        for y in 0..height {
-            for x in 0..width {
-                let px = *img.get_pixel(x, y);
-                rotated.put_pixel(height - 1 - y, x, px);
-            }
-        }
-        rotated
     }
 }
 
@@ -331,14 +305,9 @@ impl AppleCustomCamera {
 
     pub fn get_latest_raw_frame(&self) -> Option<RgbaImage> {
         if !self.processor.is_ready() {
-            println!("Camera not ready yet - no frames available");
             return None;
         }
-
-        let start = Instant::now();
         let frame = self.processor.ivars().last_raw_frame.lock().unwrap().clone();
-        let elapsed = start.elapsed().as_millis();
-        // println!("Captured frame and returned in: {} ms", elapsed);
         frame
     }
 
