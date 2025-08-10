@@ -207,6 +207,18 @@ impl Processor {
     pub fn is_ready(&self) -> bool {
         *self.ivars().ready.lock().unwrap()
     }
+    
+    fn rotate_90_cw(&self, img: &RgbaImage) -> RgbaImage {
+        let (width, height) = img.dimensions();
+        let mut rotated = RgbaImage::new(height, width);
+        for y in 0..height {
+            for x in 0..width {
+                let px = *img.get_pixel(x, y);
+                rotated.put_pixel(height - 1 - y, x, px);
+            }
+        }
+        rotated
+    }
 }
 
 #[cfg(any(target_os = "ios", target_os = "macos"))]
