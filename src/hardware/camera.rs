@@ -58,7 +58,12 @@ impl Camera {
     #[cfg(any(target_os = "macos", target_os = "ios"))]
     pub fn new_custom() -> Result<Self, CameraError> {
         // println!("Creating custom Apple camera");
-        let camera = AppleCustomCamera::new();
+        let mut camera = AppleCustomCamera::new();
+        camera.open_camera().map_err(|e| {
+            // println!("Failed to open custom camera: {}", e);
+            CameraError::FailedToOpenCamera
+        })?;
+        // println!("Custom camera opened successfully");
         Ok(Camera(AppleCameraBackend::Custom(camera)))
     }
 
@@ -284,8 +289,24 @@ impl Camera {
 
     #[cfg(any(target_os = "macos", target_os = "ios"))]
     pub fn open_and_get_custom_frame() -> Option<RgbaImage> {
+        // println!("Opening custom camera and getting frame");
         let mut camera = AppleCustomCamera::new();
-        let _ = camera.open_camera();
+        if let Err(e) = camera.open_camera() {
+            // println!("Failed to open custom camera: {}", e);
+            return None;
+        }
+
+        let mut wrapper = Camera(AppleCameraBackend::Custom(camera));
+        // println!("Waiting for custom camera to capture first frame...");
+        for attempt in 1..=10 {
+            std::thread::sleep(std::time::Duration::from_millis(200));
+            // println!("Attempt {} to get frame", attempt);
+            if let Some(frame) = wrapper.get_frame() {
+                // println!("Successfully got frame on attempt {}", attempt);
+                return Some(frame);
+            }
+        }
+        // println!("Failed to get frame after 10 attempts");
         None
     }
 
@@ -324,6 +345,8 @@ impl Default for Camera {
 
 impl Drop for Camera {
     fn drop(&mut self) {
+        // println!("Dropping Camera");
+        
         #[cfg(any(target_os = "macos", target_os = "ios"))]
         self.stop_camera();
     }
