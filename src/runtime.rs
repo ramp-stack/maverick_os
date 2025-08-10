@@ -27,7 +27,7 @@ impl std::fmt::Debug for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {write!(f, "{}", self.1)}
 }
 impl<E: std::error::Error> From<E> for Error {
-    fn from(error: E) -> Error {Error(error.to_string(), format!("{:?}", error))}
+    fn from(error: E) -> Error {Error(error.to_string(), format!("{error:?}"))}
 }
 
 pub enum RuntimeRequest {

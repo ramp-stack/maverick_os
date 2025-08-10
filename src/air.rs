@@ -71,7 +71,7 @@ impl Service {
     >(ctx: &mut ThreadContext<S, R>, path_a: RecordPath, path_b: RecordPath, index: u32) -> Result<(RecordPath, Option<(Result<Record, ValidationError>, DateTime)>), Error> {
         match ctx.blocking_request::<Service>(Request::CreatePointer(path_a, path_b, index)).await? {
             Response::CreatePrivate(path, result) => Ok((path, result)),
-            r => Err(Error::MaliciousResponse(format!("{:?}", r))),
+            r => Err(Error::MaliciousResponse(format!("{r:?}"))),
         }
     }
 
@@ -81,7 +81,7 @@ impl Service {
     >(ctx: &mut ThreadContext<S, R>, datetime: DateTime) -> Result<Vec<(OrangeName, RecordPath)>, Error> {
         match ctx.blocking_request::<Service>(Request::Receive(datetime)).await? {
             Response::Receive(result) => Ok(result),
-            r => Err(Error::MaliciousResponse(format!("{:?}", r))),
+            r => Err(Error::MaliciousResponse(format!("{r:?}"))),
         }
     }
 
@@ -91,7 +91,7 @@ impl Service {
     >(ctx: &mut ThreadContext<S, R>, name: OrangeName, perms: Permissions, path: RecordPath) -> Result<(), Error> {
         match ctx.blocking_request::<Service>(Request::Share(name, perms, path)).await? {
             Response::Empty => Ok(()),
-            r => Err(Error::MaliciousResponse(format!("{:?}", r))),
+            r => Err(Error::MaliciousResponse(format!("{r:?}"))),
         }
     }
 
@@ -101,7 +101,7 @@ impl Service {
     >(ctx: &mut ThreadContext<S, R>, path: RecordPath, protocol: Protocol, index: u32, perms: Permissions, payload: Vec<u8>) -> Result<(RecordPath, Option<(Result<Record, ValidationError>, DateTime)>), Error> {
         match ctx.blocking_request::<Service>(Request::CreatePrivate(path, protocol, index, perms, payload)).await? {
             Response::CreatePrivate(path, result) => Ok((path, result)),
-            r => Err(Error::MaliciousResponse(format!("{:?}", r))),
+            r => Err(Error::MaliciousResponse(format!("{r:?}"))),
         }
     }
 
@@ -111,7 +111,7 @@ impl Service {
     >(ctx: &mut ThreadContext<S, R>, path: RecordPath) -> Result<Option<(Record, DateTime)>, Error> {
         match ctx.blocking_request::<Service>(Request::ReadPrivate(path)).await? {
             Response::ReadPrivate(result) => Ok(result),
-            r => Err(Error::MaliciousResponse(format!("{:?}", r))),
+            r => Err(Error::MaliciousResponse(format!("{r:?}"))),
         }
     }
 
@@ -121,7 +121,7 @@ impl Service {
     >(ctx: &mut ThreadContext<S, R>, item: PublicItem) -> Result<Id, Error> {
         match ctx.blocking_request::<Service>(Request::CreatePublic(item)).await? {
             Response::CreatePublic(id) => Ok(id),
-            r => Err(Error::MaliciousResponse(format!("{:?}", r))),
+            r => Err(Error::MaliciousResponse(format!("{r:?}"))),
         }
     }
 
@@ -132,7 +132,7 @@ impl Service {
         let a = ctx.blocking_request::<Service>(Request::ReadPublic(filter)).await?;
         match a {
             Response::ReadPublic(results) => Ok(results),
-            r => Err(Error::MaliciousResponse(format!("{:?}", r))),
+            r => Err(Error::MaliciousResponse(format!("{r:?}"))),
         }
     }
 
@@ -142,7 +142,7 @@ impl Service {
     >(ctx: &mut ThreadContext<S, R>, path: RecordPath, index: u32, protocols: Vec<Protocol>) -> Result<(Option<RecordPath>, Option<DateTime>), Error> {
         match ctx.blocking_request::<Service>(Request::Discover(path, index, protocols)).await? {
             Response::Discover(result, date) => Ok((result, date)),
-            r => Err(Error::MaliciousResponse(format!("{:?}", r)))
+            r => Err(Error::MaliciousResponse(format!("{r:?}")))
         }
     }
 }
@@ -206,7 +206,7 @@ impl ThreadService for Service {
                     Ok(storage::Processed::CreatePublic(id)) => Ok(Response::CreatePublic(id)),
                     Ok(storage::Processed::ReadPublic(results)) => Ok(Response::ReadPublic(results)),
                     Ok(storage::Processed::Empty) => Ok(Response::Empty),
-                    Ok(r) => Err(Error::MaliciousResponse(format!("{:?}", r))),
+                    Ok(r) => Err(Error::MaliciousResponse(format!("{r:?}"))),
                     Err(e) => Err(e.into())
                 },
                 Client::Private(client) => client.process_response(&mut self.cache, &mut self.resolver, response).await.map(|r| match r {
