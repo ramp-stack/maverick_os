@@ -1,6 +1,6 @@
 [package]
 name = "maverick_os"
-version = "0.1.5"
+version = "0.1.6"
 edition = "2024"
 authors = ["Caleb Couch <caleb@orange.me>"]
 description = "Maverick OS"
@@ -9,7 +9,6 @@ repository = "https://github.com/ramp-stack/maverick_os"
 
 [dependencies]
 #air = "0.2.2"
-air = {path="../air"}
 async-trait = "0.1.88"
 log = "0.4.27"
 raw-window-handle = "0.6.2"
@@ -22,6 +21,7 @@ downcast-rs = "2.0.1"
 image = "0.25.6"
 libc = "0.2.172"
 imageproc = "0.25.0"
+air = "0.2.5"
 #bayer = "0.1.5"
 
 [target.'cfg(any(target_os = "ios", target_os = "macos"))'.dependencies]
