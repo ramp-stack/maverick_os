@@ -59,7 +59,7 @@ impl Camera {
     pub fn new_custom() -> Result<Self, CameraError> {
         // println!("Creating custom Apple camera");
         let mut camera = AppleCustomCamera::new();
-        camera.open_camera().map_err(|e| {
+        camera.open_camera().map_err(|_e| {
             // println!("Failed to open custom camera: {}", e);
             CameraError::FailedToOpenCamera
         })?;
@@ -141,7 +141,7 @@ impl Camera {
         }
     }
 
-    // Individual setter methods for image processing parameters
+    // Individual setter methods for all image processing parameters
     #[cfg(any(target_os = "macos", target_os = "ios"))]
     pub fn set_brightness(&mut self, brightness: i16) -> Result<(), CameraError> {
         match &self.0 {
@@ -151,6 +151,81 @@ impl Camera {
             AppleCameraBackend::Custom(cam) => {
                 cam.update_settings(|settings| {
                     settings.brightness = brightness;
+                });
+                Ok(())
+            }
+        }
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    pub fn set_contrast(&mut self, contrast: f32) -> Result<(), CameraError> {
+        match &self.0 {
+            AppleCameraBackend::Standard(_cam) => {
+                Err(CameraError::FailedToGetFrame)
+            }
+            AppleCameraBackend::Custom(cam) => {
+                cam.update_settings(|settings| {
+                    settings.contrast = contrast;
+                });
+                Ok(())
+            }
+        }
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    pub fn set_saturation(&mut self, saturation: f32) -> Result<(), CameraError> {
+        match &self.0 {
+            AppleCameraBackend::Standard(_cam) => {
+                Err(CameraError::FailedToGetFrame)
+            }
+            AppleCameraBackend::Custom(cam) => {
+                cam.update_settings(|settings| {
+                    settings.saturation = saturation;
+                });
+                Ok(())
+            }
+        }
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    pub fn set_gamma(&mut self, gamma: f32) -> Result<(), CameraError> {
+        match &self.0 {
+            AppleCameraBackend::Standard(_cam) => {
+                Err(CameraError::FailedToGetFrame)
+            }
+            AppleCameraBackend::Custom(cam) => {
+                cam.update_settings(|settings| {
+                    settings.gamma = gamma;
+                });
+                Ok(())
+            }
+        }
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    pub fn set_exposure(&mut self, exposure: f32) -> Result<(), CameraError> {
+        match &self.0 {
+            AppleCameraBackend::Standard(_cam) => {
+                Err(CameraError::FailedToGetFrame)
+            }
+            AppleCameraBackend::Custom(cam) => {
+                cam.update_settings(|settings| {
+                    settings.exposure = exposure;
+                });
+                Ok(())
+            }
+        }
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    pub fn set_temperature(&mut self, temperature: f32) -> Result<(), CameraError> {
+        match &self.0 {
+            AppleCameraBackend::Standard(_cam) => {
+                Err(CameraError::FailedToGetFrame)
+            }
+            AppleCameraBackend::Custom(cam) => {
+                cam.update_settings(|settings| {
+                    settings.temperature = temperature;
                 });
                 Ok(())
             }
@@ -202,9 +277,68 @@ impl Camera {
         }
     }
 
-    // Stub implementations for non-Apple platforms
+    /// Set white balance using RGB multipliers all at once
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    pub fn set_white_balance_rgb(&mut self, r: f32, g: f32, b: f32) -> Result<(), CameraError> {
+        match &self.0 {
+            AppleCameraBackend::Standard(_cam) => {
+                Err(CameraError::FailedToGetFrame)
+            }
+            AppleCameraBackend::Custom(cam) => {
+                cam.update_settings(|settings| {
+                    settings.white_balance_r = r;
+                    settings.white_balance_g = g;
+                    settings.white_balance_b = b;
+                });
+                Ok(())
+            }
+        }
+    }
+
+    /// Reset all settings to default values
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    pub fn reset_settings(&mut self) -> Result<(), CameraError> {
+        match &self.0 {
+            AppleCameraBackend::Standard(_cam) => {
+                Err(CameraError::FailedToGetFrame)
+            }
+            AppleCameraBackend::Custom(cam) => {
+                cam.update_settings(|settings| {
+                    *settings = ImageSettings::default();
+                });
+                Ok(())
+            }
+        }
+    }
+
+    // Stub implementations for Android
     #[cfg(target_os = "android")]
     pub fn set_brightness(&mut self, _brightness: i16) -> Result<(), CameraError> {
+        Err(CameraError::FailedToGetFrame)
+    }
+
+    #[cfg(target_os = "android")]
+    pub fn set_contrast(&mut self, _contrast: f32) -> Result<(), CameraError> {
+        Err(CameraError::FailedToGetFrame)
+    }
+
+    #[cfg(target_os = "android")]
+    pub fn set_saturation(&mut self, _saturation: f32) -> Result<(), CameraError> {
+        Err(CameraError::FailedToGetFrame)
+    }
+
+    #[cfg(target_os = "android")]
+    pub fn set_gamma(&mut self, _gamma: f32) -> Result<(), CameraError> {
+        Err(CameraError::FailedToGetFrame)
+    }
+
+    #[cfg(target_os = "android")]
+    pub fn set_exposure(&mut self, _exposure: f32) -> Result<(), CameraError> {
+        Err(CameraError::FailedToGetFrame)
+    }
+
+    #[cfg(target_os = "android")]
+    pub fn set_temperature(&mut self, _temperature: f32) -> Result<(), CameraError> {
         Err(CameraError::FailedToGetFrame)
     }
 
@@ -223,8 +357,44 @@ impl Camera {
         Err(CameraError::FailedToGetFrame)
     }
 
+    #[cfg(target_os = "android")]
+    pub fn set_white_balance_rgb(&mut self, _r: f32, _g: f32, _b: f32) -> Result<(), CameraError> {
+        Err(CameraError::FailedToGetFrame)
+    }
+
+    #[cfg(target_os = "android")]
+    pub fn reset_settings(&mut self) -> Result<(), CameraError> {
+        Err(CameraError::FailedToGetFrame)
+    }
+
+    // Stub implementations for unsupported platforms
     #[cfg(not(any(target_os = "macos", target_os = "ios", target_os = "android")))]
     pub fn set_brightness(&mut self, _brightness: i16) -> Result<(), CameraError> {
+        Err(CameraError::AccessDenied)
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "ios", target_os = "android")))]
+    pub fn set_contrast(&mut self, _contrast: f32) -> Result<(), CameraError> {
+        Err(CameraError::AccessDenied)
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "ios", target_os = "android")))]
+    pub fn set_saturation(&mut self, _saturation: f32) -> Result<(), CameraError> {
+        Err(CameraError::AccessDenied)
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "ios", target_os = "android")))]
+    pub fn set_gamma(&mut self, _gamma: f32) -> Result<(), CameraError> {
+        Err(CameraError::AccessDenied)
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "ios", target_os = "android")))]
+    pub fn set_exposure(&mut self, _exposure: f32) -> Result<(), CameraError> {
+        Err(CameraError::AccessDenied)
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "ios", target_os = "android")))]
+    pub fn set_temperature(&mut self, _temperature: f32) -> Result<(), CameraError> {
         Err(CameraError::AccessDenied)
     }
 
@@ -240,6 +410,16 @@ impl Camera {
 
     #[cfg(not(any(target_os = "macos", target_os = "ios", target_os = "android")))]
     pub fn set_white_balance_b(&mut self, _white_balance_b: f32) -> Result<(), CameraError> {
+        Err(CameraError::AccessDenied)
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "ios", target_os = "android")))]
+    pub fn set_white_balance_rgb(&mut self, _r: f32, _g: f32, _b: f32) -> Result<(), CameraError> {
+        Err(CameraError::AccessDenied)
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "ios", target_os = "android")))]
+    pub fn reset_settings(&mut self) -> Result<(), CameraError> {
         Err(CameraError::AccessDenied)
     }
 
@@ -291,7 +471,7 @@ impl Camera {
     pub fn open_and_get_custom_frame() -> Option<RgbaImage> {
         // println!("Opening custom camera and getting frame");
         let mut camera = AppleCustomCamera::new();
-        if let Err(e) = camera.open_camera() {
+        if let Err(_e) = camera.open_camera() {
             // println!("Failed to open custom camera: {}", e);
             return None;
         }
@@ -345,8 +525,6 @@ impl Default for Camera {
 
 impl Drop for Camera {
     fn drop(&mut self) {
-        // println!("Dropping Camera");
-        
         #[cfg(any(target_os = "macos", target_os = "ios"))]
         self.stop_camera();
     }

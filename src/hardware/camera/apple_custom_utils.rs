@@ -1,4 +1,3 @@
-
 use std::slice::from_raw_parts;
 use image::RgbaImage;
 
@@ -46,28 +45,28 @@ pub enum PixelType { Red, Green, Blue }
 #[derive(Debug, Clone)]
 pub struct ImageSettings {
     pub brightness: i16, 
-    // pub contrast: f32,
-    // pub saturation: f32,
-    // pub gamma: f32,
+    pub contrast: f32,
+    pub saturation: f32,
+    pub gamma: f32,
     pub white_balance_r: f32,
     pub white_balance_g: f32,
     pub white_balance_b: f32,
-    // pub exposure: f32,
-    // pub temperature: f32,
+    pub exposure: f32,
+    pub temperature: f32,
 }
 
 impl Default for ImageSettings {
     fn default() -> Self {
         Self {
             brightness: 0,
-            // contrast: 0.0,
-            // saturation: 0.0,
-            // gamma: 2.2,
+            contrast: 0.0,
+            saturation: 0.0,
+            gamma: 2.2,
             white_balance_r: 1.0,
             white_balance_g: 1.0,
             white_balance_b: 1.0,
-            // exposure: 0.0,
-            // temperature: 6500.0,
+            exposure: 0.0,
+            temperature: 6500.0,
         }
     }
 }
@@ -79,36 +78,36 @@ impl ImageSettings {
 
     pub fn clamp_values(&mut self) {
         self.brightness = self.brightness.clamp(-100, 100);
-        // self.contrast = self.contrast.clamp(-1.0, 1.0);
-        // self.saturation = self.saturation.clamp(-1.0, 1.0);
-        // self.gamma = self.gamma.clamp(0.1, 3.0);
+        self.contrast = self.contrast.clamp(-1.0, 1.0);
+        self.saturation = self.saturation.clamp(-1.0, 1.0);
+        self.gamma = self.gamma.clamp(0.1, 3.0);
         self.white_balance_r = self.white_balance_r.clamp(0.5, 2.0);
         self.white_balance_g = self.white_balance_g.clamp(0.5, 2.0);
         self.white_balance_b = self.white_balance_b.clamp(0.5, 2.0);
-        // self.exposure = self.exposure.clamp(-2.0, 2.0);
-        // self.temperature = self.temperature.clamp(2000.0, 10000.0);
+        self.exposure = self.exposure.clamp(-2.0, 2.0);
+        self.temperature = self.temperature.clamp(2000.0, 10000.0);
     }
 
-    // pub fn temperature_to_rgb_multipliers(&self) -> [f32; 3] {
-    //     let temp = self.temperature;
-    //     let temp_scaled = temp / 100.0;
-    //
-    //     if temp < 6600.0 {
-    //         let r = 1.0;
-    //         let g = (0.39008157 * temp_scaled.ln() - 0.63184144).clamp(0.0, 1.0);
-    //         let b = if temp < 2000.0 {
-    //             0.0
-    //         } else {
-    //             (0.54320678 * (temp_scaled - 10.0).ln() - 1.19625408).clamp(0.0, 1.0)
-    //         };
-    //         [r, g, b]
-    //     } else {
-    //         let r = (1.29293618 * (temp_scaled - 60.0).powf(-0.1332047)).clamp(0.0, 1.0);
-    //         let g = (1.12989086 * (temp_scaled - 60.0).powf(-0.0755148)).clamp(0.0, 1.0);
-    //         let b = 1.0;
-    //         [r, g, b]
-    //     }
-    // }
+    pub fn temperature_to_rgb_multipliers(&self) -> [f32; 3] {
+        let temp = self.temperature;
+        let temp_scaled = temp / 100.0;
+
+        if temp < 6600.0 {
+            let r = 1.0;
+            let g = (0.39008157 * temp_scaled.ln() - 0.63184144).clamp(0.0, 1.0);
+            let b = if temp < 2000.0 {
+                0.0
+            } else {
+                (0.54320678 * (temp_scaled - 10.0).ln() - 1.19625408).clamp(0.0, 1.0)
+            };
+            [r, g, b]
+        } else {
+            let r = (1.29293618 * (temp_scaled - 60.0).powf(-0.1332047)).clamp(0.0, 1.0);
+            let g = (1.12989086 * (temp_scaled - 60.0).powf(-0.0755148)).clamp(0.0, 1.0);
+            let b = 1.0;
+            [r, g, b]
+        }
+    }
 }
 
 pub struct ImageProcessor;
@@ -135,39 +134,38 @@ impl ImageProcessor {
         RgbaImage::from_raw(width as u32, height as u32, rgba_data)
     }
 
-    // pub fn process_bgra_data(base_address: *const u8, width: usize, height: usize, bytes_per_row: usize) -> Option<RgbaImage> {
-    //     let slice = unsafe { from_raw_parts(base_address, bytes_per_row * height) };
-    //     let mut rgba_data = Vec::with_capacity(width * height * 4);
+    pub fn process_bgra_data(base_address: *const u8, width: usize, height: usize, bytes_per_row: usize) -> Option<RgbaImage> {
+        let slice = unsafe { from_raw_parts(base_address, bytes_per_row * height) };
+        let mut rgba_data = Vec::with_capacity(width * height * 4);
 
-    //     for y in 0..height {
-    //         let row_start = y * bytes_per_row;
-    //         for x in 0..width {
-    //             let src_index = row_start + x * 4;
+        for y in 0..height {
+            let row_start = y * bytes_per_row;
+            for x in 0..width {
+                let src_index = row_start + x * 4;
                 
-    //             if src_index + 3 < slice.len() {
-    //                 let b = slice[src_index];
-    //                 let g = slice[src_index + 1];
-    //                 let r = slice[src_index + 2];
-    //                 let a = slice[src_index + 3];
+                if src_index + 3 < slice.len() {
+                    let b = slice[src_index];
+                    let g = slice[src_index + 1];
+                    let r = slice[src_index + 2];
+                    let a = slice[src_index + 3];
                     
-    //                 rgba_data.extend_from_slice(&[r, g, b, a]);
-    //             }
-    //         }
-    //     }
-    //     RgbaImage::from_raw(width as u32, height as u32, rgba_data)
-    // }
+                    rgba_data.extend_from_slice(&[r, g, b, a]);
+                }
+            }
+        }
+        RgbaImage::from_raw(width as u32, height as u32, rgba_data)
+    }
 
     pub fn apply_image_settings(rgba_image: RgbaImage, settings: &ImageSettings) -> RgbaImage {
         let width = rgba_image.width();
         let height = rgba_image.height();
         let mut pixels = rgba_image.into_raw();
         
-        // let wb_multipliers = if settings.temperature != 6500.0 {
-        //     settings.temperature_to_rgb_multipliers()
-        // } else {
-        //     [settings.white_balance_r, settings.white_balance_g, settings.white_balance_b]
-        // };
-        let wb_multipliers = [settings.white_balance_r, settings.white_balance_g, settings.white_balance_b];
+        let wb_multipliers = if settings.temperature != 6500.0 {
+            settings.temperature_to_rgb_multipliers()
+        } else {
+            [settings.white_balance_r, settings.white_balance_g, settings.white_balance_b]
+        };
         
         let has_wb = wb_multipliers[0] != 1.0 || wb_multipliers[1] != 1.0 || wb_multipliers[2] != 1.0;
         
@@ -182,12 +180,12 @@ impl ImageProcessor {
                 b = (b * wb_multipliers[2]).clamp(0.0, 255.0);
             }
             
-            // if settings.exposure != 0.0 {
-            //     let exposure_multiplier = 2.0_f32.powf(settings.exposure);
-            //     r = (r * exposure_multiplier).clamp(0.0, 255.0);
-            //     g = (g * exposure_multiplier).clamp(0.0, 255.0);
-            //     b = (b * exposure_multiplier).clamp(0.0, 255.0);
-            // }
+            if settings.exposure != 0.0 {
+                let exposure_multiplier = 2.0_f32.powf(settings.exposure);
+                r = (r * exposure_multiplier).clamp(0.0, 255.0);
+                g = (g * exposure_multiplier).clamp(0.0, 255.0);
+                b = (b * exposure_multiplier).clamp(0.0, 255.0);
+            }
             
             if settings.brightness != 0 {
                 let brightness_f = settings.brightness as f32;
@@ -196,27 +194,27 @@ impl ImageProcessor {
                 b = (b + brightness_f).clamp(0.0, 255.0);
             }
             
-            // if settings.contrast != 0.0 {
-            //     let contrast_factor = 1.0 + settings.contrast;
-            //     r = ((r - 128.0) * contrast_factor + 128.0).clamp(0.0, 255.0);
-            //     g = ((g - 128.0) * contrast_factor + 128.0).clamp(0.0, 255.0);
-            //     b = ((b - 128.0) * contrast_factor + 128.0).clamp(0.0, 255.0);
-            // }
+            if settings.contrast != 0.0 {
+                let contrast_factor = 1.0 + settings.contrast;
+                r = ((r - 128.0) * contrast_factor + 128.0).clamp(0.0, 255.0);
+                g = ((g - 128.0) * contrast_factor + 128.0).clamp(0.0, 255.0);
+                b = ((b - 128.0) * contrast_factor + 128.0).clamp(0.0, 255.0);
+            }
             
-            // if settings.saturation != 0.0 {
-            //     let gray = 0.299 * r + 0.587 * g + 0.114 * b;
-            //     let saturation_factor = 1.0 + settings.saturation;
-            //     r = (gray + (r - gray) * saturation_factor).clamp(0.0, 255.0);
-            //     g = (gray + (g - gray) * saturation_factor).clamp(0.0, 255.0);
-            //     b = (gray + (b - gray) * saturation_factor).clamp(0.0, 255.0);
-            // }
+            if settings.saturation != 0.0 {
+                let gray = 0.299 * r + 0.587 * g + 0.114 * b;
+                let saturation_factor = 1.0 + settings.saturation;
+                r = (gray + (r - gray) * saturation_factor).clamp(0.0, 255.0);
+                g = (gray + (g - gray) * saturation_factor).clamp(0.0, 255.0);
+                b = (gray + (b - gray) * saturation_factor).clamp(0.0, 255.0);
+            }
             
-            // if settings.gamma != 2.2 {
-            //     let inv_gamma = 1.0 / settings.gamma;
-            //     r = (255.0 * (r / 255.0).powf(inv_gamma)).clamp(0.0, 255.0);
-            //     g = (255.0 * (g / 255.0).powf(inv_gamma)).clamp(0.0, 255.0);
-            //     b = (255.0 * (b / 255.0).powf(inv_gamma)).clamp(0.0, 255.0);
-            // }
+            if settings.gamma != 2.2 {
+                let inv_gamma = 1.0 / settings.gamma;
+                r = (255.0 * (r / 255.0).powf(inv_gamma)).clamp(0.0, 255.0);
+                g = (255.0 * (g / 255.0).powf(inv_gamma)).clamp(0.0, 255.0);
+                b = (255.0 * (b / 255.0).powf(inv_gamma)).clamp(0.0, 255.0);
+            }
             
             pixel[0] = r as u8;
             pixel[1] = g as u8;
