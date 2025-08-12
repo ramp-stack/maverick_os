@@ -30,7 +30,6 @@ pub use notifications::Notifications;
 pub struct Context {
     pub cache: Cache,
     pub clipboard: Clipboard,
-    pub share: Share,
     pub app_support: ApplicationSupport,
     pub cloud: CloudStorage,
     pub photo_picker: PhotoPicker,
@@ -43,7 +42,6 @@ impl Context {
         Self {
             cache: Cache::new(),
             clipboard: Clipboard::new().expect("Clipboard must be initialized before Context::new()"),
-            share: Share::new(),
             app_support: ApplicationSupport,
             cloud: CloudStorage::default(),
             photo_picker: PhotoPicker,
@@ -56,7 +54,6 @@ impl Context {
         Self {
             cache: Cache::new(),
             clipboard: Clipboard::new(),
-            share: Share::new(),
             app_support: ApplicationSupport,
             cloud: CloudStorage,
             photo_picker: PhotoPicker,
@@ -119,86 +116,30 @@ impl Context {
     }
 
     pub fn share(&self, text: &str) {
-        #[cfg(not(target_os = "android"))]
-        {
-            Share::share(text);
-        }
+        Share::share(text);
+    }
 
-        #[cfg(target_os = "android")]
-        {
-            self.share.share(text);
-        }
+    pub fn share_image(&self, image: image::RgbaImage) {
+        Share::share_image(image);
     }
 
     pub fn open_photo_picker(&self, sender: Sender<(Vec<u8>, ImageOrientation)>) {
         PhotoPicker::open(sender);
     }
 
-    pub fn cloud_save(&self, key: &str, value: &str) -> Result<(), Box<dyn std::error::Error>> {
-        #[cfg(any(target_os = "macos", target_os = "ios"))]
-        {
-            CloudStorage::save(key, value).map_err(|e| e.into())
-        }
-
-        #[cfg(target_os = "android")]
-        {
-            CloudStorage::save(key, value).map_err(|e| format!("{:?}", e).into())
-        }
-
-        #[cfg(not(any(target_os = "macos", target_os = "ios", target_os = "android")))]
-        {
-            Err("CloudStorage not supported on this platform".into())
-        }
+    pub fn cloud_save(&self, key: &str, value: &str) {
+        CloudStorage::save(key, value);
     }
 
-    pub fn cloud_get(&self, key: &str) -> Result<Option<String>, Box<dyn std::error::Error>> {
-        #[cfg(any(target_os = "macos", target_os = "ios"))]
-        {
-            CloudStorage::get(key).map_err(|e| e.into())
-        }
-
-        #[cfg(target_os = "android")]
-        {
-            CloudStorage::get(key).map_err(|e| format!("{:?}", e).into())
-        }
-
-        #[cfg(not(any(target_os = "macos", target_os = "ios", target_os = "android")))]
-        {
-            Err("CloudStorage not supported on this platform".into())
-        }
+    pub fn cloud_get(&self, key: &str) -> Option<String> {
+        CloudStorage::get(key).ok().flatten()
     }
 
-    pub fn cloud_remove(&self, key: &str) -> Result<(), Box<dyn std::error::Error>> {
-        #[cfg(any(target_os = "macos", target_os = "ios"))]
-        {
-            CloudStorage::remove(key).map_err(|e| e.into())
-        }
-
-        #[cfg(target_os = "android")]
-        {
-            CloudStorage::remove(key).map_err(|e| format!("{:?}", e).into())
-        }
-
-        #[cfg(not(any(target_os = "macos", target_os = "ios", target_os = "android")))]
-        {
-            Err("CloudStorage not supported on this platform".into())
-        }
+    pub fn cloud_remove(&self, key: &str) {
+        CloudStorage::remove(key);
     }
 
-    pub fn cloud_clear(&self) -> Result<(), Box<dyn std::error::Error>> {
-        #[cfg(any(target_os = "macos", target_os = "ios"))]
-        {
-            CloudStorage::clear().map_err(|e| e.into())
-        }
-
-        #[cfg(target_os = "android")]
-        {
-            CloudStorage::clear().map_err(|e| format!("{:?}", e).into())
-        }
-
-        #[cfg(not(any(target_os = "macos", target_os = "ios", target_os = "android")))]
-        {
-            Err("CloudStorage not supported on this platform".into())
-        }
+    pub fn cloud_clear(&self, key: &str) {
+        CloudStorage::clear();
     }
 }
