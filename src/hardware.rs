@@ -1,6 +1,6 @@
 mod logger;
 mod cache;
-mod camera;
+pub mod camera;
 mod share;
 mod clipboard;
 mod app_support;
@@ -82,11 +82,11 @@ impl Context {
         SafeAreaInsets::get()
     }
 
-    pub fn create_camera(&self) -> Camera {
-        Camera::new()
+    pub fn create_camera(&self) -> Result<Camera, CameraError> {
+        Ok(Camera::new())
     }
 
-    pub fn open_camera(&self) -> Camera {
+    pub fn open_camera(&self) -> Result<Camera, CameraError> {
         self.create_camera()
     }
 
