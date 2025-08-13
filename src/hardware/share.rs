@@ -90,65 +90,7 @@ impl Share {
         let rgba = rgba.into_raw();
 
         autoreleasepool(|_| {
-            let data_provider_cls = class!(CGDataProvider);
-            let data_provider: *mut NSObject = unsafe {
-                let bytes_ptr = rgba.as_ptr() as *const c_void;
-                let len = rgba.len();
-                msg_send![data_provider_cls, dataProviderWithBytes:bytes_ptr length:len]
-            };
-
-            let color_space: *mut NSObject = unsafe {
-                msg_send![class!(CGColorSpace), createDeviceRGB]
-            };
-
-            let bits_per_component = 8u64;
-            let bits_per_pixel = 32u64;
-            let bytes_per_row = (width * 4) as u64;
-            let bitmap_info = 2u32; // kCGImageAlphaPremultipliedLast
-
-            let cg_image: *mut NSObject = unsafe {
-                msg_send![class!(CGImage),
-                    createWithWidth: width
-                    height: height
-                    bitsPerComponent: bits_per_component
-                    bitsPerPixel: bits_per_pixel
-                    bytesPerRow: bytes_per_row
-                    space: color_space
-                    bitmapInfo: bitmap_info
-                    provider: data_provider
-                    decode: std::ptr::null::<f32>()
-                    shouldInterpolate: true
-                    intent: 0 // kCGRenderingIntentDefault
-                ]
-            };
-
-            let image: *mut NSObject = unsafe {
-                msg_send![class!(UIImage), imageWithCGImage: cg_image]
-            };
-
-            let items = unsafe {
-                NSArray::from_slice(&[&*image])
-            };
-
-            let cls = class!(UIActivityViewController);
-            let activity_controller: *mut NSObject = unsafe { msg_send![cls, alloc] };
-            let activity_controller: *mut NSObject = unsafe {
-                msg_send![activity_controller, initWithActivityItems:&*items applicationActivities: std::ptr::null_mut::<NSObject>()]
-            };
-
-            let ui_app = class!(UIApplication);
-            let shared_app: *mut NSObject = unsafe { msg_send![ui_app, sharedApplication] };
-            let key_window: *mut NSObject = unsafe { msg_send![shared_app, keyWindow] };
-            let root_vc: *mut NSObject = unsafe { msg_send![key_window, rootViewController] };
-
-            unsafe {
-                let _: () = msg_send![
-                    root_vc,
-                    presentViewController: activity_controller
-                    animated: true
-                    completion: std::ptr::null_mut::<NSObject>()
-                ];
-            }
+            
         });
     }
 
