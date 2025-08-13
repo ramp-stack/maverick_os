@@ -1,6 +1,6 @@
 mod logger;
 mod cache;
-mod camera;
+pub mod camera;
 mod share;
 mod clipboard;
 mod app_support;
@@ -81,27 +81,13 @@ impl Context {
     }
 
     pub fn create_camera(&self) -> Result<Camera, CameraError> {
-        // Return the Result instead of panicking for better error handling
         Camera::new()
     }
 
     pub fn open_camera(&self) -> Result<Camera, CameraError> {
-        // Return the Result instead of panicking for better error handling
         self.create_camera()
     }
 
-    // If you need the old behavior that panics on failure, use these methods:
-    pub fn create_camera_or_panic(&self) -> Camera {
-        // Explicitly use the standard Apple camera (not custom)
-        Camera::new().expect("Failed to create camera")
-    }
-
-    pub fn open_camera_or_panic(&self) -> Camera {
-        // Explicitly use the standard Apple camera (not custom)
-        self.create_camera_or_panic()
-    }
-
-    // Method to create custom camera (for raw Bayer data)
     #[cfg(any(target_os = "macos", target_os = "ios"))]
     pub fn create_custom_camera(&self) -> Result<Camera, CameraError> {
         Camera::new_custom()
