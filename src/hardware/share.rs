@@ -4,6 +4,8 @@ use objc2::rc::autoreleasepool;
 use objc2::{class, msg_send};
 #[cfg(target_os = "ios")]
 use objc2_foundation::{NSArray, NSObject, NSString};
+#[cfg(target_os = "ios")]
+use std::ffi::c_void;
 
 #[cfg(target_os = "android")]
 use jni::objects::{GlobalRef, JObject, JValue};
@@ -29,17 +31,7 @@ static INIT_ONCE: Once = Once::new();
 #[derive(Clone)]
 pub struct Share;
 
-impl Default for Share {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl Share {
-    pub fn new() -> Self {
-        Self
-    }
-
     #[cfg(target_os = "android")]
     pub fn initialize() -> Result<(), Box<dyn Error>> {
         let jvm = unsafe { JavaVM::from_raw(ndk_context::android_context().vm().cast())? };
@@ -90,6 +82,24 @@ impl Share {
             };
         });
     }
+
+    #[cfg(target_os = "ios")]
+    pub fn share_image(rgba: image::RgbaImage) {
+
+        let (width, height) = rgba.dimensions();
+        let rgba = rgba.into_raw();
+
+        autoreleasepool(|_| {
+            
+        });
+    }
+
+    #[cfg(target_os = "macos")]
+    pub fn share_image(_rgba: image::RgbaImage) {}
+    #[cfg(target_os = "linux")]
+    pub fn share_image(_rgba: image::RgbaImage) {}
+    #[cfg(target_os = "android")]
+    pub fn share_image(_rgba: image::RgbaImage) {}
 
     #[cfg(target_os = "macos")]
     pub fn share(_text: &str) {}

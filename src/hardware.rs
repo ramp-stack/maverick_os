@@ -15,6 +15,7 @@ use std::sync::mpsc::Sender;
 pub use cache::Cache;
 pub use clipboard::Clipboard;
 pub use camera::{Camera, CameraError};
+pub use camera::ImageSettings;
 pub use share::Share;
 pub use app_support::ApplicationSupport;
 pub use cloud::CloudStorage;
@@ -29,7 +30,6 @@ pub use notifications::Notifications;
 pub struct Context {
     pub cache: Cache,
     pub clipboard: Clipboard,
-    pub share: Share,
     pub app_support: ApplicationSupport,
     pub cloud: CloudStorage,
     pub photo_picker: PhotoPicker,
@@ -42,7 +42,6 @@ impl Context {
         Self {
             cache: Cache::new(),
             clipboard: Clipboard::new().expect("Clipboard must be initialized before Context::new()"),
-            share: Share::new(),
             app_support: ApplicationSupport,
             cloud: CloudStorage::default(),
             photo_picker: PhotoPicker,
@@ -55,7 +54,6 @@ impl Context {
         Self {
             cache: Cache::new(),
             clipboard: Clipboard::new(),
-            share: Share::new(),
             app_support: ApplicationSupport,
             cloud: CloudStorage,
             photo_picker: PhotoPicker,
@@ -82,12 +80,31 @@ impl Context {
         SafeAreaInsets::get()
     }
 
-    pub fn create_camera(&self) -> Camera {
+    pub fn create_camera(&self) -> Result<Camera, CameraError> {
+        // Return the Result instead of panicking for better error handling
         Camera::new()
     }
 
-    pub fn open_camera(&self) -> Camera {
+    pub fn open_camera(&self) -> Result<Camera, CameraError> {
+        // Return the Result instead of panicking for better error handling
         self.create_camera()
+    }
+
+    // If you need the old behavior that panics on failure, use these methods:
+    pub fn create_camera_or_panic(&self) -> Camera {
+        // Explicitly use the standard Apple camera (not custom)
+        Camera::new().expect("Failed to create camera")
+    }
+
+    pub fn open_camera_or_panic(&self) -> Camera {
+        // Explicitly use the standard Apple camera (not custom)
+        self.create_camera_or_panic()
+    }
+
+    // Method to create custom camera (for raw Bayer data)
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    pub fn create_custom_camera(&self) -> Result<Camera, CameraError> {
+        Camera::new_custom()
     }
 
     pub fn paste(&self) -> String {
@@ -99,86 +116,30 @@ impl Context {
     }
 
     pub fn share(&self, text: &str) {
-        #[cfg(not(target_os = "android"))]
-        {
-            Share::share(text);
-        }
+        Share::share(text);
+    }
 
-        #[cfg(target_os = "android")]
-        {
-            self.share.share(text);
-        }
+    pub fn share_image(&self, image: image::RgbaImage) {
+        Share::share_image(image);
     }
 
     pub fn open_photo_picker(&self, sender: Sender<(Vec<u8>, ImageOrientation)>) {
         PhotoPicker::open(sender);
     }
 
-    pub fn cloud_save(&self, key: &str, value: &str) -> Result<(), Box<dyn std::error::Error>> {
-        #[cfg(any(target_os = "macos", target_os = "ios"))]
-        {
-            CloudStorage::save(key, value).map_err(|e| e.into())
-        }
-
-        #[cfg(target_os = "android")]
-        {
-            CloudStorage::save(key, value).map_err(|e| format!("{:?}", e).into())
-        }
-
-        #[cfg(not(any(target_os = "macos", target_os = "ios", target_os = "android")))]
-        {
-            Err("CloudStorage not supported on this platform".into())
-        }
+    pub fn cloud_save(&self, key: &str, value: &str) {
+        CloudStorage::save(key, value);
     }
 
-    pub fn cloud_get(&self, key: &str) -> Result<Option<String>, Box<dyn std::error::Error>> {
-        #[cfg(any(target_os = "macos", target_os = "ios"))]
-        {
-            CloudStorage::get(key).map_err(|e| e.into())
-        }
-
-        #[cfg(target_os = "android")]
-        {
-            CloudStorage::get(key).map_err(|e| format!("{:?}", e).into())
-        }
-
-        #[cfg(not(any(target_os = "macos", target_os = "ios", target_os = "android")))]
-        {
-            Err("CloudStorage not supported on this platform".into())
-        }
+    pub fn cloud_get(&self, key: &str) -> Option<String> {
+        CloudStorage::get(key).ok().flatten()
     }
 
-    pub fn cloud_remove(&self, key: &str) -> Result<(), Box<dyn std::error::Error>> {
-        #[cfg(any(target_os = "macos", target_os = "ios"))]
-        {
-            CloudStorage::remove(key).map_err(|e| e.into())
-        }
-
-        #[cfg(target_os = "android")]
-        {
-            CloudStorage::remove(key).map_err(|e| format!("{:?}", e).into())
-        }
-
-        #[cfg(not(any(target_os = "macos", target_os = "ios", target_os = "android")))]
-        {
-            Err("CloudStorage not supported on this platform".into())
-        }
+    pub fn cloud_remove(&self, key: &str) {
+        CloudStorage::remove(key);
     }
 
-    pub fn cloud_clear(&self) -> Result<(), Box<dyn std::error::Error>> {
-        #[cfg(any(target_os = "macos", target_os = "ios"))]
-        {
-            CloudStorage::clear().map_err(|e| e.into())
-        }
-
-        #[cfg(target_os = "android")]
-        {
-            CloudStorage::clear().map_err(|e| format!("{:?}", e).into())
-        }
-
-        #[cfg(not(any(target_os = "macos", target_os = "ios", target_os = "android")))]
-        {
-            Err("CloudStorage not supported on this platform".into())
-        }
+    pub fn cloud_clear(&self, key: &str) {
+        CloudStorage::clear();
     }
 }

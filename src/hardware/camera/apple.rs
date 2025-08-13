@@ -122,7 +122,6 @@ define_class!(
                     let b = slice[src_index];
                     let a = slice[src_index + 3];
 
-                    // Rotate -90°: (x, y) → (height - 1 - y, x)
                     let dest_x = height - 1 - y;
                     let dest_y = x;
 
@@ -150,10 +149,6 @@ impl Processor {
         });
         unsafe { objc2::msg_send![super(this), init] }
     }
-
-    // pub fn get_latest_frame(&self) -> Option<RgbaImage> {
-    //     self.ivars().last_frame.lock().unwrap().clone()
-    // }
 }
 
 #[cfg(any(target_os = "ios", target_os = "macos"))]
@@ -228,11 +223,11 @@ impl AppleCamera {
         }
     }
 
-    pub fn get_latest_frame(&self) -> Option<RgbaImage> {
-        let lock = self.processor.ivars().last_frame.lock().unwrap();
-        if lock.is_some() {
-            println!("Cloning frame from mutex.");
-        }
-        lock.clone()
-    }
+    // pub fn get_latest_frame(&self) -> Option<RgbaImage> {
+    //     let lock = self.processor.ivars().last_frame.lock().unwrap();
+    //     if lock.is_some() {
+    //         println!("Cloning frame from mutex.");
+    //     }
+    //     lock.clone()
+    // }
 }

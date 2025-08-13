@@ -1,0 +1,42 @@
+Image processing	66–68ms
+Applying image settings	53–55ms
+
+get_latest_raw_frame: 1ms
+
+Image Processing
+----------------
+Image processing: 66–68ms
+Unlocking pixel buffer: 0ms
+Settings lock/clone: 0ms
+
+Settings Application
+--------------------
+Applying image settings: 53–55ms
+Settings processing total: 53–55ms
+
+Sample Buffer Processing
+------------------------
+captureOutput_didOutputSampleBuffer_fromConnection: 122ms
+process_sample_buffer - TOTAL: 121–122ms
+process_sample_buffer - START
+Getting image buffer: 0ms
+Mutex lock/assignment: 0ms
+
+Pixel Buffer Processing
+-----------------------
+process_pixel_buffer - TOTAL: 121–122ms
+process_pixel_buffer - START
+Getting pixel format/dimensions: 0ms
+Locking pixel buffer: 0ms
+Getting base address: 0ms
+Processing BGRA format
+
+
+process_bgra runs
+process_pixel_buffer runs
+process_bgra runs
+process_pixel_buffer runs
+process_bgra runs
+process_pixel_buffer runs
+process_bgra runs
+
