@@ -18,6 +18,7 @@ use std::sync::{Arc, Mutex};
 #[cfg(target_os = "android")]
 static CLIPBOARD_INSTANCE: Mutex<Option<Clipboard>> = Mutex::new(None);
 
+/// Clipboard access for copying and pasting text.
 #[derive(Clone)]
 pub struct Clipboard {
     #[cfg(target_os = "android")]

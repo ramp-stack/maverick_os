@@ -28,6 +28,7 @@ use block2::StackBlock;
 #[cfg(target_os = "macos")]
 use objc2::rc::autoreleasepool;
 
+/// Register and handle push notifications.
 pub struct Notifications;
 
 impl Notifications {

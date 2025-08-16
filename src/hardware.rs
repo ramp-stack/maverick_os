@@ -1,6 +1,6 @@
 mod logger;
 mod cache;
-pub mod camera;
+mod camera;
 mod share;
 mod clipboard;
 mod app_support;
@@ -24,108 +24,165 @@ pub use safe_area::SafeAreaInsets;
 pub use haptics::Haptics;
 pub use notifications::Notifications;
 
-/// Hardware context contains interfaces to various hardware.
-/// All interfaces should be clonable or internally synchronized and safe to call from multiple places.
+/// `HardwareContext` contains interfaces to various hardware.
 #[derive(Clone)]
 pub struct Context {
-    pub cache: Cache,
-    pub clipboard: Clipboard,
-    pub app_support: ApplicationSupport,
-    pub cloud: CloudStorage,
-    pub photo_picker: PhotoPicker,
+    pub cache: Cache
 }
 
 impl Context {
-    #[cfg(target_os = "android")]
     pub(crate) fn new() -> Self {
+        Clipboard::new();
+
         logger::Logger::start(None);
         Self {
             cache: Cache::new(),
-            clipboard: Clipboard::new().expect("Clipboard must be initialized before Context::new()"),
-            app_support: ApplicationSupport,
-            cloud: CloudStorage::default(),
-            photo_picker: PhotoPicker,
         }
     }
 
-    #[cfg(not(target_os = "android"))]
-    pub(crate) fn new() -> Self {
-        logger::Logger::start(None);
-        Self {
-            cache: Cache::new(),
-            clipboard: Clipboard::new(),
-            app_support: ApplicationSupport,
-            cloud: CloudStorage,
-            photo_picker: PhotoPicker,
-        }
-    }
-
-    // pub fn silent_notification(&self, msg: &str) {
-    //     Notifications::silent(msg);
-    // }
-
+    /// Registers notifications so they can be queued for delivery.
+    ///
+    /// ```rust
+    #[doc = include_str!("examples/register_notifs.rs")]
+    /// ```
     pub fn register_notifs(&self) {
         Notifications::register();
     }
 
+    /// Queues a new push notification to be sent to the device.
+    /// Notifications will only be sent while the app is backgrounded.
+    ///
+    /// ```rust
+    #[doc = include_str!("examples/push_notifs.rs")]
+    /// ```
     pub fn push_notification(&self, title: &str, msg: &str) {
         Notifications::push(title, msg);
     }
 
+    // / Queues a new silent notification to be sent to the device.
+    // / Notifications will only be sent while the app is backgrounded.
+    // / This type of notification will not be seen by the user.
+    // pub fn silent_notification(&self, msg: &str) {
+    //     Notifications::silent(msg);
+    // }
+
+    /// Trigger vibration haptics on the device.
+    ///
+    /// ```rust
+    #[doc = include_str!("examples/haptic.rs")]
+    /// ```
     pub fn haptic(&self) {
         Haptics::vibrate()
     }
 
+    /// Retrieves the safe area insets as `(top, right, bottom, left)`.
+    /// These values can be used to adjust UI layout to avoid screen cutouts or system UI elements.
+    ///
+    /// ```rust
+    #[doc = include_str!("examples/safe_area.rs")]
+    /// ```
     pub fn safe_area_insets(&self) -> (f32, f32, f32, f32) {
         SafeAreaInsets::get()
     }
 
-    pub fn create_camera(&self) -> Result<Camera, CameraError> {
+    /// Opens the device camera.
+    /// Uses the back-facing camera on mobile devices and the default camera on desktop.
+    ///
+    /// ```rust
+    #[doc = include_str!("examples/open_camera.rs")]
+    /// ```
+    pub fn open_camera(&self) -> Result<Camera, CameraError> {
         Camera::new()
     }
 
-    pub fn open_camera(&self) -> Result<Camera, CameraError> {
-        self.create_camera()
+    /// Opens the device camera without AI processing on iOS and macOS.
+    /// On all other platforms, opens the default camera.
+    ///
+    /// ```rust
+    #[doc = include_str!("examples/open_unprocessed.rs")]
+    /// ```
+    pub fn open_unprocessed_camera(&self) -> Result<Camera, CameraError> {
+        Camera::new_unprocessed()
     }
 
-    #[cfg(any(target_os = "macos", target_os = "ios"))]
-    pub fn create_custom_camera(&self) -> Result<Camera, CameraError> {
-        Camera::new_custom()
-    }
-
+    /// Returns the contents of the device's clipboard.
+    ///
+    /// ```rust
+    #[doc = include_str!("examples/paste.rs")]
+    /// ```
     pub fn paste(&self) -> String {
         Clipboard::get()
     }
 
+    /// Sets the contents of the device's clipboard to the provided `String`.
+    ///
+    /// ```rust
+    #[doc = include_str!("examples/copy.rs")]
+    /// ```
     pub fn copy(&self, text: String) {
         Clipboard::set(text);
     }
 
+    /// Opens the system share dialog, allowing the provided string to be shared. 
+    ///
+    /// ```rust
+    #[doc = include_str!("examples/share.rs")]
+    /// ```
     pub fn share(&self, text: &str) {
         Share::share(text);
     }
 
+    /// Opens the system share dialog, allowing the provided image to be shared.
+    ///
+    /// ```rust
+    #[doc = include_str!("examples/share_image.rs")]
+    /// ```
     pub fn share_image(&self, image: image::RgbaImage) {
         Share::share_image(image);
     }
 
+    /// Opens the system photo picker dialog.
+    ///
+    /// ```rust
+    #[doc = include_str!("examples/open_photo_picker.rs")]
+    /// ```
     pub fn open_photo_picker(&self, sender: Sender<(Vec<u8>, ImageOrientation)>) {
         PhotoPicker::open(sender);
     }
 
-    pub fn cloud_save(&self, key: &str, value: &str) {
-        CloudStorage::save(key, value);
+    /// Save the key-value pair to cloud storage.
+    ///
+    /// ```rust
+    #[doc = include_str!("examples/cloud_save.rs")]
+    /// ```
+    pub fn cloud_save(&self, key: &str, value: &str) -> Result<(), String> {
+        CloudStorage::save(key, value)
     }
 
+    /// Retrieves a value from cloud storage for the given key.
+    ///
+    /// ```rust
+    #[doc = include_str!("examples/cloud_get.rs")]
+    /// ```
     pub fn cloud_get(&self, key: &str) -> Option<String> {
         CloudStorage::get(key).ok().flatten()
     }
 
-    pub fn cloud_remove(&self, key: &str) {
-        CloudStorage::remove(key);
+    /// Removes the value associated with the given key from cloud storage.
+    ///
+    /// ```rust
+    #[doc = include_str!("examples/cloud_remove.rs")]
+    /// ```
+    pub fn cloud_remove(&self, key: &str) -> Result<(), String> {
+        CloudStorage::remove(key)
     }
 
-    pub fn cloud_clear(&self, key: &str) {
-        CloudStorage::clear();
+    /// Clears all key–value pairs from cloud storage.
+    ///
+    /// ```rust
+    #[doc = include_str!("examples/cloud_clear.rs")]
+    /// ```
+    pub fn cloud_clear(&self) -> Result<(), String> {
+        CloudStorage::clear()
     }
 }

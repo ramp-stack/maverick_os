@@ -28,6 +28,7 @@ static APP_CONTEXT: OnceLock<GlobalRef> = OnceLock::new();
 #[cfg(target_os = "android")]
 static INIT_ONCE: Once = Once::new();
 
+/// Share content via the system share dialog.
 #[derive(Clone)]
 pub struct Share;
 

@@ -21,6 +21,7 @@ static JAVA_VM: OnceLock<JavaVM> = OnceLock::new();
 #[cfg(target_os = "android")]
 static APP_CONTEXT: OnceLock<Mutex<Option<GlobalRef>>> = OnceLock::new();
 
+/// Cloud storage for key–value data.
 #[derive(Debug, Clone)]
 pub struct CloudStorage;
 

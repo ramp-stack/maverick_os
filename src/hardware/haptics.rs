@@ -7,6 +7,7 @@ use objc2::{MainThreadMarker, MainThreadOnly, msg_send};
 #[cfg(target_os = "ios")]
 use objc2::rc::{Retained, Allocated};
 
+/// Trigger haptic feedback on the device.
 pub struct Haptics;
 
 impl Haptics {

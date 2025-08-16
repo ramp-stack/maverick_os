@@ -14,6 +14,8 @@ use winit::platform::android::activity::AndroidApp;
 use tokio::sync::Mutex;
 
 #[cfg(not(target_arch = "wasm32"))]
+/// Cache utility for storing and retrieving temporary data.
+/// Not supported on wasm32
 #[derive(Debug, Clone)]
 pub struct Cache(
     Arc<Mutex<rusqlite::Connection>>
@@ -77,7 +79,7 @@ impl RustSqlite for Connection {
 
     fn get<V: Serialize + for<'a> Deserialize <'a> + Default>(&self, key: &str) -> V {
         self.prepare(
-            &format!("SELECT value FROM kvs where key = \'{}\'", key),
+            &format!("SELECT value FROM kvs where key = \'{key}\'"),
         ).unwrap().query_and_then([], |row| {
             let item: String = row.get(0).unwrap();
             Ok(hex::decode(item).unwrap())

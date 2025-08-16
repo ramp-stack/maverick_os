@@ -208,7 +208,7 @@ impl Processor {
         *self.ivars().ready.lock().unwrap()
     }
     
-    fn rotate_90_cw(&self, img: &RgbaImage) -> RgbaImage {
+    fn _rotate_90_cw(&self, img: &RgbaImage) -> RgbaImage {
         let (width, height) = img.dimensions();
         let mut rotated = RgbaImage::new(height, width);
         for y in 0..height {
@@ -242,7 +242,7 @@ impl AppleCustomCamera {
     }
 
     pub fn open_camera(&mut self) -> Result<(), String> {
-        let start = std::time::Instant::now();
+        // let start = std::time::Instant::now();
 
         unsafe {
             let device_types = NSArray::from_slice(&[AVCaptureDeviceTypeBuiltInWideAngleCamera]);
@@ -253,7 +253,7 @@ impl AppleCustomCamera {
             self.device = Some(device.clone());
 
             let input = AVCaptureDeviceInput::deviceInputWithDevice_error(&device)
-                .map_err(|e| format!("Input error: {:?}", e))?;
+                .map_err(|e| format!("Input error: {e:?}"))?;
 
             self.session.beginConfiguration();
 
@@ -300,8 +300,8 @@ impl AppleCustomCamera {
             self.session.startRunning();
         }
 
-        let elapsed = start.elapsed().as_millis();
-        println!("open_camera took: {} ms", elapsed);
+        // let elapsed = start.elapsed().as_millis();
+        // println!("open_camera took: {} ms", elapsed);
 
         Ok(())
     }
@@ -319,8 +319,7 @@ impl AppleCustomCamera {
         if !self.processor.is_ready() {
             return None;
         }
-        let frame = self.processor.ivars().last_raw_frame.lock().unwrap().clone();
-        frame
+        self.processor.ivars().last_raw_frame.lock().unwrap().clone()
     }
 
     pub fn update_settings<F>(&self, f: F) where F: FnOnce(&mut ImageSettings) {

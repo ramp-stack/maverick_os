@@ -42,6 +42,7 @@ impl BayerPattern {
 #[derive(Debug, Clone, Copy)]
 pub enum PixelType { Red, Green, Blue }
 
+/// Settings for configuring camera behavior.
 #[derive(Debug, Clone)]
 pub struct ImageSettings {
     pub brightness: i16, 
@@ -94,16 +95,16 @@ impl ImageSettings {
 
         if temp < 6600.0 {
             let r = 1.0;
-            let g = (0.39008157 * temp_scaled.ln() - 0.63184144).clamp(0.0, 1.0);
+            let g = (0.39008157 * temp_scaled.ln() - 0.631_841_4).clamp(0.0, 1.0);
             let b = if temp < 2000.0 {
                 0.0
             } else {
-                (0.54320678 * (temp_scaled - 10.0).ln() - 1.19625408).clamp(0.0, 1.0)
+                (0.54320678 * (temp_scaled - 10.0).ln() - 1.196_254_1).clamp(0.0, 1.0)
             };
             [r, g, b]
         } else {
-            let r = (1.29293618 * (temp_scaled - 60.0).powf(-0.1332047)).clamp(0.0, 1.0);
-            let g = (1.12989086 * (temp_scaled - 60.0).powf(-0.0755148)).clamp(0.0, 1.0);
+            let r = (1.292_936_2 * (temp_scaled - 60.0).powf(-0.1332047)).clamp(0.0, 1.0);
+            let g = (1.129_890_9 * (temp_scaled - 60.0).powf(-0.0755148)).clamp(0.0, 1.0);
             let b = 1.0;
             [r, g, b]
         }
@@ -134,7 +135,7 @@ impl ImageProcessor {
         RgbaImage::from_raw(width as u32, height as u32, rgba_data)
     }
 
-    pub fn process_bgra_data(base_address: *const u8, width: usize, height: usize, bytes_per_row: usize) -> Option<RgbaImage> {
+    pub fn _process_bgra_data(base_address: *const u8, width: usize, height: usize, bytes_per_row: usize) -> Option<RgbaImage> {
         let slice = unsafe { from_raw_parts(base_address, bytes_per_row * height) };
         let mut rgba_data = Vec::with_capacity(width * height * 4);
 

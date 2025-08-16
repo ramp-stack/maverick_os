@@ -28,6 +28,7 @@ const NS_APPLICATION_SUPPORT_DIRECTORY: usize = 14;
 #[cfg(target_os = "ios")]
 const NS_USER_DOMAIN_MASK: usize = 1;
 
+/// Access the application support directory.
 #[derive(Clone)]
 pub struct ApplicationSupport;
 

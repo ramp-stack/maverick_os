@@ -22,6 +22,7 @@ pub use crate::hardware::camera::apple_custom_utils::ImageSettings;
 #[cfg(target_os = "android")]
 use crate::hardware::camera::android::AndroidCamera;
 
+/// Errors that can occur when interacting with the camera.
 #[derive(Debug)]
 pub enum CameraError {
     AccessDenied,
@@ -37,6 +38,7 @@ pub enum AppleCameraBackend {
     Custom(AppleCustomCamera),
 }
 
+/// Access the device camera.
 #[derive(Debug, Clone)]
 pub struct Camera(
     #[cfg(any(target_os = "macos", target_os = "ios"))]
@@ -56,7 +58,7 @@ impl Camera {
     }
 
     #[cfg(any(target_os = "macos", target_os = "ios"))]
-    pub fn new_custom() -> Result<Self, CameraError> {
+    pub fn new_unprocessed() -> Result<Self, CameraError> {
         // println!("Creating custom Apple camera");
         let mut camera = AppleCustomCamera::new();
         camera.open_camera().map_err(|_e| {
@@ -65,6 +67,11 @@ impl Camera {
         })?;
         // println!("Custom camera opened successfully");
         Ok(Camera(AppleCameraBackend::Custom(camera)))
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "ios")))]
+    pub fn new_unprocessed() -> Result<Self, CameraError> {
+        Self::new()
     }
 
     #[cfg(target_os = "android")]
@@ -478,7 +485,7 @@ impl Camera {
 
         let mut wrapper = Camera(AppleCameraBackend::Custom(camera));
         // println!("Waiting for custom camera to capture first frame...");
-        for attempt in 1..=10 {
+        for _ in 1..=10 {
             std::thread::sleep(std::time::Duration::from_millis(200));
             // println!("Attempt {} to get frame", attempt);
             if let Some(frame) = wrapper.get_frame() {

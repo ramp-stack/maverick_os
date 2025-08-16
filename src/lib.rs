@@ -9,15 +9,12 @@ mod state;
 pub use state::State;
 
 pub mod hardware;
-pub use crate::hardware::{
-    Clipboard,
-    Cache,
-    Share,
-    ApplicationSupport,
-    CloudStorage,
-    {PhotoPicker, ImageOrientation},
-    {Camera, CameraError},
-};
+use crate::hardware::ApplicationSupport;
+pub use crate::hardware::Cache;
+pub use crate::hardware::PhotoPicker;
+pub use crate::hardware::ImageOrientation;
+pub use crate::hardware::Camera;
+pub use crate::hardware::CameraError;
 
 pub mod runtime;
 use runtime::{Runtime, Services, ThreadConstructor, Service};

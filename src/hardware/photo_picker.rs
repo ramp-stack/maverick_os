@@ -39,6 +39,7 @@ use std::fs;
 #[cfg(target_os = "macos")]
 use objc2::rc::{Retained, autoreleasepool};
 
+/// Opens a photo picker and returns selected images.
 #[derive(Clone)]
 pub struct PhotoPicker;
 
@@ -420,6 +421,7 @@ fn create_photo_picker_delegate(sender_ptr: *mut c_void) -> *mut AnyObject {
     }
 }
 
+/// Represents the orientation of an image.
 #[derive(Debug)]
 pub enum ImageOrientation {
     Up,
