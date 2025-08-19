@@ -17,6 +17,7 @@ use crate::hardware::camera::apple::AppleCamera;
 
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 use crate::hardware::camera::apple_custom_image::AppleCustomCamera;
+#[cfg(any(target_os = "ios", target_os = "macos"))]
 pub use crate::hardware::camera::apple_custom_utils::ImageSettings;
 
 #[cfg(target_os = "android")]
