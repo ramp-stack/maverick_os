@@ -26,6 +26,7 @@ air = "0.2.5"
 
 [target.'cfg(any(target_os = "ios", target_os = "macos"))'.dependencies]
 objc2 = "0.6.1"
+objc2-core-graphics = "0.3.1"
 objc2-user-notifications = "0.3.1"
 objc2-av-foundation = "0.3.1"
 objc2-core-media = "0.3.1"

@@ -208,7 +208,7 @@ impl Processor {
         *self.ivars().ready.lock().unwrap()
     }
     
-    fn _rotate_90_cw(&self, img: &RgbaImage) -> RgbaImage {
+    fn rotate_90_cw(&self, img: &RgbaImage) -> RgbaImage {
         let (width, height) = img.dimensions();
         let mut rotated = RgbaImage::new(height, width);
         for y in 0..height {
