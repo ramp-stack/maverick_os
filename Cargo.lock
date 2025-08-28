@@ -1580,7 +1580,7 @@ dependencies = [
 
 [[package]]
 name = "maverick_os"
-version = "0.1.10"
+version = "0.1.11"
 dependencies = [
  "air",
  "android-activity",

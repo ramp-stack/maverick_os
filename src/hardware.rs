@@ -128,6 +128,7 @@ impl Context {
     /// ```rust
     #[doc = include_str!("examples/share.rs")]
     /// ```
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
     pub fn share(&self, text: &str) {
         Share::share(text);
     }
@@ -137,6 +138,7 @@ impl Context {
     /// ```rust
     #[doc = include_str!("examples/share_image.rs")]
     /// ```
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
     pub fn share_image(&self, image: image::RgbaImage) {
         Share::share_image(image);
     }
