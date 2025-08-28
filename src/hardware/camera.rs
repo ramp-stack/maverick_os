@@ -17,8 +17,6 @@ use crate::hardware::camera::apple::AppleCamera;
 
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 use crate::hardware::camera::apple_custom_image::AppleCustomCamera;
-#[cfg(any(target_os = "ios", target_os = "macos"))]
-pub use crate::hardware::camera::apple_custom_utils::ImageSettings;
 
 #[cfg(target_os = "android")]
 use crate::hardware::camera::android::AndroidCamera;
@@ -535,5 +533,75 @@ impl Drop for Camera {
     fn drop(&mut self) {
         #[cfg(any(target_os = "macos", target_os = "ios"))]
         self.stop_camera();
+    }
+}
+
+
+/// Settings for configuring camera behavior.
+#[derive(Debug, Clone)]
+pub struct ImageSettings {
+    pub brightness: i16, 
+    pub contrast: f32,
+    pub saturation: f32,
+    pub gamma: f32,
+    pub white_balance_r: f32,
+    pub white_balance_g: f32,
+    pub white_balance_b: f32,
+    pub exposure: f32,
+    pub temperature: f32,
+}
+
+impl Default for ImageSettings {
+    fn default() -> Self {
+        Self {
+            brightness: 0,
+            contrast: 0.0,
+            saturation: 0.0,
+            gamma: 2.2,
+            white_balance_r: 1.0,
+            white_balance_g: 1.0,
+            white_balance_b: 1.0,
+            exposure: 0.0,
+            temperature: 6500.0,
+        }
+    }
+}
+
+impl ImageSettings {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn clamp_values(&mut self) {
+        self.brightness = self.brightness.clamp(-100, 100);
+        self.contrast = self.contrast.clamp(-1.0, 1.0);
+        self.saturation = self.saturation.clamp(-1.0, 1.0);
+        self.gamma = self.gamma.clamp(0.1, 3.0);
+        self.white_balance_r = self.white_balance_r.clamp(0.5, 2.0);
+        self.white_balance_g = self.white_balance_g.clamp(0.5, 2.0);
+        self.white_balance_b = self.white_balance_b.clamp(0.5, 2.0);
+        self.exposure = self.exposure.clamp(-2.0, 2.0);
+        self.temperature = self.temperature.clamp(2000.0, 10000.0);
+    }
+
+    pub fn temperature_to_rgb_multipliers(&self) -> [f32; 3] {
+        let temp = self.temperature;
+        let temp_scaled = temp / 100.0;
+
+        if temp < 6600.0 {
+            let r = 1.0;
+            let g = (0.39008157 * temp_scaled.ln() - 0.631_841_4).clamp(0.0, 1.0);
+            let b = if temp < 2000.0 {
+                0.0
+            } else {
+                (0.54320678 * (temp_scaled - 10.0).ln() - 1.196_254_1).clamp(0.0, 1.0)
+            };
+            [r, g, b]
+        } else {
+            let r = (1.292_936_2 * (temp_scaled - 60.0).powf(-0.1332047)).clamp(0.0, 1.0);
+            let g = (1.129_890_9 * (temp_scaled - 60.0).powf(-0.0755148)).clamp(0.0, 1.0);
+            let b = 1.0;
+            [r, g, b]
+        }
     }
 }

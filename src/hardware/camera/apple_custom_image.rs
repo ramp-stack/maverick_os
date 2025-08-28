@@ -3,7 +3,8 @@
 
 use std::{sync::Mutex, slice::from_raw_parts};
 use image::RgbaImage;
-use crate::hardware::camera::apple_custom_utils::{BayerPattern, ImageSettings, ImageProcessor};
+use crate::hardware::ImageSettings;
+use crate::hardware::camera::apple_custom_utils::{BayerPattern, ImageProcessor};
 
 #[cfg(any(target_os = "ios", target_os = "macos"))]
 use dispatch2::DispatchQueue;
