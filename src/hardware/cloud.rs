@@ -21,7 +21,25 @@ static JAVA_VM: OnceLock<JavaVM> = OnceLock::new();
 #[cfg(target_os = "android")]
 static APP_CONTEXT: OnceLock<Mutex<Option<GlobalRef>>> = OnceLock::new();
 
-/// Cloud storage for key–value data.
+
+// Cross platform cloud key value storage.
+
+//System:
+//<iOS/macO>>>: Uses NSUbiquitousKeyValueStore which is iCloud.
+
+//<Android>>>: Uses SharedPreferences.
+
+//<Linux, Macos, Windows>>>: no operation methods
+
+// Method Save(key, value) stores a string value aka TEXT under a key.
+
+// Method Get(key) gets the value that is owned by that key.
+
+// Method Remove(key) deletes the said key thats passed in.
+
+// Method Clear() deletes all keys.
+
+
 #[derive(Debug, Clone)]
 pub struct CloudStorage;
 

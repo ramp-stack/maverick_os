@@ -28,6 +28,22 @@ const NS_APPLICATION_SUPPORT_DIRECTORY: usize = 14;
 #[cfg(target_os = "ios")]
 const NS_USER_DOMAIN_MASK: usize = 1;
 
+//Cross platform way to get access to the systems Application support directory for storing app spcific data I guess we call that meta data???.
+
+/// System:
+//  System returns a PathBuf pointing to a platform apporipate directory/location.
+
+//<iOS/macOS>>>: We use NSFileManger to get ApplicationSupportDirectory
+
+//<Linux>>>>: We use $XDG_DATA_HOME or $HOME/.local/share to get the ApplicationSupportDirectory.
+
+//<Windows>>>: We use %APPDATA% or %USERPROFILE%\AppData\Roaming to get the ApplicationSupportDirectory.
+
+// Method get() returns the general app support path and get_app_name(app_name) returns
+//      a path pointing to a specific app ->&<-> creating the direcotory if it dose not exist.
+
+
+
 /// Access the application support directory.
 #[derive(Clone)]
 pub struct ApplicationSupport;

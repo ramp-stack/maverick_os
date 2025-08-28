@@ -39,6 +39,17 @@ use std::sync::{Once, OnceLock};
 
 use image::RgbaImage;
 
+// This is a Cross platform system for calling the native system shareing sheet.
+
+// System:
+
+// <iOS>>>: Uses the UIActivityViewController to show the native Share Sheet for sharing text or images.
+
+// <Android>>>: Creats and runs an message object also known as Intent with an action ACTION_SEND wrapped in a chooser thing so that users can pick which app te shar with.
+
+// <macOS & Linux>>>: Nothing here yet..
+
+
 #[cfg(target_os = "android")]
 static JAVA_VM: OnceLock<JavaVM> = OnceLock::new();
 #[cfg(target_os = "android")]
