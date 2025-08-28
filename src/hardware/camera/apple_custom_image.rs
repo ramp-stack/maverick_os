@@ -329,4 +329,36 @@ impl AppleCustomCamera {
     pub fn get_settings(&self) -> ImageSettings {
         self.processor.get_settings()
     }
+
+    // pub fn set_exposure_and_iso(&self, duration_seconds: f64, iso: f32) -> Result<(), String> {
+    //     unsafe {
+    //         if let Some(device) = &self.device {
+    //             // Lock configuration
+    //             if device.lockForConfiguration().is_err() {
+    //                 return Err("Could not lock device for configuration".into());
+    //             }
+
+    //             // Convert seconds → CMTime
+    //             // Example: 1/60s = CMTime::new(1, 60)
+    //             let timescale = 1_000_000_000; // nanoseconds resolution
+    //             let duration = CMTime::new((duration_seconds * timescale as f64) as i64, timescale);
+
+    //             // Clamp ISO to device range
+    //             let min_iso = device.activeFormat().minISO();
+    //             let max_iso = device.activeFormat().maxISO();
+    //             let clamped_iso = iso.clamp(min_iso, max_iso);
+
+    //             device.setExposureModeCustomWithDuration_ISO_completionHandler(
+    //                 duration,
+    //                 clamped_iso,
+    //                 None,
+    //             );
+
+    //             device.unlockForConfiguration();
+    //             Ok(())
+    //         } else {
+    //             Err("No device available".into())
+    //         }
+    //     }
+    // }
 }
