@@ -16,7 +16,7 @@ use std::sync::{Arc, Mutex};
 
 //Cross pl]form clipboard sys for coping and pasting text.
 
-// System:
+// System:Wo
 //<iOS>>>: Uses UIPastboard that has GET and SET methods for setting text into the pastboard and Getting text from said clipboard.
 
 //<Android>>>: Uses JNI to access the sys ClipBoardManger it has GET and SET methods for setting text into the pastboard and Getting text from said clipboard.
