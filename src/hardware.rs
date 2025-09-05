@@ -14,7 +14,7 @@ use std::sync::mpsc::Sender;
 
 pub use cache::Cache;
 pub use clipboard::Clipboard;
-pub use camera::{Camera, CameraError};
+pub use camera::Camera;
 pub use camera::ImageSettings;
 pub use share::Share;
 pub use app_support::ApplicationSupport;
@@ -23,6 +23,28 @@ pub use photo_picker::{PhotoPicker, ImageOrientation};
 pub use safe_area::SafeAreaInsets;
 pub use haptics::Haptics;
 pub use notifications::Notifications;
+
+// Define CameraError here since it's not exported from the camera module
+#[derive(Debug)]
+pub enum CameraError {
+    InitializationFailed,
+    DeviceNotFound,
+    PermissionDenied,
+    Unknown(String),
+}
+
+impl std::fmt::Display for CameraError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            CameraError::InitializationFailed => write!(f, "Camera initialization failed"),
+            CameraError::DeviceNotFound => write!(f, "Camera device not found"),
+            CameraError::PermissionDenied => write!(f, "Camera permission denied"),
+            CameraError::Unknown(msg) => write!(f, "Unknown camera error: {}", msg),
+        }
+    }
+}
+
+impl std::error::Error for CameraError {}
 
 /// `HardwareContext` contains interfaces to various hardware.
 #[derive(Clone)]
@@ -92,7 +114,7 @@ impl Context {
     #[doc = include_str!("examples/open_camera.rs")]
     /// ```
     pub fn open_camera(&self) -> Result<Camera, CameraError> {
-        Camera::new()
+        Ok(Camera::new())
     }
 
     /// Opens the device camera without AI processing on iOS and macOS.
@@ -102,7 +124,7 @@ impl Context {
     #[doc = include_str!("examples/open_unprocessed.rs")]
     /// ```
     pub fn open_unprocessed_camera(&self) -> Result<Camera, CameraError> {
-        Camera::new_unprocessed()
+         Ok(Camera::new_unprocessed())
     }
 
     /// Returns the contents of the device's clipboard.
@@ -158,7 +180,8 @@ impl Context {
     #[doc = include_str!("examples/cloud_save.rs")]
     /// ```
     pub fn cloud_save(&self, key: &str, value: &str) -> Result<(), String> {
-        CloudStorage::save(key, value)
+        CloudStorage::save(key, value);
+        Ok(())
     }
 
     /// Retrieves a value from cloud storage for the given key.
@@ -167,7 +190,7 @@ impl Context {
     #[doc = include_str!("examples/cloud_get.rs")]
     /// ```
     pub fn cloud_get(&self, key: &str) -> Option<String> {
-        CloudStorage::get(key).ok().flatten()
+        CloudStorage::get(key)
     }
 
     /// Removes the value associated with the given key from cloud storage.
@@ -176,7 +199,8 @@ impl Context {
     #[doc = include_str!("examples/cloud_remove.rs")]
     /// ```
     pub fn cloud_remove(&self, key: &str) -> Result<(), String> {
-        CloudStorage::remove(key)
+        CloudStorage::remove(key);
+        Ok(())
     }
 
     /// Clears all key–value pairs from cloud storage.
@@ -185,6 +209,7 @@ impl Context {
     #[doc = include_str!("examples/cloud_clear.rs")]
     /// ```
     pub fn cloud_clear(&self) -> Result<(), String> {
-        CloudStorage::clear()
+        CloudStorage::clear();
+        Ok(())
     }
 }

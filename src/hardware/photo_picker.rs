@@ -39,7 +39,25 @@ use std::fs;
 #[cfg(target_os = "macos")]
 use objc2::rc::{Retained, autoreleasepool};
 
-/// Opens a photo picker and returns selected images.
+// Cross platform photo picker for selecting images from said users device.
+
+// System:
+// <iOS>>>: Uses PHPickerViewController with a delegate that converts the selected UIImage into png data.
+//      The image orientation is preserved via ImageOrientation.
+
+// <macOS>>>: Uses NSOpenPanel to let the user select an image file.
+//      The file is read from the disk and returned as raw bytes with the orientation set to UP.
+
+// <Windows>>>: Spawns a PowerShell OpenFileDialog for selecting an image.
+//      The selected file is read into memory, and the orientation is dertemined from the file type currently the defaults to Up expect for the basic EXIF handling in JPEGs.
+
+// <Linux>>>: Tryes to use the sytem file pickers in order of pref, 1 zenity 2 kdialog 3 nothing I guess fallback.
+//      When a file is selected it is read into memory and orientation is currently defaults to Up except for basic EXIF handling in JPEGs
+
+// <Android>>>: Nothing yett!!
+
+
+
 #[derive(Clone)]
 pub struct PhotoPicker;
 

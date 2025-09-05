@@ -7,7 +7,8 @@ use std::sync::Once;
 #[cfg(target_os = "ios")]
 use objc2::rc::Retained;
 
-/// Provides the safe area insets of the device screen.
+//<IOS / Android>>>: Provides the safe area insets of the device screen.
+
 pub struct SafeAreaInsets;
 
 impl SafeAreaInsets {

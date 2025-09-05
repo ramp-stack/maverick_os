@@ -16,6 +16,15 @@ use tokio::sync::Mutex;
 #[cfg(not(target_arch = "wasm32"))]
 /// Cache utility for storing and retrieving temporary data.
 /// Not supported on wasm32
+
+// Cross platform cache used with SQLite.
+
+//System:
+// This cache uses a local SQLite database stored at ./cache.db.
+// It automatically creates a kvs which means key value tabele if it does not exist, with a key that is text and uniqe like a UUID and value as text.
+// It has set and get methods for storing and getting values in the code V means Value.
+
+
 #[derive(Debug, Clone)]
 pub struct Cache(
     Arc<Mutex<rusqlite::Connection>>
