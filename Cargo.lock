@@ -1580,7 +1580,7 @@ dependencies = [
 
 [[package]]
 name = "maverick_os"
-version = "0.1.12"
+version = "0.1.13"
 dependencies = [
  "air",
  "android-activity",
@@ -1590,6 +1590,7 @@ dependencies = [
  "cli-clipboard",
  "dispatch2",
  "downcast-rs 2.0.1",
+ "easy_secp256k1",
  "env_logger",
  "hex",
  "image",
