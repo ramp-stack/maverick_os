@@ -25,8 +25,8 @@ use crate::hardware::camera::apple_custom_image::AppleCustomCamera;
 #[cfg(target_os = "android")]
 use crate::hardware::camera::android::AndroidCamera;
 
-#[cfg(any(target_os = "windows", target_os = "linux"))]
-use crate::hardware::camera::windows_linux::WindowsLinuxCamera;
+// #[cfg(any(target_os = "windows", target_os = "linux"))]
+// use crate::hardware::camera::windows_linux::WindowsLinuxCamera;
 
 #[derive(Debug, Clone)]
 #[cfg(any(target_os = "macos", target_os = "ios"))]
@@ -44,8 +44,8 @@ pub struct Camera(
     #[cfg(target_os = "android")]
     AndroidCamera,
 
-    #[cfg(any(target_os = "windows", target_os = "linux"))]
-    WindowsLinuxCamera,
+    // #[cfg(any(target_os = "windows", target_os = "linux"))]
+    // WindowsLinuxCamera,
 );
 
 impl Camera {
@@ -80,21 +80,24 @@ impl Camera {
 
     #[cfg(any(target_os = "windows", target_os = "linux"))]
     pub fn new() -> Self {
-        let mut camera = WindowsLinuxCamera::new(0); // Default to first camera
-        camera.start();
-        Camera(camera)
+        // let mut camera = WindowsLinuxCamera::new(0); // Default to first camera
+        // camera.start();
+        // Camera(camera)
+        panic!("Windows and linux not currently supported");
     }
 
     #[cfg(any(target_os = "windows", target_os = "linux"))]
     pub fn new_with_index(index: usize) -> Self {
-        let mut camera = WindowsLinuxCamera::new(index);
-        camera.start();
-        Camera(camera)
+        // let mut camera = WindowsLinuxCamera::new(index);
+        // camera.start();
+        // Camera(camera)
+        panic!("Windows and linux not currently supported");
     }
 
     #[cfg(any(target_os = "windows", target_os = "linux"))]
     pub fn new_unprocessed() -> Self {
-        Self::new()
+        // Self::new()
+        panic!("Windows and linux not currently supported");
     }
 
     #[cfg(not(any(target_os = "macos", target_os = "ios", target_os = "android", target_os = "windows", target_os = "linux")))]
@@ -417,10 +420,11 @@ impl Camera {
 
     #[cfg(any(target_os = "windows", target_os = "linux"))]
     pub fn open_and_get_frame() -> Option<RgbaImage> {
-        let mut camera = WindowsLinuxCamera::new(0);
-        camera.start();
-        let mut wrapper = Camera(camera);
-        wrapper.get_frame()
+        // let mut camera = WindowsLinuxCamera::new(0);
+        // camera.start();
+        // let mut wrapper = Camera(camera);
+        // wrapper.get_frame()
+        panic!("Windows and linux not currently supported");
     }
 
     #[cfg(not(any(target_os = "macos", target_os = "ios", target_os = "android", target_os = "windows", target_os = "linux")))]

@@ -1651,7 +1651,7 @@ dependencies = [
 
 [[package]]
 name = "maverick_os"
-version = "0.1.16"
+version = "0.1.17"
 dependencies = [
  "active_rusqlite",
  "air",
