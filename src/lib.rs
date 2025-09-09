@@ -8,6 +8,8 @@ use winit::platform::android::activity::AndroidApp;
 mod state;
 pub use state::State;
 
+pub use active_rusqlite;
+
 pub mod hardware;
 use crate::hardware::ApplicationSupport;
 pub use crate::hardware::Cache;

@@ -7,6 +7,10 @@ use serde::{Serialize, Deserialize};
 use crate::ApplicationSupport;
 pub use rusqlite::Connection;
 
+use std::future::Future;
+use active_rusqlite::{ActiveRecord, ActiveRusqlite};
+use rusqlite::Error;
+
 #[cfg(target_os = "android")]
 use winit::platform::android::activity::AndroidApp;
 
@@ -14,17 +18,6 @@ use winit::platform::android::activity::AndroidApp;
 use tokio::sync::Mutex;
 
 #[cfg(not(target_arch = "wasm32"))]
-/// Cache utility for storing and retrieving temporary data.
-/// Not supported on wasm32
-
-// Cross platform cache used with SQLite.
-
-//System:
-// This cache uses a local SQLite database stored at ./cache.db.
-// It automatically creates a kvs which means key value tabele if it does not exist, with a key that is text and uniqe like a UUID and value as text.
-// It has set and get methods for storing and getting values in the code V means Value.
-
-
 #[derive(Debug, Clone)]
 pub struct Cache(
     Arc<Mutex<rusqlite::Connection>>
@@ -66,10 +59,12 @@ impl Cache {
         self.0.lock().await.get(key)
     }
 
-    pub async fn lock(&mut self, callback: impl FnOnce(&Connection)) {
+    pub async fn lock<T>(&mut self, callback: impl FnOnce(&Connection) -> T) -> Result<T, rusqlite::Error> {
         let mut guard = self.0.lock().await;
         let tx = guard.transaction_with_behavior(rusqlite::TransactionBehavior::Exclusive).unwrap();
-        callback(&tx)
+        let result = callback(&tx);
+        tx.commit()?;
+        Ok(result)
     }
 }
 
@@ -88,11 +83,61 @@ impl RustSqlite for Connection {
 
     fn get<V: Serialize + for<'a> Deserialize <'a> + Default>(&self, key: &str) -> V {
         self.prepare(
-            &format!("SELECT value FROM kvs where key = \'{key}\'"),
+            &format!("SELECT value FROM kvs where key = \'{}\'", key),
         ).unwrap().query_and_then([], |row| {
             let item: String = row.get(0).unwrap();
             Ok(hex::decode(item).unwrap())
         }).unwrap().collect::<Result<Vec<Vec<u8>>, rusqlite::Error>>().unwrap()
         .first().and_then(|b| serde_json::from_slice(b).ok()).unwrap_or_default()
+    }
+}
+
+pub trait ActiveCache {
+    fn create(&self, cache: &mut Cache) -> impl Future<Output = Result<(), Error>>;
+    fn read(cache: &mut Cache) -> impl Future<Output = Result<Option<Self>, Error>> where Self: Sized;
+    fn update(&mut self, cache: &mut Cache) -> impl Future<Output = Result<(), Error>>;
+    fn delete(cache: &mut Cache) -> impl Future<Output = Result<(), Error>>;
+
+    fn read_or(cache: &mut Cache, or: impl FnOnce() -> Self) -> impl Future<Output = Result<Self, Error>> where Self: Sized;
+
+    fn create_sub<T: ActiveRecord>(cache: &mut Cache, path: &[&str], record: &T) -> impl Future<Output = Result<(), Error>>;
+    fn read_sub<T: ActiveRecord>(cache: &mut Cache, path: &[&str]) -> impl Future<Output = Result<Option<T>, Error>>;
+    fn update_sub<T: ActiveRecord>(cache: &mut Cache,  path: &[&str], record: &mut T) -> impl Future<Output = Result<(), Error>>;
+    fn delete_sub(cache: &mut Cache, path: &[&str]) -> impl Future<Output = Result<(), Error>>;
+}
+
+impl<A: ActiveRusqlite> ActiveCache for A {
+    async fn create(&self, cache: &mut Cache) -> Result<(), Error> {
+        cache.lock(|c: &Connection| self.create(c)).await?
+    }
+    async fn read(cache: &mut Cache) -> Result<Option<Self>, Error> {
+        cache.lock(|c: &Connection| Self::read(c)).await?
+    }
+    async fn update(&mut self, cache: &mut Cache) -> Result<(), Error> {
+        cache.lock(|c: &Connection| self.update(c)).await?
+    }
+    async fn delete(cache: &mut Cache) -> Result<(), Error> {
+        cache.lock(|c: &Connection| Self::delete(c)).await?
+    }
+
+    async fn read_or(cache: &mut Cache, or: impl FnOnce() -> Self) -> Result<Self, Error> {
+        cache.lock(|c: &Connection| Self::read(c).transpose().unwrap_or_else(|| {
+            let t = or();
+            t.create(c)?;
+            Ok(t)
+        })).await?
+    }
+
+    async fn create_sub<T: ActiveRecord>(cache: &mut Cache, path: &[&str], record: &T) -> Result<(), Error> {
+        cache.lock(|c: &Connection| Self::create_sub(c, path, record)).await?
+    }
+    async fn read_sub<T: ActiveRecord>(cache: &mut Cache, path: &[&str]) -> Result<Option<T>, Error> {
+        cache.lock(|c: &Connection| Self::read_sub(c, path)).await?
+    }
+    async fn update_sub<T: ActiveRecord>(cache: &mut Cache,  path: &[&str], record: &mut T) -> Result<(), Error> {
+        cache.lock(|c: &Connection| Self::update_sub(c, path, record)).await?
+    }
+    async fn delete_sub(cache: &mut Cache, path: &[&str]) -> Result<(), Error> {
+        cache.lock(|c: &Connection| Self::delete_sub(c, path)).await?
     }
 }
