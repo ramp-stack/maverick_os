@@ -166,6 +166,7 @@ impl Camera {
         }
     }
 
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
     pub fn set_exposure_and_iso(&mut self, duration: f32, iso: f32) -> Result<(), CameraError> {
         match &self.0 {
             AppleCameraBackend::Standard(_cam) => {
@@ -179,6 +180,11 @@ impl Camera {
                 cam.set_exposure_and_iso(duration, iso).map_err(CameraError::Unknown)
             }
         }
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "ios")))]
+    pub fn set_exposure_and_iso(&mut self, duration: f32, iso: f32) -> Result<(), CameraError> {
+        Err(CameraError::FailedToGetFrame)
     }
 
     // Individual setter methods for all image processing parameters
