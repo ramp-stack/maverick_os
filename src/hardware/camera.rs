@@ -176,7 +176,7 @@ impl Camera {
                 //     Some((d, i)) => cam.set_exposure_and_iso(d, i),
                 //     None => cam.disable_custom_exposure()
                 // }.map_err(|e| CameraError::Error(e))
-                cam.set_exposure_and_iso(duration, iso).map_err(|e| CameraError::Unknown(e))
+                cam.set_exposure_and_iso(duration, iso).map_err(CameraError::Unknown)
             }
         }
     }

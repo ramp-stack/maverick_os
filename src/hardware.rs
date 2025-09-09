@@ -41,7 +41,7 @@ impl std::fmt::Display for CameraError {
             CameraError::DeviceNotFound => write!(f, "Camera device not found"),
             CameraError::PermissionDenied => write!(f, "Camera permission denied"),
             CameraError::FailedToGetFrame => write!(f, "Camera failed to get frame"),
-            CameraError::Unknown(msg) => write!(f, "Unknown camera error: {}", msg),
+            CameraError::Unknown(msg) => write!(f, "Unknown camera error: {msg}"),
         }
     }
 }

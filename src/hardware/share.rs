@@ -37,7 +37,6 @@ use std::error::Error;
 #[cfg(target_os = "android")]
 use std::sync::{Once, OnceLock};
 
-use image::RgbaImage;
 
 // This is a Cross platform system for calling the native system shareing sheet.
 

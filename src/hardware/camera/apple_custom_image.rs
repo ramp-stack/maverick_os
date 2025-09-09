@@ -24,10 +24,6 @@ use objc2_av_foundation::*;
 #[cfg(any(target_os = "ios", target_os = "macos"))]
 use objc2_core_video::*;
 #[cfg(any(target_os = "ios", target_os = "macos"))]
-use objc2_core_media::CMTime;
-#[cfg(any(target_os = "ios", target_os = "macos"))]
-use block::ConcreteBlock;
-#[cfg(any(target_os = "ios", target_os = "macos"))]
 use objc2::ffi::nil;
 
 #[derive(Debug)]
@@ -59,7 +55,7 @@ define_class!(
             
             if let Some(raw_image) = self.process_sample_buffer(sample_buffer) {
                 let settings = self.get_settings();
-                let mut processed_image = ImageProcessor::apply_image_settings(raw_image, &settings);
+                let processed_image = ImageProcessor::apply_image_settings(raw_image, &settings);
 
                 #[cfg(target_os = "ios")]
                 { processed_image = self.rotate_90_cw(&processed_image); }
