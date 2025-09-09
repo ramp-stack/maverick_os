@@ -28,6 +28,7 @@ pub enum CameraError {
     WaitingForAccess,
     FailedToGetFrame,
     FailedToOpenCamera,
+    Error(String),
 }
 
 #[derive(Debug, Clone)]
@@ -143,6 +144,21 @@ impl Camera {
             AppleCameraBackend::Custom(cam) => {
                 cam.update_settings(update_fn);
                 Ok(())
+            }
+        }
+    }
+
+    pub fn set_exposure_and_iso(&mut self, duration: f32, iso: f32) -> Result<(), CameraError> {
+        match &self.0 {
+            AppleCameraBackend::Standard(_cam) => {
+                Err(CameraError::FailedToGetFrame)
+            }
+            AppleCameraBackend::Custom(cam) => {
+                // match duration_iso {
+                //     Some((d, i)) => cam.set_exposure_and_iso(d, i),
+                //     None => cam.disable_custom_exposure()
+                // }.map_err(|e| CameraError::Error(e))
+                cam.set_exposure_and_iso(duration, iso).map_err(|e| CameraError::Error(e))
             }
         }
     }
@@ -549,6 +565,8 @@ pub struct ImageSettings {
     pub white_balance_b: f32,
     pub exposure: f32,
     pub temperature: f32,
+    pub exposure_iso: f32,
+    pub exposure_duration: f32,
 }
 
 impl Default for ImageSettings {
@@ -563,6 +581,8 @@ impl Default for ImageSettings {
             white_balance_b: 1.0,
             exposure: 0.0,
             temperature: 6500.0,
+            exposure_iso: 0.0,
+            exposure_duration: 0.0
         }
     }
 }

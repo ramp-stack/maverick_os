@@ -15,7 +15,7 @@ use objc2::rc::Retained;
 #[cfg(any(target_os = "ios", target_os = "macos"))]
 use objc2::runtime::{NSObjectProtocol, ProtocolObject};
 #[cfg(any(target_os = "ios", target_os = "macos"))]
-use objc2::{define_class, AllocAnyThread, DeclaredClass};
+use objc2::{define_class, AllocAnyThread, DeclaredClass, msg_send};
 #[cfg(any(target_os = "ios", target_os = "macos"))]
 use objc2_foundation::{NSArray, NSDictionary, NSNumber, NSString};
 #[cfg(any(target_os = "ios", target_os = "macos"))]
@@ -24,6 +24,12 @@ use objc2_core_media::CMSampleBuffer;
 use objc2_av_foundation::*;
 #[cfg(any(target_os = "ios", target_os = "macos"))]
 use objc2_core_video::*;
+#[cfg(any(target_os = "ios", target_os = "macos"))]
+use objc2_core_media::CMTime;
+#[cfg(any(target_os = "ios", target_os = "macos"))]
+use block::ConcreteBlock;
+#[cfg(any(target_os = "ios", target_os = "macos"))]
+use objc2::ffi::nil;
 
 #[derive(Debug)]
 pub struct ProcessorClass {
@@ -331,35 +337,74 @@ impl AppleCustomCamera {
         self.processor.get_settings()
     }
 
-    // pub fn set_exposure_and_iso(&self, duration_seconds: f64, iso: f32) -> Result<(), String> {
-    //     unsafe {
-    //         if let Some(device) = &self.device {
-    //             // Lock configuration
-    //             if device.lockForConfiguration().is_err() {
-    //                 return Err("Could not lock device for configuration".into());
-    //             }
+    pub fn set_exposure_and_iso(&self, d: f32, i: f32) -> Result<(), String> {
+        unsafe {
+            if let Some(device) = &self.device {
+                if !device.isExposureModeSupported(objc2_av_foundation::AVCaptureExposureMode::Custom) {
+                    return Err("Custom exposure not supported".into());
+                }
 
-    //             // Convert seconds → CMTime
-    //             // Example: 1/60s = CMTime::new(1, 60)
-    //             let timescale = 1_000_000_000; // nanoseconds resolution
-    //             let duration = CMTime::new((duration_seconds * timescale as f64) as i64, timescale);
+                device.lockForConfiguration().map_err(|_| "Could not lock device")?;
 
-    //             // Clamp ISO to device range
-    //             let min_iso = device.activeFormat().minISO();
-    //             let max_iso = device.activeFormat().maxISO();
-    //             let clamped_iso = iso.clamp(min_iso, max_iso);
+                let format = device.activeFormat();
+                let fmt: &objc2::runtime::Object = format.as_ref();
+                let min_d: objc2_core_media::CMTime = msg_send![fmt, minExposureDuration];
+                let max_d: objc2_core_media::CMTime = msg_send![fmt, maxExposureDuration];
 
-    //             device.setExposureModeCustomWithDuration_ISO_completionHandler(
-    //                 duration,
-    //                 clamped_iso,
-    //                 None,
-    //             );
+                let dur = (min_d.value as f64 / min_d.timescale as f64)
+                    + ((max_d.value as f64 / max_d.timescale as f64)
+                    - (min_d.value as f64 / min_d.timescale as f64))
+                    * (d / 100.0).clamp(0.0, 1.0) as f64;
 
-    //             device.unlockForConfiguration();
-    //             Ok(())
-    //         } else {
-    //             Err("No device available".into())
-    //         }
-    //     }
-    // }
+                let duration = objc2_core_media::CMTime {
+                    value: (dur * 1_000_000_000.0) as i64,
+                    timescale: 1_000_000_000,
+                    flags: objc2_core_media::CMTimeFlags(0),
+                    epoch: 0,
+                };
+
+                let min_iso = format.minISO();
+                let max_iso = format.maxISO();
+
+                let iso = match min_iso == 0.0 && max_iso == 0.0 {
+                    true => min_iso + (max_iso - min_iso) * (i / 100.0).clamp(0.0, 1.0),
+                    false => (min_iso + (max_iso - min_iso) * (i / 100.0).clamp(0.0, 1.0)).clamp(min_iso, max_iso)
+                };
+
+                device.setExposureMode(objc2_av_foundation::AVCaptureExposureMode::Custom);
+                let () = msg_send![device, setExposureModeCustomWithDuration: duration ISO: iso completionHandler: nil];
+                device.unlockForConfiguration();
+                Ok(())
+            } else {
+                Err("No device available".into())
+            }
+        }
+    }
+
+    pub fn disable_custom_exposure(&self) -> Result<(), String> {
+        unsafe {
+            if let Some(device) = &self.device {
+                println!("[Camera] Locking device for configuration to disable custom exposure...");
+                if device.lockForConfiguration().is_err() {
+                    return Err("Could not lock device for configuration".into());
+                }
+
+                if !device.isExposureModeSupported(objc2_av_foundation::AVCaptureExposureMode::ContinuousAutoExposure) {
+                    device.unlockForConfiguration();
+                    println!("[Camera] Continuous Auto Exposure not supported on this device.");
+                    return Err("Continuous Auto Exposure not supported".into());
+                }
+
+                println!("[Camera] Switching exposure mode to Continuous Auto Exposure...");
+                device.setExposureMode(objc2_av_foundation::AVCaptureExposureMode::ContinuousAutoExposure);
+
+                device.unlockForConfiguration();
+                println!("[Camera] Device unlocked, auto exposure enabled.");
+                Ok(())
+            } else {
+                Err("No device available".into())
+            }
+        }
+    }
+
 }
