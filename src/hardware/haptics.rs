@@ -7,6 +7,13 @@ use objc2::{MainThreadMarker, MainThreadOnly, msg_send};
 #[cfg(target_os = "ios")]
 use objc2::rc::{Retained, Allocated};
 
+//Cross platform<phone devices duhh> haptic feedback sys.
+// System:
+
+// <iOS>>>: Uses UIImpactFeedbackGenerator with a Rigid style to produce haptic feedback.
+
+// <Android>>>: No operation method.
+
 /// Trigger haptic feedback on the device.
 pub struct Haptics;
 

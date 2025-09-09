@@ -6,42 +6,21 @@ use crate::hardware::ImageSettings;
 #[allow(clippy::upper_case_acronyms)]
 pub enum BayerPattern { RGGB, BGGR, GRBG, GBRG }
 
+#[derive(Debug, Clone, Copy)]
+pub enum PixelType { Red, Green, Blue }
+
 impl BayerPattern {
     pub fn pixel_type(&self, x: usize, y: usize) -> PixelType {
-        let even_row = y % 2 == 0;
-        let even_col = x % 2 == 0;
-        
-        match self {
-            BayerPattern::RGGB => match (even_row, even_col) {
-                (true, true) => PixelType::Red,
-                (true, false) => PixelType::Green,
-                (false, true) => PixelType::Green,
-                (false, false) => PixelType::Blue,
-            },
-            BayerPattern::BGGR => match (even_row, even_col) {
-                (true, true) => PixelType::Blue,
-                (true, false) => PixelType::Green,
-                (false, true) => PixelType::Green,
-                (false, false) => PixelType::Red,
-            },
-            BayerPattern::GRBG => match (even_row, even_col) {
-                (true, true) => PixelType::Green,
-                (true, false) => PixelType::Red,
-                (false, true) => PixelType::Blue,
-                (false, false) => PixelType::Green,
-            },
-            BayerPattern::GBRG => match (even_row, even_col) {
-                (true, true) => PixelType::Green,
-                (true, false) => PixelType::Blue,
-                (false, true) => PixelType::Red,
-                (false, false) => PixelType::Green,
-            },
+        let (even_row, even_col) = (y % 2 == 0, x % 2 == 0);
+        match (self, even_row, even_col) {
+            (BayerPattern::RGGB, true, true) | (BayerPattern::BGGR, false, false) => PixelType::Red,
+            (BayerPattern::RGGB, false, false) | (BayerPattern::BGGR, true, true) => PixelType::Blue,
+            (BayerPattern::GRBG, true, false) | (BayerPattern::GBRG, false, true) => PixelType::Red,
+            (BayerPattern::GRBG, false, true) | (BayerPattern::GBRG, true, false) => PixelType::Blue,
+            _ => PixelType::Green,
         }
     }
 }
-
-#[derive(Debug, Clone, Copy)]
-pub enum PixelType { Red, Green, Blue }
 
 pub struct ImageProcessor;
 
@@ -75,13 +54,8 @@ impl ImageProcessor {
             let row_start = y * bytes_per_row;
             for x in 0..width {
                 let src_index = row_start + x * 4;
-                
                 if src_index + 3 < slice.len() {
-                    let b = slice[src_index];
-                    let g = slice[src_index + 1];
-                    let r = slice[src_index + 2];
-                    let a = slice[src_index + 3];
-                    
+                    let [b, g, r, a] = [slice[src_index], slice[src_index + 1], slice[src_index + 2], slice[src_index + 3]];
                     rgba_data.extend_from_slice(&[r, g, b, a]);
                 }
             }
@@ -90,22 +64,19 @@ impl ImageProcessor {
     }
 
     pub fn apply_image_settings(rgba_image: RgbaImage, settings: &ImageSettings) -> RgbaImage {
-        let width = rgba_image.width();
-        let height = rgba_image.height();
+        let (width, height) = (rgba_image.width(), rgba_image.height());
         let mut pixels = rgba_image.into_raw();
         
-        let wb_multipliers = if settings.temperature != 6500.0 {
-            settings.temperature_to_rgb_multipliers()
-        } else {
-            [settings.white_balance_r, settings.white_balance_g, settings.white_balance_b]
+        let wb_multipliers = if settings.temperature != 6500.0 { 
+            settings.temperature_to_rgb_multipliers() 
+        } else { 
+            [settings.white_balance_r, settings.white_balance_g, settings.white_balance_b] 
         };
         
-        let has_wb = wb_multipliers[0] != 1.0 || wb_multipliers[1] != 1.0 || wb_multipliers[2] != 1.0;
+        let has_wb = wb_multipliers.iter().any(|&m| m != 1.0);
         
         pixels.chunks_exact_mut(4).for_each(|pixel| {
-            let mut r = pixel[0] as f32;
-            let mut g = pixel[1] as f32;
-            let mut b = pixel[2] as f32;
+            let [mut r, mut g, mut b] = [pixel[0] as f32, pixel[1] as f32, pixel[2] as f32];
             
             if has_wb {
                 r = (r * wb_multipliers[0]).clamp(0.0, 255.0);
@@ -114,117 +85,66 @@ impl ImageProcessor {
             }
             
             if settings.exposure != 0.0 {
-                let exposure_multiplier = 2.0_f32.powf(settings.exposure);
-                r = (r * exposure_multiplier).clamp(0.0, 255.0);
-                g = (g * exposure_multiplier).clamp(0.0, 255.0);
-                b = (b * exposure_multiplier).clamp(0.0, 255.0);
+                let multiplier = 2.0_f32.powf(settings.exposure);
+                [r, g, b] = [r * multiplier, g * multiplier, b * multiplier].map(|v| v.clamp(0.0, 255.0));
             }
             
             if settings.brightness != 0 {
-                let brightness_f = settings.brightness as f32;
-                r = (r + brightness_f).clamp(0.0, 255.0);
-                g = (g + brightness_f).clamp(0.0, 255.0);
-                b = (b + brightness_f).clamp(0.0, 255.0);
+                let brightness = settings.brightness as f32;
+                [r, g, b] = [r + brightness, g + brightness, b + brightness].map(|v| v.clamp(0.0, 255.0));
             }
             
             if settings.contrast != 0.0 {
-                let contrast_factor = 1.0 + settings.contrast;
-                r = ((r - 128.0) * contrast_factor + 128.0).clamp(0.0, 255.0);
-                g = ((g - 128.0) * contrast_factor + 128.0).clamp(0.0, 255.0);
-                b = ((b - 128.0) * contrast_factor + 128.0).clamp(0.0, 255.0);
+                let factor = 1.0 + settings.contrast;
+                [r, g, b] = [(r - 128.0) * factor + 128.0, (g - 128.0) * factor + 128.0, (b - 128.0) * factor + 128.0].map(|v| v.clamp(0.0, 255.0));
             }
             
             if settings.saturation != 0.0 {
                 let gray = 0.299 * r + 0.587 * g + 0.114 * b;
-                let saturation_factor = 1.0 + settings.saturation;
-                r = (gray + (r - gray) * saturation_factor).clamp(0.0, 255.0);
-                g = (gray + (g - gray) * saturation_factor).clamp(0.0, 255.0);
-                b = (gray + (b - gray) * saturation_factor).clamp(0.0, 255.0);
+                let factor = 1.0 + settings.saturation;
+                [r, g, b] = [gray + (r - gray) * factor, gray + (g - gray) * factor, gray + (b - gray) * factor].map(|v| v.clamp(0.0, 255.0));
             }
             
             if settings.gamma != 2.2 {
                 let inv_gamma = 1.0 / settings.gamma;
-                r = (255.0 * (r / 255.0).powf(inv_gamma)).clamp(0.0, 255.0);
-                g = (255.0 * (g / 255.0).powf(inv_gamma)).clamp(0.0, 255.0);
-                b = (255.0 * (b / 255.0).powf(inv_gamma)).clamp(0.0, 255.0);
+                [r, g, b] = [255.0 * (r / 255.0).powf(inv_gamma), 255.0 * (g / 255.0).powf(inv_gamma), 255.0 * (b / 255.0).powf(inv_gamma)].map(|v| v.clamp(0.0, 255.0));
             }
             
-            pixel[0] = r as u8;
-            pixel[1] = g as u8;
-            pixel[2] = b as u8;
+            [pixel[0], pixel[1], pixel[2]] = [r as u8, g as u8, b as u8];
         });
         
-        RgbaImage::from_raw(width, height, pixels).unwrap_or_else(|| {
-            RgbaImage::new(width, height)
-        })
+        RgbaImage::from_raw(width, height, pixels).unwrap_or_else(|| RgbaImage::new(width, height))
     }
 
     fn demosaic_bilinear(bayer_data: &[u16], width: usize, height: usize, pattern: BayerPattern) -> Vec<u8> {
-        let mut rgb_data = vec![0u8; width * height * 4]; 
+        let mut rgb_data = vec![0u8; width * height * 4];
         
         for y in 1..height-1 {
             for x in 1..width-1 {
-                let idx = y * width + x;
-                let rgba_idx = idx * 4;
-                
+                let (idx, rgba_idx) = (y * width + x, (y * width + x) * 4);
                 let pixel_val = (bayer_data[idx] >> 8) as u8;
                 
-                match pattern.pixel_type(x, y) {
-                    PixelType::Red => {
-                        rgb_data[rgba_idx] = pixel_val;
-                        rgb_data[rgba_idx + 1] = Self::interpolate_green(bayer_data, x, y, width);
-                        rgb_data[rgba_idx + 2] = Self::interpolate_blue(bayer_data, x, y, width);
-                        rgb_data[rgba_idx + 3] = 255;
-                    },
-                    PixelType::Green => {
-                        rgb_data[rgba_idx] = Self::interpolate_red(bayer_data, x, y, width);
-                        rgb_data[rgba_idx + 1] = pixel_val;
-                        rgb_data[rgba_idx + 2] = Self::interpolate_blue(bayer_data, x, y, width);
-                        rgb_data[rgba_idx + 3] = 255;
-                    },
-                    PixelType::Blue => {
-                        rgb_data[rgba_idx] = Self::interpolate_red(bayer_data, x, y, width);
-                        rgb_data[rgba_idx + 1] = Self::interpolate_green(bayer_data, x, y, width);
-                        rgb_data[rgba_idx + 2] = pixel_val;
-                        rgb_data[rgba_idx + 3] = 255;
-                    },
-                }
+                let (r, g, b) = match pattern.pixel_type(x, y) {
+                    PixelType::Red => (pixel_val, Self::interpolate_orthogonal(bayer_data, x, y, width), Self::interpolate_diagonal(bayer_data, x, y, width)),
+                    PixelType::Green => (Self::interpolate_diagonal(bayer_data, x, y, width), pixel_val, Self::interpolate_diagonal(bayer_data, x, y, width)),
+                    PixelType::Blue => (Self::interpolate_diagonal(bayer_data, x, y, width), Self::interpolate_orthogonal(bayer_data, x, y, width), pixel_val),
+                };
+                
+                [rgb_data[rgba_idx], rgb_data[rgba_idx + 1], rgb_data[rgba_idx + 2], rgb_data[rgba_idx + 3]] = [r, g, b, 255];
             }
         }
-        
         rgb_data
     }
 
-    fn interpolate_green(data: &[u16], x: usize, y: usize, width: usize) -> u8 {
-        let neighbors = [
-            data.get((y-1) * width + x).unwrap_or(&0),
-            data.get(y * width + x-1).unwrap_or(&0),
-            data.get(y * width + x+1).unwrap_or(&0),
-            data.get((y+1) * width + x).unwrap_or(&0),
-        ];
-        let avg = neighbors.iter().map(|&v| *v as u32).sum::<u32>() / 4;
+    fn interpolate_orthogonal(data: &[u16], x: usize, y: usize, width: usize) -> u8 {
+        let indices = [(y-1, x), (y, x-1), (y, x+1), (y+1, x)];
+        let avg = indices.iter().map(|&(row, col)| data.get(row * width + col).unwrap_or(&0)).map(|&v| v as u32).sum::<u32>() / 4;
         (avg >> 8) as u8
     }
 
-    fn interpolate_red(data: &[u16], x: usize, y: usize, width: usize) -> u8 {
-        let neighbors = [
-            data.get((y-1) * width + x-1).unwrap_or(&0),
-            data.get((y-1) * width + x+1).unwrap_or(&0),
-            data.get((y+1) * width + x-1).unwrap_or(&0),
-            data.get((y+1) * width + x+1).unwrap_or(&0),
-        ];
-        let avg = neighbors.iter().map(|&v| *v as u32).sum::<u32>() / 4;
-        (avg >> 8) as u8
-    }
-
-    fn interpolate_blue(data: &[u16], x: usize, y: usize, width: usize) -> u8 {
-        let neighbors = [
-            data.get((y-1) * width + x-1).unwrap_or(&0),
-            data.get((y-1) * width + x+1).unwrap_or(&0),
-            data.get((y+1) * width + x-1).unwrap_or(&0),
-            data.get((y+1) * width + x+1).unwrap_or(&0),
-        ];
-        let avg = neighbors.iter().map(|&v| *v as u32).sum::<u32>() / 4;
+    fn interpolate_diagonal(data: &[u16], x: usize, y: usize, width: usize) -> u8 {
+        let indices = [(y-1, x-1), (y-1, x+1), (y+1, x-1), (y+1, x+1)];
+        let avg = indices.iter().map(|&(row, col)| data.get(row * width + col).unwrap_or(&0)).map(|&v| v as u32).sum::<u32>() / 4;
         (avg >> 8) as u8
     }
 }

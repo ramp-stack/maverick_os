@@ -21,32 +21,29 @@ static JAVA_VM: OnceLock<JavaVM> = OnceLock::new();
 #[cfg(target_os = "android")]
 static APP_CONTEXT: OnceLock<Mutex<Option<GlobalRef>>> = OnceLock::new();
 
-/// Cloud storage for key–value data.
+// Cross platform cloud key value storage.
+
+//System:
+//<iOS/macOS>: Uses NSUbiquitousKeyValueStore which is iCloud.
+
+//<Android>: Uses SharedPreferences.
+
+//<Linux, macOS, Windows>: no operation methods
+
+// Method Save(key, value) stores a string value aka TEXT under a key.
+
+// Method Get(key) gets the value that is owned by that key.
+
+// Method Remove(key) deletes the said key thats passed in.
+
+// Method Clear() deletes all keys.
+
 #[derive(Debug, Clone)]
 pub struct CloudStorage;
 
-#[cfg(target_os = "android")]
-#[derive(Debug)]
-pub enum CloudStorageError {
-    JniError(String),
-    ContextNotFound,
-    JavaVmNotInitialized,
-}
-
-#[cfg(target_os = "android")]
-impl std::fmt::Display for CloudStorageError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            CloudStorageError::JniError(msg) => write!(f, "JNI Error: {}", msg),
-            CloudStorageError::ContextNotFound => write!(f, "Android context not found"),
-            CloudStorageError::JavaVmNotInitialized => write!(f, "JavaVM not initialized"),
-        }
-    }
-}
-
 impl CloudStorage {
     #[cfg(any(target_os = "macos", target_os = "ios"))]
-    pub fn save(key: &str, value: &str) -> Result<(), String> {
+    pub fn save(key: &str, value: &str) {
         unsafe {
             let _pool = NSAutoreleasePool::new();
 
@@ -56,71 +53,67 @@ impl CloudStorage {
             let _: () = msg_send![store, setString: &*ns_value, forKey: &*ns_key];
             let success: bool = msg_send![store, synchronize];
 
-            if success {
-                Ok(())
-            } else {
-                Err("Failed to synchronize with iCloud".to_string())
+            if !success {
+                panic!("Failed to synchronize with iCloud");
             }
         }
     }
 
     #[cfg(target_os = "android")]
-    pub fn save(key: &str, value: &str) -> Result<(), CloudStorageError> {
+    pub fn save(key: &str, value: &str) {
         let instance = Self;
-        instance.save_with_context(key, value)
+        instance.save_with_context(key, value);
     }
 
     #[cfg(target_os = "android")]
-    fn save_with_context(&self, key: &str, value: &str) -> Result<(), CloudStorageError> {
-        let vm = JAVA_VM.get().ok_or(CloudStorageError::JavaVmNotInitialized)?;
+    fn save_with_context(&self, key: &str, value: &str) {
+        let vm = JAVA_VM.get().expect("JavaVM not initialized");
         let mut env = vm.attach_current_thread()
-            .map_err(|e| CloudStorageError::JniError(format!("Failed to attach thread: {}", e)))?;
+            .expect("Failed to attach thread");
 
-        let context = self.get_or_create_application_context(&mut env)?;
+        let context = self.get_or_create_application_context(&mut env);
 
         let prefs_name = env.new_string("CloudStoragePrefs")
-            .map_err(|e| CloudStorageError::JniError(format!("Failed to create prefs name: {}", e)))?;
+            .expect("Failed to create prefs name");
 
         let shared_prefs = env.call_method(
             &context,
             "getSharedPreferences",
             "(Ljava/lang/String;I)Landroid/content/SharedPreferences;",
             &[JValue::Object(&prefs_name), JValue::Int(0)]
-        ).map_err(|e| CloudStorageError::JniError(format!("Failed to get SharedPreferences: {}", e)))?
-            .l().map_err(|e| CloudStorageError::JniError(format!("SharedPreferences is null: {}", e)))?;
+        ).expect("Failed to get SharedPreferences")
+            .l().expect("SharedPreferences is null");
 
         let editor = env.call_method(
             &shared_prefs,
             "edit",
             "()Landroid/content/SharedPreferences$Editor;",
             &[]
-        ).map_err(|e| CloudStorageError::JniError(format!("Failed to get editor: {}", e)))?
-            .l().map_err(|e| CloudStorageError::JniError(format!("Editor is null: {}", e)))?;
+        ).expect("Failed to get editor")
+            .l().expect("Editor is null");
 
         let j_key = env.new_string(key)
-            .map_err(|e| CloudStorageError::JniError(format!("Failed to create key string: {}", e)))?;
+            .expect("Failed to create key string");
         let j_value = env.new_string(value)
-            .map_err(|e| CloudStorageError::JniError(format!("Failed to create value string: {}", e)))?;
+            .expect("Failed to create value string");
 
         let _ = env.call_method(
             &editor,
             "putString",
             "(Ljava/lang/String;Ljava/lang/String;)Landroid/content/SharedPreferences$Editor;",
             &[JValue::Object(&j_key), JValue::Object(&j_value)]
-        ).map_err(|e| CloudStorageError::JniError(format!("Failed to put string: {}", e)))?;
+        ).expect("Failed to put string");
 
         let _ = env.call_method(
             &editor,
             "apply",
             "()V",
             &[]
-        ).map_err(|e| CloudStorageError::JniError(format!("Failed to apply changes: {}", e)))?;
-
-        Ok(())
+        ).expect("Failed to apply changes");
     }
 
     #[cfg(any(target_os = "macos", target_os = "ios"))]
-    pub fn get(key: &str) -> Result<Option<String>, String> {
+    pub fn get(key: &str) -> Option<String> {
         unsafe {
             let _pool = NSAutoreleasePool::new();
 
@@ -128,63 +121,62 @@ impl CloudStorage {
             let ns_key: Retained<NSString> = NSString::from_str(key);
             let ns_value: *mut NSString = msg_send![store, stringForKey: &*ns_key];
             if ns_value.is_null() {
-                Ok(None)
+                None
             } else {
-                Ok(Some((*ns_value).to_string()))
+                Some((*ns_value).to_string())
             }
         }
     }
 
     #[cfg(target_os = "android")]
-    pub fn get(key: &str) -> Result<Option<String>, CloudStorageError> {
+    pub fn get(key: &str) -> Option<String> {
         let instance = Self;
         instance.get_with_context(key)
     }
 
     #[cfg(target_os = "android")]
-    fn get_with_context(&self, key: &str) -> Result<Option<String>, CloudStorageError> {
-        let vm = JAVA_VM.get().ok_or(CloudStorageError::JavaVmNotInitialized)?;
+    fn get_with_context(&self, key: &str) -> Option<String> {
+        let vm = JAVA_VM.get().expect("JavaVM not initialized");
         let mut env = vm.attach_current_thread()
-            .map_err(|e| CloudStorageError::JniError(format!("Failed to attach thread: {}", e)))?;
+            .expect("Failed to attach thread");
 
-        // Get or create the application context
-        let context = self.get_or_create_application_context(&mut env)?;
+        let context = self.get_or_create_application_context(&mut env);
 
         let prefs_name = env.new_string("CloudStoragePrefs")
-            .map_err(|e| CloudStorageError::JniError(format!("Failed to create prefs name: {}", e)))?;
+            .expect("Failed to create prefs name");
 
         let shared_prefs = env.call_method(
             &context,
             "getSharedPreferences",
             "(Ljava/lang/String;I)Landroid/content/SharedPreferences;",
             &[JValue::Object(&prefs_name), JValue::Int(0)]
-        ).map_err(|e| CloudStorageError::JniError(format!("Failed to get SharedPreferences: {}", e)))?
-            .l().map_err(|e| CloudStorageError::JniError(format!("SharedPreferences is null: {}", e)))?;
+        ).expect("Failed to get SharedPreferences")
+            .l().expect("SharedPreferences is null");
 
         let j_key = env.new_string(key)
-            .map_err(|e| CloudStorageError::JniError(format!("Failed to create key string: {}", e)))?;
+            .expect("Failed to create key string");
 
         let result = env.call_method(
             &shared_prefs,
             "getString",
             "(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;",
             &[JValue::Object(&j_key), JValue::Object(&JObject::null())]
-        ).map_err(|e| CloudStorageError::JniError(format!("Failed to get string: {}", e)))?;
+        ).expect("Failed to get string");
 
         match result.l() {
             Ok(obj) if !obj.is_null() => {
                 let j_string = JString::from(obj);
                 let rust_string: String = env.get_string(&j_string)
-                    .map_err(|e| CloudStorageError::JniError(format!("Failed to convert JString: {}", e)))?
+                    .expect("Failed to convert JString")
                     .into();
-                Ok(Some(rust_string))
+                Some(rust_string)
             }
-            _ => Ok(None)
+            _ => None
         }
     }
 
     #[cfg(any(target_os = "macos", target_os = "ios"))]
-    pub fn remove(key: &str) -> Result<(), String> {
+    pub fn remove(key: &str) {
         unsafe {
             let _pool = NSAutoreleasePool::new();
 
@@ -193,71 +185,66 @@ impl CloudStorage {
             let _: () = msg_send![store, removeObjectForKey: &*ns_key];
             let success: bool = msg_send![store, synchronize];
 
-            if success {
-                Ok(())
-            } else {
-                Err("Failed to synchronize with iCloud".to_string())
+            if !success {
+                panic!("Failed to synchronize with iCloud");
             }
         }
     }
 
     #[cfg(target_os = "android")]
-    pub fn remove(key: &str) -> Result<(), CloudStorageError> {
+    pub fn remove(key: &str) {
         let instance = Self;
-        instance.remove_with_context(key)
+        instance.remove_with_context(key);
     }
 
     #[cfg(target_os = "android")]
-    fn remove_with_context(&self, key: &str) -> Result<(), CloudStorageError> {
-        let vm = JAVA_VM.get().ok_or(CloudStorageError::JavaVmNotInitialized)?;
+    fn remove_with_context(&self, key: &str) {
+        let vm = JAVA_VM.get().expect("JavaVM not initialized");
         let mut env = vm.attach_current_thread()
-            .map_err(|e| CloudStorageError::JniError(format!("Failed to attach thread: {}", e)))?;
+            .expect("Failed to attach thread");
 
-        // Get or create the application context
-        let context = self.get_or_create_application_context(&mut env)?;
+        let context = self.get_or_create_application_context(&mut env);
 
         let prefs_name = env.new_string("CloudStoragePrefs")
-            .map_err(|e| CloudStorageError::JniError(format!("Failed to create prefs name: {}", e)))?;
+            .expect("Failed to create prefs name");
 
         let shared_prefs = env.call_method(
             &context,
             "getSharedPreferences",
             "(Ljava/lang/String;I)Landroid/content/SharedPreferences;",
             &[JValue::Object(&prefs_name), JValue::Int(0)]
-        ).map_err(|e| CloudStorageError::JniError(format!("Failed to get SharedPreferences: {}", e)))?
-            .l().map_err(|e| CloudStorageError::JniError(format!("SharedPreferences is null: {}", e)))?;
+        ).expect("Failed to get SharedPreferences")
+            .l().expect("SharedPreferences is null");
 
         let editor = env.call_method(
             &shared_prefs,
             "edit",
             "()Landroid/content/SharedPreferences$Editor;",
             &[]
-        ).map_err(|e| CloudStorageError::JniError(format!("Failed to get editor: {}", e)))?
-            .l().map_err(|e| CloudStorageError::JniError(format!("Editor is null: {}", e)))?;
+        ).expect("Failed to get editor")
+            .l().expect("Editor is null");
 
         let j_key = env.new_string(key)
-            .map_err(|e| CloudStorageError::JniError(format!("Failed to create key string: {}", e)))?;
+            .expect("Failed to create key string");
 
         let _ = env.call_method(
             &editor,
             "remove",
             "(Ljava/lang/String;)Landroid/content/SharedPreferences$Editor;",
             &[JValue::Object(&j_key)]
-        ).map_err(|e| CloudStorageError::JniError(format!("Failed to remove key: {}", e)))?;
+        ).expect("Failed to remove key");
 
         let _ = env.call_method(
             &editor,
             "apply",
             "()V",
             &[]
-        ).map_err(|e| CloudStorageError::JniError(format!("Failed to apply changes: {}", e)))?;
-
-        Ok(())
+        ).expect("Failed to apply changes");
     }
 
     /// Clear all stored data
     #[cfg(any(target_os = "macos", target_os = "ios"))]
-    pub fn clear() -> Result<(), String> {
+    pub fn clear() {
         unsafe {
             let _pool = NSAutoreleasePool::new();
 
@@ -272,105 +259,100 @@ impl CloudStorage {
             }
 
             let success: bool = msg_send![store, synchronize];
-            if success {
-                Ok(())
-            } else {
-                Err("Failed to synchronize with iCloud".to_string())
+            if !success {
+                panic!("Failed to synchronize with iCloud");
             }
         }
     }
 
     #[cfg(target_os = "android")]
-    pub fn clear() -> Result<(), CloudStorageError> {
+    pub fn clear() {
         let instance = Self;
-        instance.clear_with_context()
+        instance.clear_with_context();
     }
 
     #[cfg(target_os = "android")]
-    fn clear_with_context(&self) -> Result<(), CloudStorageError> {
-        let vm = JAVA_VM.get().ok_or(CloudStorageError::JavaVmNotInitialized)?;
+    fn clear_with_context(&self) {
+        let vm = JAVA_VM.get().expect("JavaVM not initialized");
         let mut env = vm.attach_current_thread()
-            .map_err(|e| CloudStorageError::JniError(format!("Failed to attach thread: {}", e)))?;
+            .expect("Failed to attach thread");
 
-        // Get or create the application context
-        let context = self.get_or_create_application_context(&mut env)?;
+        let context = self.get_or_create_application_context(&mut env);
 
         let prefs_name = env.new_string("CloudStoragePrefs")
-            .map_err(|e| CloudStorageError::JniError(format!("Failed to create prefs name: {}", e)))?;
+            .expect("Failed to create prefs name");
 
         let shared_prefs = env.call_method(
             &context,
             "getSharedPreferences",
             "(Ljava/lang/String;I)Landroid/content/SharedPreferences;",
             &[JValue::Object(&prefs_name), JValue::Int(0)]
-        ).map_err(|e| CloudStorageError::JniError(format!("Failed to get SharedPreferences: {}", e)))?
-            .l().map_err(|e| CloudStorageError::JniError(format!("SharedPreferences is null: {}", e)))?;
+        ).expect("Failed to get SharedPreferences")
+            .l().expect("SharedPreferences is null");
 
         let editor = env.call_method(
             &shared_prefs,
             "edit",
             "()Landroid/content/SharedPreferences$Editor;",
             &[]
-        ).map_err(|e| CloudStorageError::JniError(format!("Failed to get editor: {}", e)))?
-            .l().map_err(|e| CloudStorageError::JniError(format!("Editor is null: {}", e)))?;
+        ).expect("Failed to get editor")
+            .l().expect("Editor is null");
 
         let _ = env.call_method(
             &editor,
             "clear",
             "()Landroid/content/SharedPreferences$Editor;",
             &[]
-        ).map_err(|e| CloudStorageError::JniError(format!("Failed to clear: {}", e)))?;
+        ).expect("Failed to clear");
 
         let _ = env.call_method(
             &editor,
             "apply",
             "()V",
             &[]
-        ).map_err(|e| CloudStorageError::JniError(format!("Failed to apply changes: {}", e)))?;
-
-        Ok(())
+        ).expect("Failed to apply changes");
     }
 
     /// Get or create Android application context as instance method
     #[cfg(target_os = "android")]
-    fn get_or_create_application_context<'a>(&self, env: &mut JNIEnv<'a>) -> Result<JObject<'a>, CloudStorageError> {
+    fn get_or_create_application_context<'a>(&self, env: &mut JNIEnv<'a>) -> JObject<'a> {
         if let Some(context_mutex) = APP_CONTEXT.get() {
             if let Ok(context_guard) = context_mutex.lock() {
                 if let Some(context_ref) = context_guard.as_ref() {
-                    // Create a new local reference from the global reference
                     return env.new_local_ref(context_ref.as_obj())
-                        .map_err(|e| CloudStorageError::JniError(format!("Failed to create local ref from global: {}", e)));
+                        .expect("Failed to create local ref from global");
                 }
             }
         }
 
         // If not found, create new context
         let activity_thread_class = env.find_class("android/app/ActivityThread")
-            .map_err(|e| CloudStorageError::JniError(format!("Failed to find ActivityThread class: {}", e)))?;
+            .expect("Failed to find ActivityThread class");
 
         let activity_thread = env.call_static_method(
             activity_thread_class,
             "currentActivityThread",
             "()Landroid/app/ActivityThread;",
             &[]
-        ).map_err(|e| CloudStorageError::JniError(format!("Failed to get current ActivityThread: {}", e)))?
-            .l().map_err(|e| CloudStorageError::JniError(format!("ActivityThread is null: {}", e)))?;
+        ).expect("Failed to get current ActivityThread")
+            .l().expect("ActivityThread is null");
 
         let context = env.call_method(
             &activity_thread,
             "getApplication",
             "()Landroid/app/Application;",
             &[]
-        ).map_err(|e| CloudStorageError::JniError(format!("Failed to get application: {}", e)))?
-            .l().map_err(|e| CloudStorageError::JniError(format!("Application context is null: {}", e)))?;
+        ).expect("Failed to get application")
+            .l().expect("Application context is null");
 
         // Create global reference and store it for future use
         let global_context = env.new_global_ref(&context)
-            .map_err(|e| CloudStorageError::JniError(format!("Failed to create global ref: {}", e)))?;
+            .expect("Failed to create global ref");
 
         // Store the global reference
         if APP_CONTEXT.get().is_none() {
-            let _ = APP_CONTEXT.set(Mutex::new(Some(global_context)));
+            APP_CONTEXT.set(Mutex::new(Some(global_context)))
+                .expect("Failed to set APP_CONTEXT");
         } else {
             if let Some(context_mutex) = APP_CONTEXT.get() {
                 if let Ok(mut context_guard) = context_mutex.lock() {
@@ -380,34 +362,33 @@ impl CloudStorage {
         }
 
         // Return the local reference we already have
-        Ok(context)
+        context
     }
 
     #[cfg(target_os = "android")]
-    pub fn init_java_vm(vm: JavaVM) -> Result<(), CloudStorageError> {
-        JAVA_VM.set(vm).map_err(|_| CloudStorageError::JniError("JavaVM already initialized".to_string()))?;
-        Ok(())
+    pub fn init_java_vm(vm: JavaVM) {
+        JAVA_VM.set(vm).expect("JavaVM already initialized");
     }
 
     // Stub implementations for other platforms
     #[cfg(not(any(target_os = "macos", target_os = "ios", target_os = "android")))]
-    pub fn save(_key: &str, _value: &str) -> Result<(), String> {
-        Err("CloudStorage::save not implemented for this platform".to_string())
+    pub fn save(_key: &str, _value: &str) {
+        panic!("CloudStorage::save not implemented for this platform");
     }
 
     #[cfg(not(any(target_os = "macos", target_os = "ios", target_os = "android")))]
-    pub fn get(_key: &str) -> Result<Option<String>, String> {
-        Err("CloudStorage::get not implemented for this platform".to_string())
+    pub fn get(_key: &str) -> Option<String> {
+        panic!("CloudStorage::get not implemented for this platform");
     }
 
     #[cfg(not(any(target_os = "macos", target_os = "ios", target_os = "android")))]
-    pub fn remove(_key: &str) -> Result<(), String> {
-        Err("CloudStorage::remove not implemented for this platform".to_string())
+    pub fn remove(_key: &str) {
+        panic!("CloudStorage::remove not implemented for this platform");
     }
 
     #[cfg(not(any(target_os = "macos", target_os = "ios", target_os = "android")))]
-    pub fn clear() -> Result<(), String> {
-        Err("CloudStorage::clear not implemented for this platform".to_string())
+    pub fn clear() {
+        panic!("CloudStorage::clear not implemented for this platform");
     }
 }
 
@@ -421,11 +402,7 @@ impl Default for CloudStorage {
 #[cfg(target_os = "android")]
 #[unsafe(no_mangle)]
 pub extern "system" fn JNI_OnLoad(vm: JavaVM, _: *mut std::ffi::c_void) -> jni::sys::jint {
-    if let Err(e) = CloudStorage::init_java_vm(vm) {
-        eprintln!("Failed to initialize JavaVM: {}", e);
-        return jni::sys::JNI_VERSION_1_1.into();
-    }
-
+    CloudStorage::init_java_vm(vm);
     jni::sys::JNI_VERSION_1_6.into()
 }
 
@@ -450,10 +427,8 @@ pub extern "C" fn cloud_storage_save(key: *const i8, value: *const i8) -> i32 {
         }
     };
 
-    match CloudStorage::save(key_str, value_str) {
-        Ok(_) => 0,
-        Err(_) => -1,
-    }
+    CloudStorage::save(key_str, value_str);
+    0
 }
 
 #[cfg(target_os = "android")]
@@ -471,7 +446,7 @@ pub extern "C" fn cloud_storage_get(key: *const i8, buffer: *mut i8, buffer_size
     };
 
     match CloudStorage::get(key_str) {
-        Ok(Some(value)) => {
+        Some(value) => {
             let value_bytes = value.as_bytes();
             if value_bytes.len() + 1 > buffer_size {
                 return -2; // Buffer too small
@@ -484,8 +459,7 @@ pub extern "C" fn cloud_storage_get(key: *const i8, buffer: *mut i8, buffer_size
 
             value_bytes.len() as i32
         }
-        Ok(None) => 0, // Key not found
-        Err(_) => -1,  // Error occurred
+        None => 0, // Key not found
     }
 }
 
@@ -503,17 +477,13 @@ pub extern "C" fn cloud_storage_remove(key: *const i8) -> i32 {
         }
     };
 
-    match CloudStorage::remove(key_str) {
-        Ok(_) => 0,
-        Err(_) => -1,
-    }
+    CloudStorage::remove(key_str);
+    0
 }
 
 #[cfg(target_os = "android")]
 #[unsafe(no_mangle)]
 pub extern "C" fn cloud_storage_clear() -> i32 {
-    match CloudStorage::clear() {
-        Ok(_) => 0,
-        Err(_) => -1,
-    }
+    CloudStorage::clear();
+    0
 }
