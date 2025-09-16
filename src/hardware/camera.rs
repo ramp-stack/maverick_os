@@ -58,7 +58,7 @@ impl Camera {
 
     #[cfg(target_os = "android")]
     pub fn new() -> Result<Self, CameraError> {
-        Ok(Camera(AndroidCamera::new()?))
+        Ok(Camera(AndroidCamera::new().map_err(CameraError::DeviceNotFound)?))
     }
 
     #[cfg(any(target_os = "windows", target_os = "linux"))]

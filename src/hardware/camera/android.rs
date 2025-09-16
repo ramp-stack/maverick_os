@@ -438,7 +438,7 @@ impl AndroidCamera {
         Ok(rgba)
     }
 
-    pub fn get_latest_frame(&self) -> Result<RgbaImage, Box<dyn Error>> {
+    pub fn frame(&self) -> Result<RgbaImage, Box<dyn Error>> {
         println!("Starting get_latest_frame");
 
         // Ensure we have permission before trying to get frame
