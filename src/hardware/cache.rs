@@ -83,7 +83,7 @@ impl RustSqlite for Connection {
 
     fn get<V: Serialize + for<'a> Deserialize <'a> + Default>(&self, key: &str) -> V {
         self.prepare(
-            &format!("SELECT value FROM kvs where key = \'{}\'", key),
+            &format!("SELECT value FROM kvs where key = \'{key}\'"),
         ).unwrap().query_and_then([], |row| {
             let item: String = row.get(0).unwrap();
             Ok(hex::decode(item).unwrap())

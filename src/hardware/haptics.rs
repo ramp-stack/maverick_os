@@ -29,11 +29,8 @@ impl Haptics {
             }
         }
     }
-
-    #[cfg(target_os = "android")]
-    pub fn vibrate() {}
-
-    #[cfg(not(any(target_os = "ios", target_os = "android")))]
+    
+    #[cfg(not(target_os = "ios"))]
     pub fn vibrate() {}
 }
 

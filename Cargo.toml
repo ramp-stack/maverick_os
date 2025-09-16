@@ -1,6 +1,6 @@
 [package]
 name = "maverick_os"
-version = "0.1.18"
+version = "0.1.19"
 edition = "2024"
 authors = ["Caleb Couch <caleb@orange.me>"]
 description = "Maverick OS"
@@ -29,7 +29,8 @@ air = "0.2.6"
 objc2 = "0.6.1"
 objc2-core-graphics = "0.3.1"
 objc2-user-notifications = "0.3.1"
-objc2-av-foundation = "0.3.1"
+objc2-av-foundation = {version = "0.3.1", features=["objc2-core-media"]}
+objc2-core-foundation = "0.3.1"
 objc2-core-media = "0.3.1"
 objc2-foundation = "0.3.1"
 objc2-ui-kit = "0.3.1"

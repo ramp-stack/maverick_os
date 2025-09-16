@@ -273,7 +273,7 @@ impl AndroidCamera {
         self.open_camera_internal()
     }
 
-    pub fn open_camera(&mut self) -> Result<(), Box<dyn Error>> {
+    pub fn start(&mut self) -> Result<(), Box<dyn Error>> {
         println!("Opening camera with embedded dex");
 
         unsafe {

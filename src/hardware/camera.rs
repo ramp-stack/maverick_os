@@ -1,540 +1,414 @@
-use image::RgbaImage;
-use crate::CameraError;
-
 #[cfg(any(target_os = "ios", target_os = "macos"))]
 mod apple;
-
-#[cfg(any(target_os = "ios", target_os = "macos"))]
-mod apple_custom_image;
-
-#[cfg(any(target_os = "ios", target_os = "macos"))]
-mod apple_custom_utils;
-
 #[cfg(target_os = "android")]
 mod android;
-
-// #[cfg(any(target_os = "windows", target_os = "linux"))]
-// mod windows_linux;
+#[cfg(any(target_os = "windows", target_os = "linux"))]
+mod windows_linux;
 
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 use crate::hardware::camera::apple::AppleCamera;
-
-#[cfg(any(target_os = "macos", target_os = "ios"))]
-use crate::hardware::camera::apple_custom_image::AppleCustomCamera;
-
 #[cfg(target_os = "android")]
 use crate::hardware::camera::android::AndroidCamera;
+#[cfg(any(target_os = "windows", target_os = "linux"))]
+use crate::hardware::camera::windows_linux::WindowsLinuxCamera;
 
-// #[cfg(any(target_os = "windows", target_os = "linux"))]
-// use crate::hardware::camera::windows_linux::WindowsLinuxCamera;
+use image::RgbaImage;
+use std::sync::{Arc, Mutex};
 
-#[derive(Debug, Clone)]
-#[cfg(any(target_os = "macos", target_os = "ios"))]
-pub enum AppleCameraBackend {
-    Standard(AppleCamera),
-    Custom(AppleCustomCamera),
+// Define CameraError here since it's not exported from the camera module
+#[derive(Debug)]
+pub enum CameraError {
+    FailedToGetFrame,
+    InitializationFailed,
+    DeviceNotFound,
+    PermissionDenied,
+    Unknown(String),
+}
+
+impl std::error::Error for CameraError {}
+
+impl std::fmt::Display for CameraError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            CameraError::InitializationFailed => write!(f, "Camera initialization failed"),
+            CameraError::DeviceNotFound => write!(f, "Camera device not found"),
+            CameraError::PermissionDenied => write!(f, "Camera permission denied"),
+            CameraError::FailedToGetFrame => write!(f, "Camera failed to get frame"),
+            CameraError::Unknown(msg) => write!(f, "Unknown camera error: {msg}"),
+        }
+    }
 }
 
 /// Access the device camera.
 #[derive(Debug, Clone)]
 pub struct Camera(
     #[cfg(any(target_os = "macos", target_os = "ios"))]
-    AppleCameraBackend,
-    
+    AppleCamera,
     #[cfg(target_os = "android")]
     AndroidCamera,
-
-    // #[cfg(any(target_os = "windows", target_os = "linux"))]
-    // WindowsLinuxCamera,
+    #[cfg(any(target_os = "windows", target_os = "linux"))]
+    WindowsLinuxCamera,
 );
 
 impl Camera {
     #[cfg(any(target_os = "macos", target_os = "ios"))]
-    pub fn new() -> Self {
-        let camera = AppleCamera::new();
-        camera.open_camera();
-        Camera(AppleCameraBackend::Standard(camera))
-    }
-
-    #[cfg(any(target_os = "macos", target_os = "ios"))]
-    pub fn new_unprocessed() -> Self {
-        let mut camera = AppleCustomCamera::new();
-        camera.open_camera().unwrap_or_else(|_e| {
-            panic!("Failed to open camera")
-        });
-        Camera(AppleCameraBackend::Custom(camera))
+    pub fn new() -> Result<Self, CameraError> {
+        Ok(Camera(AppleCamera::new_standard()?))
     }
 
     #[cfg(target_os = "android")]
-    pub fn new() -> Self {
-        let mut camera = AndroidCamera::new().unwrap_or_else(|_| panic!("Access denied to camera"));
-        camera.open_camera();
-        Camera(camera)
-    }
-
-    // Add the missing Android implementation
-    #[cfg(target_os = "android")]
-    pub fn new_unprocessed() -> Self {
-        Self::new()
+    pub fn new() -> Result<Self, CameraError> {
+        Ok(Camera(AndroidCamera::new()?))
     }
 
     #[cfg(any(target_os = "windows", target_os = "linux"))]
-    pub fn new() -> Self {
-        // let mut camera = WindowsLinuxCamera::new(0); // Default to first camera
-        // camera.start();
-        // Camera(camera)
-        panic!("Windows and linux not currently supported");
-    }
-
-    #[cfg(any(target_os = "windows", target_os = "linux"))]
-    pub fn new_with_index(index: usize) -> Self {
-        // let mut camera = WindowsLinuxCamera::new(index);
-        // camera.start();
-        // Camera(camera)
-        panic!("Windows and linux not currently supported");
-    }
-
-    #[cfg(any(target_os = "windows", target_os = "linux"))]
-    pub fn new_unprocessed() -> Self {
-        // Self::new()
-        panic!("Windows and linux not currently supported");
+    pub fn new() -> Result<Self, CameraError> {
+        Ok(Camera(WindowsLinuxCamera::new()?))
     }
 
     #[cfg(not(any(target_os = "macos", target_os = "ios", target_os = "android", target_os = "windows", target_os = "linux")))]
-    pub fn new() -> Self {
-        panic!("Camera access denied on this platform")
-    }
-
-    #[cfg(not(any(target_os = "macos", target_os = "ios", target_os = "android", target_os = "windows", target_os = "linux")))]
-    pub fn new_unprocessed() -> Self {
-        Self::new()
+    pub fn new() -> Result<Self, CameraError> {
+        Err(CameraError::DeviceNotFound)
     }
 
     #[cfg(any(target_os = "macos", target_os = "ios"))]
-    pub fn get_frame(&mut self) -> Option<RgbaImage> {
-        match &mut self.0 {
-            AppleCameraBackend::Standard(_cam) => None,
-            AppleCameraBackend::Custom(cam) => cam.get_latest_raw_frame(),
-        }
-    }
-
-    #[cfg(target_os = "android")]
-    pub fn get_frame(&mut self) -> (Vec<u8>, usize, usize) {
-        let image = self.0.get_latest_frame().unwrap_or_else(|_| panic!("Failed to get frame"));
-        let (width, height) = image.dimensions();
-        let pixels = image.into_raw();
-        (pixels, width as usize, height as usize)
-    }
-
-    #[cfg(any(target_os = "windows", target_os = "linux"))]
-    pub fn get_frame(&mut self) -> Option<RgbaImage> {
-        self.0.capture_frame()
-    }
-
-    #[cfg(not(any(target_os = "macos", target_os = "ios", target_os = "android", target_os = "windows", target_os = "linux")))]
-    pub fn get_frame(&mut self) -> Option<RgbaImage> {
-        None
-    }
-
-    #[cfg(any(target_os = "macos", target_os = "ios"))]
-    pub fn get_latest_raw_frame(&self) -> Option<RgbaImage> {
-        match &self.0 {
-            AppleCameraBackend::Standard(_cam) => None,
-            AppleCameraBackend::Custom(cam) => cam.get_latest_raw_frame(),
-        }
-    }
-
-    #[cfg(any(target_os = "android", target_os = "windows", target_os = "linux"))]
-    pub fn get_latest_raw_frame(&self) -> Option<RgbaImage> {
-        None
-    }
-
-    #[cfg(not(any(target_os = "macos", target_os = "ios", target_os = "android", target_os = "windows", target_os = "linux")))]
-    pub fn get_latest_raw_frame(&self) -> Option<RgbaImage> {
-        None
-    }
-
-    // Image processing settings - only supported on Apple platforms for now
-    #[cfg(any(target_os = "macos", target_os = "ios"))]
-    pub fn update_settings<F>(&self, update_fn: F)
-    where F: FnOnce(&mut ImageSettings),
-    {
-        match &self.0 {
-            AppleCameraBackend::Standard(_cam) => {
-                panic!("Standard camera doesn't support settings updates")
-            }
-            AppleCameraBackend::Custom(cam) => {
-                cam.update_settings(update_fn);
-            }
-        }
-    }
-
-    #[cfg(any(target_os = "macos", target_os = "ios"))]
-    pub fn set_exposure_and_iso(&mut self, duration: f32, iso: f32) -> Result<(), CameraError> {
-        match &self.0 {
-            AppleCameraBackend::Standard(_cam) => {
-                Err(CameraError::FailedToGetFrame)
-            }
-            AppleCameraBackend::Custom(cam) => {
-                // match duration_iso {
-                //     Some((d, i)) => cam.set_exposure_and_iso(d, i),
-                //     None => cam.disable_custom_exposure()
-                // }.map_err(|e| CameraError::Error(e))
-                cam.set_exposure_and_iso(duration, iso).map_err(CameraError::Unknown)
-            }
-        }
+    pub fn new_unprocessed() -> Result<Self, CameraError> {
+        Ok(Camera(AppleCamera::new_unprocessed()?))
     }
 
     #[cfg(not(any(target_os = "macos", target_os = "ios")))]
-    pub fn set_exposure_and_iso(&mut self, duration: f32, iso: f32) -> Result<(), CameraError> {
-        Err(CameraError::FailedToGetFrame)
-    }
-
-    // Individual setter methods for all image processing parameters
-    #[cfg(any(target_os = "macos", target_os = "ios"))]
-    pub fn get_settings(&self) -> ImageSettings {
-        match &self.0 {
-            AppleCameraBackend::Standard(_cam) => {
-                panic!("Standard camera doesn't support getting settings")
-            }
-            AppleCameraBackend::Custom(cam) => cam.get_settings(),
-        }
-    }
-
-    // Individual setter methods for image processing parameters
-    #[cfg(any(target_os = "macos", target_os = "ios"))]
-    pub fn set_brightness(&mut self, brightness: i16) {
-        match &self.0 {
-            AppleCameraBackend::Standard(_cam) => {
-                panic!("Standard camera doesn't support brightness adjustment")
-            }
-            AppleCameraBackend::Custom(cam) => {
-                cam.update_settings(|settings| {
-                    settings.brightness = brightness;
-                });
-            }
-        }
-    }
-
-    #[cfg(any(target_os = "macos", target_os = "ios"))]
-    pub fn set_contrast(&mut self, contrast: f32) {
-        match &self.0 {
-            AppleCameraBackend::Standard(_cam) => {
-                panic!("Standard camera doesn't support contrast adjustment")
-            }
-            AppleCameraBackend::Custom(cam) => {
-                cam.update_settings(|settings| {
-                    settings.contrast = contrast;
-                });
-            }
-        }
-    }
-
-    #[cfg(any(target_os = "macos", target_os = "ios"))]
-    pub fn set_saturation(&mut self, saturation: f32) {
-        match &self.0 {
-            AppleCameraBackend::Standard(_cam) => {
-                panic!("Standard camera doesn't support saturation adjustment")
-            }
-            AppleCameraBackend::Custom(cam) => {
-                cam.update_settings(|settings| {
-                    settings.saturation = saturation;
-                });
-            }
-        }
-    }
-
-    #[cfg(any(target_os = "macos", target_os = "ios"))]
-    pub fn set_gamma(&mut self, gamma: f32) {
-        match &self.0 {
-            AppleCameraBackend::Standard(_cam) => {
-                panic!("Standard camera doesn't support gamma adjustment")
-            }
-            AppleCameraBackend::Custom(cam) => {
-                cam.update_settings(|settings| {
-                    settings.gamma = gamma;
-                });
-            }
-        }
-    }
-
-    #[cfg(any(target_os = "macos", target_os = "ios"))]
-    pub fn set_exposure(&mut self, exposure: f32) {
-        match &self.0 {
-            AppleCameraBackend::Standard(_cam) => {
-                panic!("Standard camera doesn't support exposure adjustment")
-            }
-            AppleCameraBackend::Custom(cam) => {
-                cam.update_settings(|settings| {
-                    settings.exposure = exposure;
-                });
-            }
-        }
-    }
-
-    #[cfg(any(target_os = "macos", target_os = "ios"))]
-    pub fn set_temperature(&mut self, temperature: f32) {
-        match &self.0 {
-            AppleCameraBackend::Standard(_cam) => {
-                panic!("Standard camera doesn't support temperature adjustment")
-            }
-            AppleCameraBackend::Custom(cam) => {
-                cam.update_settings(|settings| {
-                    settings.temperature = temperature;
-                });
-            }
-        }
-    }
-
-    #[cfg(any(target_os = "macos", target_os = "ios"))]
-    pub fn set_white_balance_rgb(&mut self, r: f32, g: f32, b: f32) {
-        match &self.0 {
-            AppleCameraBackend::Standard(_cam) => {
-                panic!("Standard camera doesn't support white balance adjustment")
-            }
-            AppleCameraBackend::Custom(cam) => {
-                cam.update_settings(|settings| {
-                    settings.white_balance_r = r;
-                    settings.white_balance_g = g;
-                    settings.white_balance_b = b;
-                });
-            }
-        }
-    }
-
-    #[cfg(any(target_os = "macos", target_os = "ios"))]
-    pub fn reset_settings(&mut self) {
-        match &self.0 {
-            AppleCameraBackend::Standard(_cam) => {
-                panic!("Standard camera doesn't support settings reset")
-            }
-            AppleCameraBackend::Custom(cam) => {
-                cam.update_settings(|settings| {
-                    *settings = ImageSettings::default();
-                });
-            }
-        }
-    }
-
-    // Stub implementations for platforms that don't support image processing
-    #[cfg(any(target_os = "android", target_os = "windows", target_os = "linux"))]
-    pub fn update_settings<F>(&self, _update_fn: F)
-    where F: FnOnce(&mut ImageSettings),
-    {
-        panic!("Camera settings update not supported on this platform")
-    }
-
-    #[cfg(any(target_os = "android", target_os = "windows", target_os = "linux"))]
-    pub fn get_settings(&self) -> ImageSettings {
-        panic!("Camera settings retrieval not supported on this platform")
-    }
-
-    #[cfg(any(target_os = "android", target_os = "windows", target_os = "linux"))]
-    pub fn set_brightness(&mut self, _brightness: i16) {
-        panic!("Camera brightness adjustment not supported on this platform")
-    }
-
-    #[cfg(any(target_os = "android", target_os = "windows", target_os = "linux"))]
-    pub fn set_contrast(&mut self, _contrast: f32) {
-        panic!("Camera contrast adjustment not supported on this platform")
-    }
-
-    #[cfg(any(target_os = "android", target_os = "windows", target_os = "linux"))]
-    pub fn set_saturation(&mut self, _saturation: f32) {
-        panic!("Camera saturation adjustment not supported on this platform")
-    }
-
-    #[cfg(any(target_os = "android", target_os = "windows", target_os = "linux"))]
-    pub fn set_gamma(&mut self, _gamma: f32) {
-        panic!("Camera gamma adjustment not supported on this platform")
-    }
-
-    #[cfg(any(target_os = "android", target_os = "windows", target_os = "linux"))]
-    pub fn set_exposure(&mut self, _exposure: f32) {
-        panic!("Camera exposure adjustment not supported on this platform")
-    }
-
-    #[cfg(any(target_os = "android", target_os = "windows", target_os = "linux"))]
-    pub fn set_temperature(&mut self, _temperature: f32) {
-        panic!("Camera temperature adjustment not supported on this platform")
-    }
-
-    #[cfg(any(target_os = "android", target_os = "windows", target_os = "linux"))]
-    pub fn set_white_balance_rgb(&mut self, _r: f32, _g: f32, _b: f32) {
-        panic!("Camera white balance adjustment not supported on this platform")
-    }
-
-    #[cfg(any(target_os = "android", target_os = "windows", target_os = "linux"))]
-    pub fn reset_settings(&mut self) {
-        panic!("Camera settings reset not supported on this platform")
-    }
-
-    // Stub implementations for unsupported platforms
-    #[cfg(not(any(target_os = "macos", target_os = "ios", target_os = "android", target_os = "windows", target_os = "linux")))]
-    pub fn update_settings<F>(&self, _update_fn: F)
-    where F: FnOnce(&mut ImageSettings),
-    {
-        panic!("Camera access denied on this platform")
-    }
-
-    #[cfg(not(any(target_os = "macos", target_os = "ios", target_os = "android", target_os = "windows", target_os = "linux")))]
-    pub fn get_settings(&self) -> ImageSettings {
-        panic!("Camera access denied on this platform")
-    }
-
-    #[cfg(not(any(target_os = "macos", target_os = "ios", target_os = "android", target_os = "windows", target_os = "linux")))]
-    pub fn set_brightness(&mut self, _brightness: i16) {
-        panic!("Camera access denied on this platform")
-    }
-
-    // Static convenience methods
-    #[cfg(any(target_os = "macos", target_os = "ios"))]
-    pub fn open_and_get_frame() -> (Vec<u8>, usize, usize) {
-        panic!("Failed to get frame from standard camera")
-    }
-
-    #[cfg(any(target_os = "macos", target_os = "ios"))]
-    pub fn open_and_get_custom_frame() -> Option<RgbaImage> {
-        let mut camera = AppleCustomCamera::new();
-        if camera.open_camera().is_err() {
-            return None;
-        }
-
-        let mut wrapper = Camera(AppleCameraBackend::Custom(camera));
-        for _ in 1..=10 {
-            std::thread::sleep(std::time::Duration::from_millis(200));
-            if let Some(frame) = wrapper.get_frame() {
-                return Some(frame);
-            }
-        }
-        None
-    }
-
-    #[cfg(target_os = "android")]
-    pub fn open_and_get_frame() -> (Vec<u8>, usize, usize) {
-        let mut camera = AndroidCamera::new().unwrap_or_else(|_| panic!("Access denied to camera"));
-        camera.open_camera();
-        let mut wrapper = Camera(camera);
-        wrapper.get_frame()
+    pub fn new_unprocessed() -> Result<Self, CameraError> {
+        Err(CameraError::DeviceNotFound)
     }
 
     #[cfg(any(target_os = "windows", target_os = "linux"))]
-    pub fn open_and_get_frame() -> Option<RgbaImage> {
-        // let mut camera = WindowsLinuxCamera::new(0);
-        // camera.start();
-        // let mut wrapper = Camera(camera);
-        // wrapper.get_frame()
-        panic!("Windows and linux not currently supported");
-    }
+    pub fn inner(&mut self) -> &mut WindowsLinuxCamera { &mut self.0 }
 
-    #[cfg(not(any(target_os = "macos", target_os = "ios", target_os = "android", target_os = "windows", target_os = "linux")))]
-    pub fn open_and_get_frame() -> Option<RgbaImage> {
-        None
-    }
+    #[cfg(target_os = "android")]
+    pub fn inner(&mut self) -> &mut AndroidCamera { &mut self.0 }
 
     #[cfg(any(target_os = "macos", target_os = "ios"))]
-    pub fn stop_camera(&self) {
-        match &self.0 {
-            AppleCameraBackend::Standard(_cam) => {}
-            AppleCameraBackend::Custom(cam) => {
-                cam.stop_camera();
-            }
-        }
+    pub fn inner(&mut self) -> &mut AppleCamera { &mut self.0 }
+
+    // pub fn toggle_flashlight(&mut self) { self.0.toggle_flashlight() }
+
+    pub fn frame(&self) -> Result<RgbaImage, CameraError> { self.0.frame() }
+
+    pub fn start(mut self) -> Self {
+        self.0.start();
+        self
     }
 
-    #[cfg(any(target_os = "android", target_os = "windows", target_os = "linux"))]
-    pub fn stop_camera(&self) {
-        // Camera cleanup handled by Drop trait
-    }
-}
-
-impl Default for Camera {
-    fn default() -> Self {
-        Self::new()
+    pub fn settings(&mut self) -> Option<Arc<Mutex<CameraSettings>>> { 
+        #[cfg(any(target_os = "macos", target_os = "ios"))]
+        return self.0.settings(); 
+        #[cfg(not(any(target_os = "macos", target_os = "ios")))]
+        None
     }
 }
 
 impl Drop for Camera {
-    fn drop(&mut self) {
-        #[cfg(any(target_os = "macos", target_os = "ios"))]
-        self.stop_camera();
-        
-        #[cfg(any(target_os = "windows", target_os = "linux"))]
-        {
-            let _ = self.0.stop_stream();
-        }
-    }
+    fn drop(&mut self) {}
 }
 
-/// Settings for configuring camera behavior.
 #[derive(Debug, Clone)]
-pub struct ImageSettings {
-    pub brightness: i16, 
-    pub contrast: f32,
-    pub saturation: f32,
-    pub gamma: f32,
-    pub white_balance_r: f32,
-    pub white_balance_g: f32,
-    pub white_balance_b: f32,
-    pub exposure: f32,
-    pub temperature: f32,
-    pub exposure_iso: f32,
-    pub exposure_duration: f32,
+pub struct CameraSettings {
+    pub exposure_mode: ExposureMode, //
+    pub custom_exposure: Option<CustomExposure>, // duration + ISO
+    pub exposure_compensation: Option<f32>,      // EV
+    pub exposure_stacking: bool,
+
+    pub focus_mode: FocusMode,
+    pub focus_distance: Option<f32>,            // 0.0..1.0 lens position for manual
+    pub focus_point_of_interest: Option<(f32,f32)>, // normalized x,y for focus
+
+    pub white_balance_mode: WhiteBalanceMode,
+    pub white_balance_gains: Option<WhiteBalanceGains>,
+
+    pub zoom_factor: Option<f32>,
+
+    pub frame_rate: Option<f32>,
+    pub resolution: Option<Resolution>,
+    pub hdr_enabled: bool,
+    pub stabilization_enabled: bool,
+    
+    pub low_light_boost: Option<bool>,
+    pub scene_mode_hint: Option<SceneMode>,
+
+    pub brightness: Option<f32>,
+    pub contrast: Option<f32>,
+    pub saturation: Option<f32>,
+    pub sharpness: Option<f32>,
+    pub hue: Option<f32>,
+    pub noise_reduction: Option<f32>,
+    pub gamma: Option<f32>,
+    pub color_filter: Option<ColorFilter>,
+    
+    pub is_updated: bool,
 }
 
-impl Default for ImageSettings {
+#[derive(Debug, Clone, Copy)]
+pub struct CustomExposure {
+    pub duration: f32, // seconds
+    pub iso: f32,
+}
+
+impl Default for CustomExposure {
     fn default() -> Self {
         Self {
-            brightness: 0,
-            contrast: 0.0,
-            saturation: 0.0,
-            gamma: 2.2,
-            white_balance_r: 1.0,
-            white_balance_g: 1.0,
-            white_balance_b: 1.0,
-            exposure: 0.0,
-            temperature: 6500.0,
-            exposure_iso: 0.0,
-            exposure_duration: 0.0
+            iso: 0.0,
+            duration: 0.0,
         }
     }
 }
 
-impl ImageSettings {
-    pub fn new() -> Self {
-        Self::default()
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ExposureMode {
+    Auto,
+    Continuous,
+    Custom,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum FocusMode {
+    Auto,
+    Continuous,
+    Locked,
+    Manual,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum WhiteBalanceMode {
+    Auto,
+    Locked,
+    Custom,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct WhiteBalanceGains {
+    pub red: f32,
+    pub green: f32,
+    pub blue: f32,
+}
+
+impl WhiteBalanceGains {
+    fn from(red: f32, green: f32, blue: f32) -> Self {
+        WhiteBalanceGains { red, green, blue }
     }
+}
 
-    pub fn clamp_values(&mut self) {
-        self.brightness = self.brightness.clamp(-100, 100);
-        self.contrast = self.contrast.clamp(-1.0, 1.0);
-        self.saturation = self.saturation.clamp(-1.0, 1.0);
-        self.gamma = self.gamma.clamp(0.1, 3.0);
-        self.white_balance_r = self.white_balance_r.clamp(0.5, 2.0);
-        self.white_balance_g = self.white_balance_g.clamp(0.5, 2.0);
-        self.white_balance_b = self.white_balance_b.clamp(0.5, 2.0);
-        self.exposure = self.exposure.clamp(-2.0, 2.0);
-        self.temperature = self.temperature.clamp(2000.0, 10000.0);
-    }
-
-    pub fn temperature_to_rgb_multipliers(&self) -> [f32; 3] {
-        let temp = self.temperature;
-        let temp_scaled = temp / 100.0;
-
-        if temp < 6600.0 {
-            let r = 1.0;
-            let g = (0.39008157 * temp_scaled.ln() - 0.631_841_4).clamp(0.0, 1.0);
-            let b = if temp < 2000.0 {
-                0.0
-            } else {
-                (0.54320678 * (temp_scaled - 10.0).ln() - 1.196_254_1).clamp(0.0, 1.0)
-            };
-            [r, g, b]
-        } else {
-            let r = (1.292_936_2 * (temp_scaled - 60.0).powf(-0.1332047)).clamp(0.0, 1.0);
-            let g = (1.129_890_9 * (temp_scaled - 60.0).powf(-0.0755148)).clamp(0.0, 1.0);
-            let b = 1.0;
-            [r, g, b]
+impl Default for WhiteBalanceGains {
+    fn default() -> Self {
+        Self {
+            red: 0.0,
+            green: 0.0,
+            blue: 0.0
         }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct Resolution {
+    pub width: u32,
+    pub height: u32,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum SceneMode {
+    Standard,
+    Portrait,
+    Night,
+    Action,
+    Backlit,
+    Macro,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum ColorFilter {
+    None,
+    Sepia,
+    Mono,
+    Vibrant,
+    Cool,
+    Warm,
+}
+
+impl Default for CameraSettings {
+    fn default() -> Self {
+        Self {
+            exposure_mode: ExposureMode::Continuous,
+            custom_exposure: None,
+            exposure_compensation: Some(0.0),
+            exposure_stacking: false,
+            focus_mode: FocusMode::Auto,
+            focus_distance: Some(0.5),
+            focus_point_of_interest: Some((0.5, 0.5)),
+            white_balance_mode: WhiteBalanceMode::Auto,
+            white_balance_gains: None,
+            zoom_factor: Some(1.0),
+            frame_rate: Some(30.0),
+            resolution: Some(Resolution{width: 1920, height: 1080}),
+            hdr_enabled: false,
+            stabilization_enabled: true,
+            low_light_boost: Some(false),
+            scene_mode_hint: Some(SceneMode::Standard),
+            brightness: Some(0.5),
+            contrast: Some(0.5),
+            saturation: Some(0.5),
+            sharpness: None,
+            hue: Some(0.5),
+            noise_reduction: None,
+            gamma: Some(0.5),
+            color_filter: None,
+            is_updated: true,
+        }
+    }
+}
+
+
+impl CameraSettings {
+    pub fn set_brightness(&mut self, value: f32) {
+        let v = value.clamp(0.0, 1.0);
+        self.brightness = Some(v);
+        self.is_updated = true;
+    }
+
+    pub fn set_contrast(&mut self, value: f32) {
+        let v = value.clamp(0.0, 1.0);
+        self.contrast = Some(v);
+        self.is_updated = true;
+    }
+
+    pub fn set_saturation(&mut self, value: f32) {
+        let v = value.clamp(0.0, 1.0);
+        self.saturation = Some(v);
+        self.is_updated = true;
+    }
+
+    pub fn set_sharpness(&mut self, value: f32) {
+        let v = value.clamp(0.0, 1.0);
+        match v < 0.1 {
+            true => self.sharpness = None,
+            false => self.sharpness = Some(v)
+        }
+        self.is_updated = true;
+    }
+
+    pub fn set_hue(&mut self, value: f32) {
+        let v = value.clamp(0.0, 1.0);
+        self.hue = Some(v);
+        self.is_updated = true;
+    }
+
+    pub fn set_noise_reduction(&mut self, value: f32) {
+        let v = value.clamp(0.0, 1.0);
+        match v < 0.1 {
+            true => self.noise_reduction = None,
+            false => self.noise_reduction = Some(v)
+        }
+        self.is_updated = true;
+    }
+
+    pub fn set_gamma(&mut self, value: f32) {
+        let v = value.clamp(0.0, 1.0);
+        self.gamma = Some(v);
+        self.is_updated = true;
+    }
+
+    pub fn set_focus_mode(&mut self, mode: FocusMode) {
+        if mode != FocusMode::Manual { self.focus_distance = Some(0.5) };
+        self.focus_mode = mode;
+        self.is_updated = true;
+    }
+
+    pub fn set_focus_distance(&mut self, value: f32) {
+        if self.focus_mode == FocusMode::Manual {
+            let v = value.clamp(0.0, 1.0);
+            self.focus_distance = Some(v);
+            self.is_updated = true;
+        }
+    }
+
+    pub fn set_exposure_compensation(&mut self, value: f32) {
+        let ev = (value.clamp(0.0, 1.0) * 4.0) - 2.0;
+        self.exposure_compensation = Some(ev);
+        self.is_updated = true;
+    }
+
+    pub fn set_custom_exposure(&mut self, duration_percentage: f32, iso_percentage: f32) {
+        self.custom_exposure = Some(CustomExposure { 
+            duration: duration_percentage.clamp(0.0, 1.0), 
+            iso: iso_percentage.clamp(0.0, 1.0),
+        });
+        self.exposure_mode = ExposureMode::Custom;
+        self.is_updated = true;
+    }
+
+    pub fn set_exposure_mode(&mut self, mode: ExposureMode) {
+        if mode != ExposureMode::Custom { self.custom_exposure = None };
+        self.exposure_mode = mode;
+        self.is_updated = true;
+    }
+
+    pub fn set_white_balance_mode(&mut self, mode: WhiteBalanceMode) {
+        if mode != WhiteBalanceMode::Custom { self.white_balance_gains = None };
+        self.white_balance_mode = mode;
+        self.is_updated = true;
+    }
+
+    pub fn set_white_balance_gains_red(&mut self, red: f32) {
+        let g = self.white_balance_gains.unwrap_or_default();
+        let gains = WhiteBalanceGains::from(red.clamp(0.0, 1.0), g.green, g.blue);
+        self.white_balance_gains = Some(gains);
+        self.white_balance_mode = WhiteBalanceMode::Custom;
+        self.is_updated = true;
+    }
+
+    pub fn set_white_balance_gains_green(&mut self, green: f32) {
+        let g = self.white_balance_gains.unwrap_or_default();
+        let gains = WhiteBalanceGains::from(g.red, green.clamp(0.0, 1.0), g.blue);
+        self.white_balance_gains = Some(gains);
+        self.white_balance_mode = WhiteBalanceMode::Custom;
+        self.is_updated = true;
+    }
+
+    pub fn set_white_balance_gains_blue(&mut self, blue: f32) {
+        let g = self.white_balance_gains.unwrap_or_default();
+        let gains = WhiteBalanceGains::from(g.red, g.green, blue.clamp(0.0, 1.0));
+        self.white_balance_gains = Some(gains);
+        self.white_balance_mode = WhiteBalanceMode::Custom;
+        self.is_updated = true;
+    }
+
+    pub fn set_zoom_factor(&mut self, value: f32) {
+        let zoom = 1.0 + value.clamp(0.0, 1.0) * 9.0;
+        self.zoom_factor = Some(zoom);
+        self.is_updated = true;
+    }
+
+    pub fn set_hdr_enabled(&mut self, enabled: bool) {
+        self.hdr_enabled = enabled;
+        self.is_updated = true;
+    }
+
+    pub fn set_stabilization_enabled(&mut self, enabled: bool) {
+        self.stabilization_enabled = enabled;
+        self.is_updated = true;
+    }
+
+    pub fn set_low_light_boost(&mut self, enabled: bool) {
+        self.low_light_boost = Some(enabled);
+        self.is_updated = true;
+    }
+
+    pub fn set_scene_mode(&mut self, scene: SceneMode) {
+        self.scene_mode_hint = Some(scene);
+        self.is_updated = true;
+    }
+
+    pub fn set_focus_point_of_interest(&mut self, x: f32, y: f32) {
+        let clamped = (x.clamp(0.0, 1.0), y.clamp(0.0, 1.0));
+        self.focus_point_of_interest = Some(clamped);
+        self.is_updated = true;
     }
 }

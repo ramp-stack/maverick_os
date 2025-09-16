@@ -14,8 +14,7 @@ use std::sync::mpsc::Sender;
 
 pub use cache::{Cache, ActiveCache};
 pub use clipboard::Clipboard;
-pub use camera::Camera;
-pub use camera::ImageSettings;
+pub use camera::{Camera, CameraSettings, CameraError, ExposureMode, FocusMode, WhiteBalanceMode};
 pub use share::Share;
 pub use app_support::ApplicationSupport;
 pub use cloud::CloudStorage;
@@ -23,30 +22,6 @@ pub use photo_picker::{PhotoPicker, ImageOrientation};
 pub use safe_area::SafeAreaInsets;
 pub use haptics::Haptics;
 pub use notifications::Notifications;
-
-// Define CameraError here since it's not exported from the camera module
-#[derive(Debug)]
-pub enum CameraError {
-    FailedToGetFrame,
-    InitializationFailed,
-    DeviceNotFound,
-    PermissionDenied,
-    Unknown(String),
-}
-
-impl std::fmt::Display for CameraError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            CameraError::InitializationFailed => write!(f, "Camera initialization failed"),
-            CameraError::DeviceNotFound => write!(f, "Camera device not found"),
-            CameraError::PermissionDenied => write!(f, "Camera permission denied"),
-            CameraError::FailedToGetFrame => write!(f, "Camera failed to get frame"),
-            CameraError::Unknown(msg) => write!(f, "Unknown camera error: {msg}"),
-        }
-    }
-}
-
-impl std::error::Error for CameraError {}
 
 /// `HardwareContext` contains interfaces to various hardware.
 #[derive(Clone)]
@@ -116,7 +91,7 @@ impl Context {
     #[doc = include_str!("examples/open_camera.rs")]
     /// ```
     pub fn open_camera(&self) -> Result<Camera, CameraError> {
-        Ok(Camera::new())
+        Camera::new()
     }
 
     /// Opens the device camera without AI processing on iOS and macOS.
@@ -126,7 +101,7 @@ impl Context {
     #[doc = include_str!("examples/open_unprocessed.rs")]
     /// ```
     pub fn open_unprocessed_camera(&self) -> Result<Camera, CameraError> {
-         Ok(Camera::new_unprocessed())
+        Camera::new_unprocessed()
     }
 
     /// Returns the contents of the device's clipboard.
