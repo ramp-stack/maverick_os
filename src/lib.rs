@@ -3,7 +3,7 @@ use std::future::Future;
 use std::any::TypeId;
 
 #[cfg(target_os = "android")]
-use winit::platform::android::activity::AndroidApp;
+pub use winit::platform::android::activity::AndroidApp;
 
 mod state;
 pub use state::State;
