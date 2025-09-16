@@ -438,22 +438,23 @@ impl AndroidCamera {
         Ok(rgba)
     }
 
-    pub fn frame(&self) -> Result<RgbaImage, Box<dyn Error>> {
+    pub fn frame(&self) -> Result<RgbaImage, CameraError> {
         println!("Starting get_latest_frame");
 
         // Ensure we have permission before trying to get frame
-        if !self.has_camera_permission()? {
-            return Err("Camera permission not granted".into());
+        if !self.has_camera_permission().map_err(|_| CameraError::PermissionDenied)? {
+            return Err(CameraError::PermissionDenied);
         }
 
-        if !self.wait_for_camera_ready(10)? {
-            return Err("Camera session not ready within timeout".into());
+        if !self.wait_for_camera_ready(10).map_err(|_| CameraError::PermissionDenied)? {
+            return Err(CameraError::PermissionDenied);
         }
 
-        let mut env = self.java_vm.attach_current_thread()?;
+
+        let mut env = self.java_vm.attach_current_thread().map_err(|_| CameraError::PermissionDenied)?;
         println!("Attached to Java thread.");
 
-        let camera_helper = self.camera_helper_instance.as_ref().ok_or("CameraHelper not initialized")?;
+        let camera_helper = self.camera_helper_instance.as_ref().ok_or(CameraError::PermissionDenied)?;
         println!("CameraHelper instance retrieved: {:?}", camera_helper);
 
         let session_ready = env.call_method(
@@ -461,11 +462,13 @@ impl AndroidCamera {
             "isSessionReady",
             "()Z",
             &[],
-        )?.z()?;
+        ).map_err(|_| CameraError::PermissionDenied)?
+        .z()
+        .map_err(|_| CameraError::PermissionDenied)?;
         println!("Session ready status: {}", session_ready);
 
         if !session_ready {
-            return Err("Camera session still not ready after waiting".into());
+            return Err(CameraError::PermissionDenied);
         }
 
         let image_obj = env.call_method(
@@ -473,20 +476,22 @@ impl AndroidCamera {
             "acquireLatestImage",
             "()Landroid/media/Image;",
             &[],
-        )?.l()?;
+        ).map_err(|_| CameraError::PermissionDenied)?
+        .l()
+        .map_err(|_| CameraError::PermissionDenied)?;
         println!("Acquired image object: {:?}", image_obj);
 
         if image_obj.is_null() {
             println!("No image available.");
-            return Err("No image available".into());
+            return Err(CameraError::PermissionDenied);
         }
 
         println!("Image acquired successfully: {:?}", image_obj);
 
-        let (w, h) = self.get_image_dimensions(&image_obj)?;
+        let (w, h) = self.get_image_dimensions(&image_obj).map_err(|_| CameraError::PermissionDenied)?;;
         println!("Image dimensions retrieved: Width = {}, Height = {}", w, h);
 
-        let data = self.convert_yuv_to_rgba(&image_obj, w, h)?;
+        let data = self.convert_yuv_to_rgba(&image_obj, w, h).map_err(|_| CameraError::PermissionDenied)?;;
         println!("YUV to RGBA conversion completed. Data length: {}", data.len());
 
         let mut img = RgbaImage::new(w as u32, h as u32);
@@ -499,7 +504,7 @@ impl AndroidCamera {
         }
         println!("Populated RgbaImage with pixel data.");
 
-        env.call_method(&image_obj, "close", "()V", &[])?;
+        env.call_method(&image_obj, "close", "()V", &[]).map_err(|_| CameraError::PermissionDenied)?;;
         println!("Closed image to free resources.");
 
         println!("Successfully converted image to RGBA");
