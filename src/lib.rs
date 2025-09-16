@@ -158,7 +158,7 @@ macro_rules! start {
         }
 
         #[cfg(target_os = "android")]
-        #[no_mangle]
+        #[unsafe(no_mangle)]
         pub fn maverick_main(app: AndroidApp) {
             MaverickOS::<$app>::start(app)
         }
