@@ -10,6 +10,7 @@ use jni::{
 use ndk_context;
 
 #[cfg(target_os = "android")]
+use crate::CameraError;
 
 #[cfg(target_os = "android")]
 use std::error::Error;
