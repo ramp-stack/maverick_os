@@ -1,1 +1,0 @@
-let username = hardware_context.get("username").expect("No username existed");

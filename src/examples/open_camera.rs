@@ -1,1 +1,0 @@
-let camera = hardware_context.open_camera().expect("Could not open camera");

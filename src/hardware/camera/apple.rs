@@ -1,50 +1,23 @@
 #![allow(non_snake_case)]
 
 use crate::hardware::{CameraSettings, CameraError};
-use crate::hardware::camera::{WhiteBalanceGains, ExposureMode, FocusMode, WhiteBalanceMode, SceneMode};
+use crate::hardware::camera::{ExposureMode, FocusMode, WhiteBalanceMode};
 use image::RgbaImage;
 // use std::sync::MutexGuard;
 use std::sync::{Arc, Mutex};
 
 #[cfg(any(target_os = "ios", target_os = "macos"))]
-use objc2::rc::{Retained, autoreleasepool};
+use objc2::rc::{Retained};
 #[cfg(any(target_os = "ios", target_os = "macos"))]
 use objc2::runtime::{ProtocolObject};
 #[cfg(any(target_os = "ios", target_os = "macos"))]
-use objc2::{DeclaredClass, msg_send, class};
+use objc2::{DeclaredClass, msg_send};
 #[cfg(any(target_os = "ios", target_os = "macos"))]
 use objc2_foundation::{ NSArray, NSDictionary, NSNumber, NSString};
 #[cfg(any(target_os = "ios", target_os = "macos"))]
-use dispatch2::{DispatchRetained, DispatchQueue, GlobalQueueIdentifier, DispatchQueueGlobalPriority};
-#[cfg(any(target_os = "ios", target_os = "macos"))]
-use objc2::__framework_prelude::NSObject;
-#[cfg(any(target_os = "ios", target_os = "macos"))]
-use objc2_core_foundation::CGPoint;
-#[cfg(any(target_os = "ios", target_os = "macos"))]
-use objc2_core_media::CMTime;
+use dispatch2::DispatchQueue;
 #[cfg(any(target_os = "ios", target_os = "macos"))]
 use objc2::ffi::nil;
-#[cfg(any(target_os = "ios", target_os = "macos"))]
-use std::thread;
-
-#[cfg(target_os = "ios")]
-use objc2_foundation::NSError;
-#[cfg(target_os = "ios")]
-use objc2_core_media::{CMSampleBuffer};
-#[cfg(target_os = "ios")]
-use objc2::{define_class, AllocAnyThread};
-#[cfg(target_os = "ios")]
-use objc2::runtime::{NSObjectProtocol};
-#[cfg(target_os = "ios")]
-use std::{slice::from_raw_parts};
-
-
-#[cfg(target_os = "ios")]
-use objc2_av_foundation::{
-    AVCaptureConnection,
-    AVCaptureOutput,
-    AVCaptureVideoDataOutputSampleBufferDelegate,
-};
 
 #[cfg(any(target_os = "ios", target_os = "macos"))]
 use objc2_av_foundation::{
@@ -59,21 +32,9 @@ use objc2_av_foundation::{
     AVCaptureSessionPresetPhoto,
     AVCaptureDeviceTypeBuiltInWideAngleCamera,
     AVCaptureDevice,
-    AVCaptureVideoStabilizationMode,
     AVCaptureExposureMode,
     AVCaptureFocusMode,
     AVCaptureWhiteBalanceMode,
-    AVCaptureTorchMode,
-    AVCaptureWhiteBalanceGains,
-};
-
-#[cfg(target_os = "ios")]
-use objc2_core_video::{
-    CVPixelBufferGetHeight,
-    CVPixelBufferGetWidth,
-    CVPixelBufferGetBytesPerRow,
-    CVPixelBufferGetBaseAddress,
-    CVPixelBufferLockFlags
 };
 
 #[cfg(any(target_os = "ios", target_os = "macos"))]
@@ -309,7 +270,7 @@ impl UnprocessedAppleCamera {
     pub fn frame(&self) -> Option<RgbaImage> {
         let settings = self.settings().lock().unwrap().clone();
         if settings.is_updated { 
-            self.apply_settings(&settings);
+            let _ = self.apply_settings(&settings);
             self.settings().lock().as_mut().unwrap().is_updated = false;
         }
         if !self.processor.is_ready() { return None; }
@@ -339,30 +300,29 @@ impl UnprocessedAppleCamera {
                     }
                     ExposureMode::Custom => {
                         if let Some(custom) = settings.custom_exposure {
-                            unsafe {
-                                let format_retained = device.activeFormat();
-                                let format: &objc2::runtime::Object = format_retained.as_ref();                            let min_d: objc2_core_media::CMTime = msg_send![format, minExposureDuration];
-                                let max_d: objc2_core_media::CMTime = msg_send![format, maxExposureDuration];
+                            let format_retained = device.activeFormat();
+                            let format: &objc2::runtime::AnyObject = format_retained.as_ref();                            
+                            let min_d: objc2_core_media::CMTime = msg_send![format, minExposureDuration];
+                            let max_d: objc2_core_media::CMTime = msg_send![format, maxExposureDuration];
 
-                                let dur = (min_d.value as f64 / min_d.timescale as f64)
-                                    + ((max_d.value as f64 / max_d.timescale as f64)
-                                    - (min_d.value as f64 / min_d.timescale as f64))
-                                    * custom.duration.clamp(0.0, 1.0) as f64;
+                            let dur = (min_d.value as f64 / min_d.timescale as f64)
+                                + ((max_d.value as f64 / max_d.timescale as f64)
+                                - (min_d.value as f64 / min_d.timescale as f64))
+                                * custom.duration.clamp(0.0, 1.0) as f64;
 
-                                let duration = objc2_core_media::CMTime {
-                                    value: (dur * 1_000_000_000.0) as i64,
-                                    timescale: 1_000_000_000,
-                                    flags: objc2_core_media::CMTimeFlags(0),
-                                    epoch: 0,
-                                };
+                            let duration = objc2_core_media::CMTime {
+                                value: (dur * 1_000_000_000.0) as i64,
+                                timescale: 1_000_000_000,
+                                flags: objc2_core_media::CMTimeFlags(0),
+                                epoch: 0,
+                            };
 
-                                let min_iso = device.activeFormat().minISO();
-                                let max_iso = device.activeFormat().maxISO();
-                                let iso = (min_iso + (max_iso - min_iso) * custom.iso.clamp(0.0, 1.0)).clamp(min_iso, max_iso);
+                            let min_iso = device.activeFormat().minISO();
+                            let max_iso = device.activeFormat().maxISO();
+                            let iso = (min_iso + (max_iso - min_iso) * custom.iso.clamp(0.0, 1.0)).clamp(min_iso, max_iso);
 
-                                device.setExposureMode(objc2_av_foundation::AVCaptureExposureMode::Custom);
-                                let () = msg_send![device, setExposureModeCustomWithDuration: duration ISO: iso completionHandler: nil];
-                            }
+                            device.setExposureMode(objc2_av_foundation::AVCaptureExposureMode::Custom);
+                            let () = msg_send![device, setExposureModeCustomWithDuration: duration, ISO: iso, completionHandler: nil];
                         }
                     }
                 }
@@ -377,8 +337,8 @@ impl UnprocessedAppleCamera {
                         if let Some(pos) = settings.focus_distance {
                             let _: () = msg_send![
                                 device,
-                                setFocusModeLockedWithLensPosition: pos
-                                completionHandler: core::ptr::null::<objc2::runtime::Object>()
+                                setFocusModeLockedWithLensPosition: pos,
+                                completionHandler: core::ptr::null::<objc2::runtime::AnyObject>()
                             ];
 
                         }
@@ -402,10 +362,10 @@ impl UnprocessedAppleCamera {
                                 greenGain: 1.0 + (max_gain - 1.0) * gains.green.clamp(0.0, 1.0),
                                 blueGain: 1.0 + (max_gain - 1.0) * gains.blue.clamp(0.0, 1.0),
                             };
-                            let block = block2::ConcreteBlock::new(|_: *mut objc2::runtime::Object| {});
+                            let block = block2::StackBlock::new(|_: *mut objc2::runtime::AnyObject| {});
                             let _: () = msg_send![
                                 device,
-                                setWhiteBalanceModeLockedWithDeviceWhiteBalanceGains: wb_gains
+                                setWhiteBalanceModeLockedWithDeviceWhiteBalanceGains: wb_gains,
                                 completionHandler: &*block
                             ];
                         }
@@ -424,28 +384,28 @@ impl Default for UnprocessedAppleCamera {
     fn default() -> Self { Self::new() }
 }
 
-#[cfg(any(target_os = "ios", target_os = "macos"))]
-pub trait DeviceWhiteBalanceGainsExt {
-    fn setWhiteBalanceModeLockedWithDeviceWhiteBalanceGains(&self, gains: WhiteBalanceGains);
-}
+// #[cfg(any(target_os = "ios", target_os = "macos"))]
+// pub trait DeviceWhiteBalanceGainsExt {
+//     fn setWhiteBalanceModeLockedWithDeviceWhiteBalanceGains(&self, gains: WhiteBalanceGains);
+// }
 
-#[cfg(any(target_os = "ios", target_os = "macos"))]
-impl DeviceWhiteBalanceGainsExt for Retained<AVCaptureDevice> {
-    fn setWhiteBalanceModeLockedWithDeviceWhiteBalanceGains(&self, gains: WhiteBalanceGains) {
-        unsafe {
-            // Create an AVCaptureWhiteBalanceGains object via Objective-C
-            let device_gains: *mut AVCaptureWhiteBalanceGains = msg_send![
-                class!(AVCaptureWhiteBalanceGains),
-                deviceWhiteBalanceGainsWithRed: gains.red,
-                green: gains.green,
-                blue: gains.blue,
-            ];
+// #[cfg(any(target_os = "ios", target_os = "macos"))]
+// impl DeviceWhiteBalanceGainsExt for Retained<AVCaptureDevice> {
+//     fn setWhiteBalanceModeLockedWithDeviceWhiteBalanceGains(&self, gains: WhiteBalanceGains) {
+//         unsafe {
+//             // Create an AVCaptureWhiteBalanceGains object via Objective-C
+//             let device_gains: *mut AVCaptureWhiteBalanceGains = msg_send![
+//                 class!(AVCaptureWhiteBalanceGains),
+//                 deviceWhiteBalanceGainsWithRed: gains.red,
+//                 green: gains.green,
+//                 blue: gains.blue,
+//             ];
 
-            // Call the lock method with the gains object
-            let _: () = msg_send![self, setWhiteBalanceModeLockedWithDeviceWhiteBalanceGains: device_gains];
-        }
-    }
-}
+//             // Call the lock method with the gains object
+//             let _: () = msg_send![self, setWhiteBalanceModeLockedWithDeviceWhiteBalanceGains: device_gains];
+//         }
+//     }
+// }
 
 
 

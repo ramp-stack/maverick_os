@@ -22,6 +22,7 @@ pub use photo_picker::{PhotoPicker, ImageOrientation};
 pub use safe_area::SafeAreaInsets;
 pub use haptics::Haptics;
 pub use notifications::Notifications;
+pub use logger::Logger;
 
 /// `HardwareContext` contains interfaces to various hardware.
 #[derive(Clone)]
@@ -31,9 +32,9 @@ pub struct Context {
 
 impl Context {
     pub(crate) fn new() -> Self {
+        Logger::start(None);
         Clipboard::new();
 
-        logger::Logger::start(None);
         Self {
             cache: Cache::new(),
         }
@@ -42,7 +43,7 @@ impl Context {
     /// Registers notifications so they can be queued for delivery.
     ///
     /// ```rust
-    #[doc = include_str!("examples/register_notifs.rs")]
+    /// hardware_context.register_notifs();
     /// ```
     pub fn register_notifs(&self) {
         Notifications::register();
@@ -52,7 +53,7 @@ impl Context {
     /// Notifications will only be sent while the app is backgrounded.
     ///
     /// ```rust
-    #[doc = include_str!("examples/push_notifs.rs")]
+    /// ctx.hardware.push_notification("Reminder", "Don't forget your meeting at 3 PM today.");
     /// ```
     pub fn push_notification(&self, title: &str, msg: &str) {
         Notifications::push(title, msg);
@@ -68,7 +69,7 @@ impl Context {
     /// Trigger vibration haptics on the device.
     ///
     /// ```rust
-    #[doc = include_str!("examples/haptic.rs")]
+    /// ctx.hardware.haptic()
     /// ```
     pub fn haptic(&self) {
         Haptics::vibrate()
@@ -78,7 +79,7 @@ impl Context {
     /// These values can be used to adjust UI layout to avoid screen cutouts or system UI elements.
     ///
     /// ```rust
-    #[doc = include_str!("examples/safe_area.rs")]
+    /// let safe_areas = ctx.hardware.safe_area_insets();
     /// ```
     pub fn safe_area_insets(&self) -> (f32, f32, f32, f32) {
         SafeAreaInsets::get()
@@ -88,7 +89,7 @@ impl Context {
     /// Uses the back-facing camera on mobile devices and the default camera on desktop.
     ///
     /// ```rust
-    #[doc = include_str!("examples/open_camera.rs")]
+    /// let camera = ctx.hardware.open_camera().map(|cam| cam.start());
     /// ```
     pub fn open_camera(&self) -> Result<Camera, CameraError> {
         Camera::new()
@@ -98,7 +99,7 @@ impl Context {
     /// On all other platforms, opens the default camera.
     ///
     /// ```rust
-    #[doc = include_str!("examples/open_unprocessed.rs")]
+    /// let camera = ctx.hardware.open_unprocessed_camera().map(|cam| cam.start());
     /// ```
     pub fn open_unprocessed_camera(&self) -> Result<Camera, CameraError> {
         Camera::new_unprocessed()
@@ -107,7 +108,7 @@ impl Context {
     /// Returns the contents of the device's clipboard.
     ///
     /// ```rust
-    #[doc = include_str!("examples/paste.rs")]
+    /// let clipboard = ctx.hardware.paste();
     /// ```
     pub fn paste(&self) -> String {
         Clipboard::get()
@@ -116,7 +117,7 @@ impl Context {
     /// Sets the contents of the device's clipboard to the provided `String`.
     ///
     /// ```rust
-    #[doc = include_str!("examples/copy.rs")]
+    /// ctx.hardware.copy("WiFiPassword123");
     /// ```
     pub fn copy(&self, text: String) {
         Clipboard::set(text);
@@ -125,7 +126,7 @@ impl Context {
     /// Opens the system share dialog, allowing the provided string to be shared. 
     ///
     /// ```rust
-    #[doc = include_str!("examples/share.rs")]
+    /// ctx.hardware.share("WiFiPassword123");
     /// ```
     #[cfg(any(target_os = "macos", target_os = "ios"))]
     pub fn share(&self, text: &str) {
@@ -135,7 +136,13 @@ impl Context {
     /// Opens the system share dialog, allowing the provided image to be shared.
     ///
     /// ```rust
-    #[doc = include_str!("examples/share_image.rs")]
+    /// let my_image: RgbaImage = ImageReader::open("dog.png")
+    ///     .expect("Failed to open image")
+    ///     .decode()
+    ///     .expect("Failed to decode image")
+    ///     .into_rgba8();
+    ///
+    /// ctx.hardware.share_image(my_image);
     /// ```
     #[cfg(any(target_os = "macos", target_os = "ios"))]
     pub fn share_image(&self, image: image::RgbaImage) {
@@ -145,7 +152,8 @@ impl Context {
     /// Opens the system photo picker dialog.
     ///
     /// ```rust
-    #[doc = include_str!("examples/open_photo_picker.rs")]
+    /// let (tx, rx) = channel::<(Vec<u8>, ImageOrientation)>();
+    /// ctx.hardware.open_photo_picker(tx);
     /// ```
     pub fn open_photo_picker(&self, sender: Sender<(Vec<u8>, ImageOrientation)>) {
         PhotoPicker::open(sender);
@@ -154,7 +162,7 @@ impl Context {
     /// Save the key-value pair to cloud storage.
     ///
     /// ```rust
-    #[doc = include_str!("examples/cloud_save.rs")]
+    /// hardware_context.save("username", "alice");
     /// ```
     pub fn cloud_save(&self, key: &str, value: &str) -> Result<(), String> {
         CloudStorage::save(key, value);
@@ -164,7 +172,7 @@ impl Context {
     /// Retrieves a value from cloud storage for the given key.
     ///
     /// ```rust
-    #[doc = include_str!("examples/cloud_get.rs")]
+    /// let username = hardware_context.get("username").expect("No username existed");
     /// ```
     pub fn cloud_get(&self, key: &str) -> Option<String> {
         CloudStorage::get(key)
@@ -173,7 +181,7 @@ impl Context {
     /// Removes the value associated with the given key from cloud storage.
     ///
     /// ```rust
-    #[doc = include_str!("examples/cloud_remove.rs")]
+    /// hardware_context.remove("username");
     /// ```
     pub fn cloud_remove(&self, key: &str) -> Result<(), String> {
         CloudStorage::remove(key);
@@ -183,7 +191,7 @@ impl Context {
     /// Clears all key–value pairs from cloud storage.
     ///
     /// ```rust
-    #[doc = include_str!("examples/cloud_clear.rs")]
+    /// hardware_context.clear();
     /// ```
     pub fn cloud_clear(&self) -> Result<(), String> {
         CloudStorage::clear();

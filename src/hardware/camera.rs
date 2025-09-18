@@ -15,7 +15,6 @@ use crate::hardware::camera::windows_linux::WindowsLinuxCamera;
 use image::RgbaImage;
 use std::sync::{Arc, Mutex};
 
-// Define CameraError here since it's not exported from the camera module
 #[derive(Debug)]
 pub enum CameraError {
     FailedToGetFrame,

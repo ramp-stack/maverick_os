@@ -1,6 +1,3 @@
-#[cfg(target_os = "macos")]
-use cli_clipboard;
-
 #[cfg(target_os = "ios")]
 use objc2_foundation::NSString;
 #[cfg(target_os = "ios")]
@@ -14,19 +11,7 @@ use jni::{JNIEnv, JavaVM};
 #[cfg(target_os = "android")]
 use std::sync::{Arc, Mutex};
 
-//Cross pl]form clipboard sys for coping and pasting text.
 
-// System:Wo
-//<iOS>>>: Uses UIPastboard that has GET and SET methods for setting text into the pastboard and Getting text from said clipboard.
-
-//<Android>>>: Uses JNI to access the sys ClipBoardManger it has GET and SET methods for setting text into the pastboard and Getting text from said clipboard.
-
-//<macOS>>>: Uses cli_clipboard it has GET and SET methods for setting text into the pastboard and Getting text from said clipboard.
-
-//<Linux & Windews>>>: no operation methods, but should be able to use cli_clipboard for both of them.
-
-
-// Global static instance for Android
 #[cfg(target_os = "android")]
 static CLIPBOARD_INSTANCE: Mutex<Option<Clipboard>> = Mutex::new(None);
 

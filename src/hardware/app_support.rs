@@ -2,14 +2,11 @@
 use objc2_foundation::{NSString, NSURL};
 #[cfg(any(target_os = "ios", target_os = "macos"))]
 use objc2::msg_send;
+#[cfg(any(target_os = "ios", target_os = "macos"))]
 use std::path::PathBuf;
+
 #[cfg(target_os = "ios")]
 use objc2::__framework_prelude::AnyObject;
-#[cfg(any(target_os = "ios", target_os = "macos"))]
-use objc2::rc::Retained;
-#[cfg(any(target_os = "ios", target_os = "macos"))]
-use objc2::runtime::Bool;
-
 #[cfg(target_os = "ios")]
 use std::ffi::CStr;
 #[cfg(target_os = "ios")]
@@ -17,6 +14,10 @@ use objc2::runtime::AnyClass;
 
 #[cfg(target_os = "macos")]
 use objc2_foundation::{NSError, NSDictionary, NSAutoreleasePool, NSFileManager, NSSearchPathDirectory, NSSearchPathDomainMask};
+#[cfg(target_os = "macos")]
+use objc2::rc::Retained;
+#[cfg(target_os = "macos")]
+use objc2::runtime::Bool;
 
 #[cfg(any(target_os = "linux", target_os = "windows"))]
 use std::env;

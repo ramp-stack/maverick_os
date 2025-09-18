@@ -2,8 +2,6 @@ use std::sync::mpsc::Sender;
 
 #[cfg(target_os = "ios")]
 use block::{ConcreteBlock, RcBlock};
-#[cfg(target_os = "ios")]
-use dispatch2;
 #[cfg(any(target_os = "ios", target_os="macos"))]
 use objc2::{class, msg_send, runtime::{AnyClass, AnyObject}};
 #[cfg(target_os = "ios")]
@@ -17,7 +15,7 @@ use objc2::ffi::objc_retain;
 #[cfg(target_os = "ios")]
 use std::ffi::c_void;
 #[cfg(target_os = "ios")]
-use std::ffi::{CStr, CString};
+use std::ffi::CString;
 #[cfg(target_os = "ios")]
 use objc2::rc::autoreleasepool;
 
@@ -39,25 +37,7 @@ use std::fs;
 #[cfg(target_os = "macos")]
 use objc2::rc::{Retained, autoreleasepool};
 
-// Cross platform photo picker for selecting images from said users device.
-
-// System:
-// <iOS>>>: Uses PHPickerViewController with a delegate that converts the selected UIImage into png data.
-//      The image orientation is preserved via ImageOrientation.
-
-// <macOS>>>: Uses NSOpenPanel to let the user select an image file.
-//      The file is read from the disk and returned as raw bytes with the orientation set to UP.
-
-// <Windows>>>: Spawns a PowerShell OpenFileDialog for selecting an image.
-//      The selected file is read into memory, and the orientation is dertemined from the file type currently the defaults to Up expect for the basic EXIF handling in JPEGs.
-
-// <Linux>>>: Tryes to use the sytem file pickers in order of pref, 1 zenity 2 kdialog 3 nothing I guess fallback.
-//      When a file is selected it is read into memory and orientation is currently defaults to Up except for basic EXIF handling in JPEGs
-
-// <Android>>>: Nothing yett!!
-
-
-
+/// Photo picker for selecting images from said users device.
 #[derive(Clone)]
 pub struct PhotoPicker;
 
@@ -317,8 +297,6 @@ impl PhotoPicker {
                 let window: *mut AnyObject = msg_send![windows, firstObject];
                 let root_vc: *mut AnyObject = msg_send![window, rootViewController];
 
-                println!("Presenting picker from: {:p}", root_vc);
-
                 let null_block: *mut AnyObject = std::ptr::null_mut();
                 let _: () = msg_send![
                     root_vc,
@@ -340,10 +318,10 @@ fn create_photo_picker_delegate(sender_ptr: *mut c_void) -> *mut AnyObject {
     unsafe {
         if DELEGATE_CLASS.is_null() {
             let superclass = class!(NSObject);
-            let name = CStr::from_bytes_with_nul(b"RustPHPickerDelegate\0").unwrap();
+            let name = c"RustPHPickerDelegate";
             let mut decl = ClassBuilder::new(name, superclass).unwrap();
 
-            decl.add_ivar::<*mut c_void>(CStr::from_bytes_with_nul(b"rustSenderPtr\0").unwrap());
+            decl.add_ivar::<*mut c_void>(c"rustSenderPtr");
 
             extern "C" fn picker_did_finish_picking(
                 this: &AnyObject,
@@ -364,7 +342,7 @@ fn create_photo_picker_delegate(sender_ptr: *mut c_void) -> *mut AnyObject {
                     let result: *mut NSObject = msg_send![results_array, objectAtIndex: 0usize];
                     let item_provider: *mut AnyObject = msg_send![result, itemProvider];
 
-                    let ivar_name = CStr::from_bytes_with_nul(b"rustSenderPtr\0").unwrap();
+                    let ivar_name = c"rustSenderPtr";
                     let ivar = this.class().instance_variable(ivar_name).unwrap();
                     let sender_ptr = *ivar.load::<*mut c_void>(this);
 
@@ -383,7 +361,7 @@ fn create_photo_picker_delegate(sender_ptr: *mut c_void) -> *mut AnyObject {
 
                     let block = ConcreteBlock::new(move |image_obj: *mut AnyObject, _error: *mut AnyObject| {
                         let (data, orientation) = if !image_obj.is_null() {
-                            let orientation: i64 = unsafe { msg_send![image_obj, imageOrientation] };
+                            let orientation: i64 = msg_send![image_obj, imageOrientation];
 
                             let symbol_name = CString::new("UIImagePNGRepresentation").unwrap();
                             let func_ptr = libc::dlsym(libc::RTLD_DEFAULT, symbol_name.as_ptr());
@@ -430,7 +408,7 @@ fn create_photo_picker_delegate(sender_ptr: *mut c_void) -> *mut AnyObject {
 
         let delegate: &mut AnyObject = msg_send![DELEGATE_CLASS, new];
 
-        let ivar_name = CStr::from_bytes_with_nul(b"rustSenderPtr\0").unwrap();
+        let ivar_name = c"rustSenderPtr";
         let ivar = (*DELEGATE_CLASS).instance_variable(ivar_name).unwrap();
         let ivar_ref: &mut *mut c_void = ivar.load_mut(delegate);
         *ivar_ref = sender_ptr;

@@ -6,6 +6,7 @@ authors = ["Caleb Couch <caleb@orange.me>"]
 description = "Maverick OS"
 license = "BSD-3-Clause"
 repository = "https://github.com/ramp-stack/maverick_os"
+documentation = "https://docs.rs/maverick_os"
 
 [dependencies]
 active_rusqlite = "0.1.0"
@@ -24,6 +25,7 @@ imageproc = "0.25.0"
 dirs = "6.0.0"
 air = "0.2.6"
 #bayer = "0.1.5"
+owo-colors = "3"
 
 [target.'cfg(any(target_os = "ios", target_os = "macos"))'.dependencies]
 objc2 = "0.6.1"

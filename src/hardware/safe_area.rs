@@ -3,8 +3,6 @@ use objc2::MainThreadMarker;
 #[cfg(target_os = "ios")]
 use objc2_ui_kit::UIApplication;
 #[cfg(target_os = "ios")]
-use std::sync::Once;
-#[cfg(target_os = "ios")]
 use objc2::rc::Retained;
 
 /// Provides the safe area insets of the device screen.
@@ -17,6 +15,7 @@ impl SafeAreaInsets {
             let mtm = MainThreadMarker::new().expect("must be on the main thread");
             let window: Retained<UIApplication> = UIApplication::sharedApplication(mtm);
 
+            #[allow(deprecated)]
             if let Some(key_window) = window.keyWindow() {
                 let insets = key_window.safeAreaInsets();
 

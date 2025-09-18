@@ -1,7 +1,5 @@
 #[cfg(target_os = "ios")]
-use objc2::rc::Id;
-#[cfg(target_os = "ios")]
-use objc2::runtime::{Bool, AnyObject};
+use objc2::runtime::Bool;
 #[cfg(target_os = "ios")]
 use objc2::MainThreadMarker;
 #[cfg(target_os = "ios")]
@@ -11,9 +9,7 @@ use objc2_user_notifications::{UNUserNotificationCenter, UNNotificationRequest, 
 #[cfg(target_os = "ios")]
 use block2::StackBlock;
 #[cfg(target_os = "ios")]
-use objc2_foundation::{NSString, NSDate, NSArray, NSError};
-#[cfg(target_os = "ios")]
-use objc2::ffi::objc_retain;
+use objc2_foundation::{NSString, NSError};
 #[cfg(target_os = "ios")]
 use objc2_ui_kit::UIApplication;
 #[cfg(target_os = "ios")]
@@ -27,24 +23,6 @@ use objc2_user_notifications::{UNAuthorizationOptions, UNUserNotificationCenter,
 use block2::StackBlock;
 #[cfg(target_os = "macos")]
 use objc2::rc::autoreleasepool;
-
-// Cross platform push and local notifaciton manager for iOS and macOS
-
-// System:
-
-//<iOS>>>: We use register() for requests for perms for alerts sounds and bages using UNUserNotificationCenter.
-        //IF we get perms it automaticlly calls UIApplication.registerForRemoteNotifications() for push notifiacitons.
-        //push(title, body) schedules a local notification with a givin title and body using aa 1 second delay.
-
-//<macOS>>>: We use register() for requests for perms for alerts sounds and bages using UNUserNotificationCenter similar to iOS but only works if running in a proper .app bundle.
-        //If we get perms it automaticlly calls UIApplication.registerForRemoteNotifications() for push notifiacitons.
-        //push(title, body) schedules a local notification with a givin title and body using aa 1 second delay.
-
-//<Windows & Linux>>>: no operation methods: not impl yet!!
-
-//<Android>>>:  no operation methods: not impl yet!!!
-
-
 
 /// Register and handle push notifications.
 pub struct Notifications;
@@ -67,7 +45,7 @@ impl Notifications {
             // Use a Cell to communicate across closure boundary
             let granted_cell = Cell::new(false);
 
-            if let Some(mtm) = MainThreadMarker::new() {
+            if MainThreadMarker::new().is_some() {
                 let granted_cell_closure = granted_cell.clone();
                 let block = StackBlock::new(
                     move |granted: Bool, error: *mut NSError| {
@@ -160,9 +138,7 @@ impl Notifications {
             );
 
             let center = UNUserNotificationCenter::currentNotificationCenter();
-            unsafe {
-                center.addNotificationRequest_withCompletionHandler(&request, None);
-            }
+            center.addNotificationRequest_withCompletionHandler(&request, None);
 
             println!("Notification scheduled!");
         }
