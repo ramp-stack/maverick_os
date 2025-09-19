@@ -1,1 +1,0 @@
-hardware_context.remove("username");

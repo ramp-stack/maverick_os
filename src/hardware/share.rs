@@ -5,24 +5,16 @@ use objc2::{AnyThread, class, msg_send};
 #[cfg(target_os = "ios")]
 use objc2_foundation::{NSArray, NSObject, NSString};
 #[cfg(target_os = "ios")]
-use std::ffi::c_void;
-#[cfg(target_os = "ios")]
 use objc2::rc::{Retained, Allocated};
-#[cfg(target_os = "ios")]
-use objc2::runtime::{AnyObject, Object};
 #[cfg(target_os = "ios")]
 use objc2_foundation::{NSPoint, NSRect, NSSize};
 #[cfg(target_os = "ios")]
 use objc2_ui_kit::{
-    UIActivityViewController, UIImage, UIUserInterfaceIdiom, UIPopoverPresentationController, UIView,
-    UIViewController, UIImageOrientation, UIDevice, UIScreen
+    UIImage, UIUserInterfaceIdiom, UIPopoverPresentationController, UIView,
+    UIImageOrientation, UIDevice, UIScreen
 };
 #[cfg(target_os = "ios")]
 use std::ptr;
-#[cfg(target_os = "ios")]
-use objc2::declare_class;
-#[cfg(target_os = "ios")]
-use objc2_foundation::{MainThreadMarker};
 #[cfg(target_os = "ios")]
 use image::RgbaImage;
 
@@ -64,7 +56,7 @@ impl Share {
             let activity_controller: *mut NSObject = unsafe { msg_send![cls, alloc] };
 
             let activity_controller: *mut NSObject = unsafe {
-                msg_send![activity_controller, initWithActivityItems:&*items applicationActivities: std::ptr::null_mut::<NSArray<NSObject>>()]
+                msg_send![activity_controller, initWithActivityItems:&*items, applicationActivities: std::ptr::null_mut::<NSArray<NSObject>>()]
             };
 
             let ui_app = class!(UIApplication);
@@ -75,9 +67,9 @@ impl Share {
             let _: () = unsafe {
                 msg_send![
                     root_vc,
-                    presentViewController:activity_controller
-                    animated:true
-                    completion: std::ptr::null_mut::<objc2::runtime::Object>()
+                    presentViewController:activity_controller,
+                    animated:true,
+                    completion: std::ptr::null_mut::<objc2::runtime::AnyObject>()
                 ]
             };
         });
@@ -224,7 +216,7 @@ impl Share {
             use objc2_core_graphics::{
                 // kCGImageAlphaPremultipliedLast, 
                 CGImageAlphaInfo,
-                CGColorSpaceCreateDeviceRGB,
+                // CGColorSpaceCreateDeviceRGB,
                 CGBitmapContextCreate,
                 CGBitmapContextCreateImage,
                 // CGBitmapContextCreate,
@@ -238,7 +230,7 @@ impl Share {
             let bits_per_component = 8;
 
             let buffer = rgba_image.as_raw();
-            let color_space = unsafe { CGColorSpaceCreateDeviceRGB() };
+            let color_space = unsafe { objc2_core_graphics::CGColorSpace::new_device_rgb() };
 
             // let bitmap_info: u32 = CGImageAlphaInfo::PremultipliedLast.0 | kCGBitmapByteOrder32Big;
 
@@ -265,7 +257,7 @@ impl Share {
             // Convert CGImage to UIImage
             let scale: *mut UIScreen = unsafe { msg_send![class!(UIScreen), mainScreen] };
             let scale: f64 = unsafe { msg_send![scale, scale] };
-            let ui_image: Allocated<UIImage> = unsafe { UIImage::alloc() };
+            let ui_image: Allocated<UIImage> = UIImage::alloc();
             let ui_image = unsafe {
                 UIImage::initWithCGImage_scale_orientation(ui_image, &cg_image, scale, UIImageOrientation::Up)
             };
@@ -277,7 +269,7 @@ impl Share {
             let cls = class!(UIActivityViewController);
             let activity_controller: *mut NSObject = unsafe { msg_send![cls, alloc] };
             let activity_controller: *mut NSObject = unsafe {
-                msg_send![activity_controller, initWithActivityItems:&*items applicationActivities: ptr::null_mut::<NSArray<NSObject>>()]
+                msg_send![activity_controller, initWithActivityItems:&*items, applicationActivities: ptr::null_mut::<NSArray<NSObject>>()]
             };
 
             // For iPad, configure popover presentation
@@ -292,16 +284,13 @@ impl Share {
                 let key_window: *mut NSObject = unsafe { msg_send![shared_app, keyWindow] };
                 let root_vc: *mut NSObject = unsafe { msg_send![key_window, rootViewController] };
                 let view: Retained<UIView> = unsafe { msg_send![root_vc, view] };
-                unsafe {
-                    let _: () = unsafe { msg_send![&*popover, setSourceView: &*view] };
-                    let _: () = unsafe {
-                        msg_send![
-                            &*popover,
-                            setSourceRect: NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(1.0, 1.0)),
-                        ]
-                    };
-                        
-                }
+                let _: () = unsafe { msg_send![&*popover, setSourceView: &*view] };
+                let _: () = unsafe {
+                    msg_send![
+                        &*popover,
+                        setSourceRect: NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(1.0, 1.0)),
+                    ]
+                };
             }
 
             // Present the share sheet
@@ -312,9 +301,9 @@ impl Share {
             let _: () = unsafe {
                 msg_send![
                     root_vc,
-                    presentViewController:activity_controller
-                    animated:true
-                    completion: ptr::null_mut::<objc2::runtime::Object>()
+                    presentViewController:activity_controller,
+                    animated:true,
+                    completion: ptr::null_mut::<objc2::runtime::AnyObject>()
                 ]
             };
         });

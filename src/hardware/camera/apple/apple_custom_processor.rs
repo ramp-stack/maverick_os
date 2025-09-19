@@ -1,9 +1,14 @@
 #![allow(non_snake_case, non_upper_case_globals)]
 
-use crate::hardware::{CameraSettings, WhiteBalanceMode};
 use std::{sync::{Arc, Mutex}, slice::from_raw_parts};
 use image::RgbaImage;
 
+
+#[cfg(target_os = "macos")]
+use crate::hardware::WhiteBalanceMode;
+
+#[cfg(any(target_os = "ios", target_os = "macos"))]
+use crate::hardware::CameraSettings;
 #[cfg(any(target_os = "ios", target_os = "macos"))]
 use objc2::__framework_prelude::NSObject;
 #[cfg(any(target_os = "ios", target_os = "macos"))]
@@ -50,6 +55,11 @@ define_class!(
             
             if let Some(raw_image) = self.process_sample_buffer(sample_buffer) {
                 let settings = self.settings().lock().unwrap().clone();
+
+                #[cfg(not(target_os = "ios"))]
+                let processed_image = ImageProcessor::apply_image_settings(raw_image, &settings);
+                
+                #[cfg(target_os = "ios")]
                 let mut processed_image = ImageProcessor::apply_image_settings(raw_image, &settings);
 
                 #[cfg(target_os = "ios")]
@@ -266,7 +276,7 @@ impl ImageProcessor {
             }
 
             if need_hsv {
-                let (mut h, mut s, mut v) = Self::rgb_to_hsv(r, g, b);
+                let (mut h, mut s, v) = Self::rgb_to_hsv(r, g, b);
                 s *= sat; s = s.clamp(0.0, 1.0);
                 h = (h + hue_shift) % 360.0; if h < 0.0 { h += 360.0; }
                 let (r2, g2, b2) = Self::hsv_to_rgb(h, s, v);

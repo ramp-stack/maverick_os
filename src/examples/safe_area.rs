@@ -1,1 +1,0 @@
-let (t, r, b, l) = hardware_context.safe_area_insets();

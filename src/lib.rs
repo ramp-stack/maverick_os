@@ -10,26 +10,103 @@ pub use state::State;
 
 pub use active_rusqlite;
 
-pub mod hardware;
-use crate::hardware::ApplicationSupport;
-pub use crate::hardware::Cache;
-pub use crate::hardware::PhotoPicker;
-pub use crate::hardware::ImageOrientation;
-pub use crate::hardware::Camera;
-pub use crate::hardware::CameraError;
+mod hardware;
+pub use hardware::{
+    Cache, 
+    ActiveCache,
+    Clipboard,
+    Camera, 
+    CameraSettings, 
+    CameraError, 
+    ExposureMode, 
+    FocusMode, 
+    WhiteBalanceMode,
+    Share,
+    ApplicationSupport,
+    CloudStorage,
+    PhotoPicker, 
+    ImageOrientation,
+    SafeAreaInsets,
+    Haptics,
+    Notifications,
+    Logger,
 
-pub mod runtime;
-use runtime::{Runtime, Services, ThreadConstructor, Service};
+    Context as HardwareContext,
+};
 
-pub mod window;
-use window::{WindowManager, EventHandler, Event, Lifetime};
+mod runtime;
+pub use runtime::{
+    async_trait,
+    Duration,
+    ThreadContext, 
+    ThreadConstructor,
+    Service, 
+    ServiceList, 
+    BackgroundTask, 
+    BackgroundList, 
+    Services, 
+
+    Error as RuntimeError,
+    RuntimeRequest,
+    Handle,
+    Context as RuntimeContext,
+    Runtime,
+};
+
+mod window;
+pub use window::{
+    WindowEvent, 
+    DeviceEvent, 
+    DeviceId, 
+    TouchPhase, 
+    Touch, 
+    AxisId, 
+    MouseButton, 
+    MouseScrollDelta, 
+    Modifiers, 
+    ElementState, 
+    KeyEvent,
+    NamedKey, 
+    SmolStr, 
+    Key,
+    Window,
+
+    Context as WindowContext,
+    Event,
+    Lifetime,
+    Input,
+    EventHandler,
+    WindowManager,
+};
 
 pub mod prelude {
     pub use crate::{MaverickOS, Application, start};
 }
 
-pub mod air;
-pub use air::Id;
+mod air;
+pub use air::{
+    DateTime, 
+    Id,
+    OrangeName, 
+    OrangeSecret,
+    PublicItem, 
+    Filter, 
+    Op,
+    RecordPath, 
+    Permissions, 
+    Protocol, 
+    Error, 
+    Record, 
+    Header, 
+    HeaderInfo, 
+    ValidationError, 
+    Validation, 
+    ChildrenValidation,
+    
+    Request,
+    Response,
+    Service as AirService,
+};
 
 pub trait Application: Services {
     fn new(context: &mut Context) -> impl Future<Output = Self>;
@@ -56,9 +133,14 @@ impl<A: Application + 'static> MaverickOS<A> {
         #[cfg(target_os = "android")]
         app: AndroidApp
     ) {
-        let mut hardware = hardware::Context::new();
-        let runtime = Runtime::start(hardware.clone());
 
+        #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+        let mut hardware = hardware::Context::new();
+        #[cfg(target_os = "ios")]
+        let hardware = hardware::Context::new();
+        
+
+        let runtime = Runtime::start(hardware.clone());
 
         let mut services = BTreeMap::new();
         let mut background_tasks = BTreeMap::new();

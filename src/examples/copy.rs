@@ -1,1 +1,0 @@
-hardware_context.copy("WiFiPassword123");
