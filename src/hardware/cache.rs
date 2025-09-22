@@ -4,7 +4,7 @@ use std::fmt::Debug;
 
 use serde::{Serialize, Deserialize};
 
-use crate::ApplicationSupport;
+use crate::hardware::ApplicationSupport;
 pub use rusqlite::Connection;
 
 use std::future::Future;
