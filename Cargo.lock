@@ -1651,7 +1651,7 @@ dependencies = [
 
 [[package]]
 name = "maverick_os"
-version = "0.1.23"
+version = "0.1.24"
 dependencies = [
  "active_rusqlite",
  "air",
@@ -1675,6 +1675,7 @@ dependencies = [
  "objc2 0.6.1",
  "objc2-app-kit 0.3.1",
  "objc2-av-foundation",
+ "objc2-core-bluetooth",
  "objc2-core-foundation",
  "objc2-core-graphics",
  "objc2-core-media",
@@ -1689,6 +1690,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+ "uuid",
  "winit",
 ]
 
@@ -2110,6 +2112,19 @@ checksum = "c0f1cc99bb07ad2ddb6527ddf83db6a15271bb036b3eb94b801cd44fdc666ee1"
 dependencies = [
  "bitflags 2.9.1",
  "objc2 0.6.1",
+]
+
+[[package]]
+name = "objc2-core-bluetooth"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d33c82c3e375cee882b82f6a5e6dc9667b04fc18f94c080331e28b50f794d414"
+dependencies = [
+ "bitflags 2.9.1",
+ "dispatch2",
+ "objc2 0.6.1",
+ "objc2-core-foundation",
+ "objc2-foundation 0.3.1",
 ]
 
 [[package]]
@@ -3566,6 +3581,16 @@ name = "utf8parse"
 version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "06abde3611657adf66d383f00b093d7faecc7fa57071cce2578660c9f1010821"
+
+[[package]]
+name = "uuid"
+version = "1.18.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2f87b8aa10b915a06587d0dec516c282ff295b475d94abf425d62b57710070a2"
+dependencies = [
+ "js-sys",
+ "wasm-bindgen",
+]
 
 [[package]]
 name = "v_frame"

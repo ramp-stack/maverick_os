@@ -1,0 +1,1 @@
+let clipboard = hardware_context.paste();

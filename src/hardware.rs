@@ -9,6 +9,8 @@ mod haptics;
 mod photo_picker;
 mod safe_area;
 mod notifications;
+mod bluetooth; 
+mod flash;
 
 use std::sync::mpsc::Sender;
 
@@ -23,6 +25,10 @@ pub use safe_area::SafeAreaInsets;
 pub use haptics::Haptics;
 pub use notifications::Notifications;
 pub use logger::Logger;
+
+// Import bluetooth types
+pub use bluetooth::DeviceInfo;
+use bluetooth::{central, peripheral, DISCOVERED_DEVICES};
 
 /// `HardwareContext` contains interfaces to various hardware.
 #[derive(Clone)]
@@ -58,13 +64,6 @@ impl Context {
     pub fn push_notification(&self, title: &str, msg: &str) {
         Notifications::push(title, msg);
     }
-
-    // / Queues a new silent notification to be sent to the device.
-    // / Notifications will only be sent while the app is backgrounded.
-    // / This type of notification will not be seen by the user.
-    // pub fn silent_notification(&self, msg: &str) {
-    //     Notifications::silent(msg);
-    // }
 
     /// Trigger vibration haptics on the device.
     ///
@@ -103,6 +102,21 @@ impl Context {
     /// ```
     pub fn open_unprocessed_camera(&self) -> Result<Camera, CameraError> {
         Camera::new_unprocessed()
+    }
+
+    /// Toggles the device's camera flash/torch on or off.
+    /// This controls the LED flash typically found on mobile devices with cameras.
+    ///
+    /// ```rust
+    /// // Turn flash on
+    /// ctx.hardware.toggle_flash(true);
+    /// 
+    /// // Turn flash off
+    /// ctx.hardware.toggle_flash(false);
+    /// ```
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    pub fn toggle_flash(&self, on: bool) {
+        flash::toggle_flash(on);
     }
 
     /// Returns the contents of the device's clipboard.

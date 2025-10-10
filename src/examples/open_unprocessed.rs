@@ -1,0 +1,1 @@
+let unprocessed_camera = hardware_context.open_unprocessed_camera().expect("Could not open unprocessed camera");
