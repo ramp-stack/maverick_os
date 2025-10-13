@@ -382,13 +382,13 @@ impl Default for CloudStorage {
     }
 }
 
-// JNI initialization
-#[cfg(target_os = "android")]
-#[unsafe(no_mangle)]
-pub extern "system" fn JNI_OnLoad(vm: JavaVM, _: *mut std::ffi::c_void) -> jni::sys::jint {
-    CloudStorage::init_java_vm(vm);
-    jni::sys::JNI_VERSION_1_6.into()
-}
+// // JNI initialization
+// #[cfg(target_os = "android")]
+// #[unsafe(no_mangle)]
+// pub extern "system" fn JNI_OnLoad(vm: JavaVM, _: *mut std::ffi::c_void) -> jni::sys::jint {
+//     CloudStorage::init_java_vm(vm);
+//     jni::sys::JNI_VERSION_1_6.into()
+// }
 
 #[cfg(target_os = "android")]
 #[unsafe(no_mangle)]
