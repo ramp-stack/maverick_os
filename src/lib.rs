@@ -63,7 +63,7 @@ pub mod __private {
                 unsafe {
                     let vm = jni::JavaVM::from_raw(vm_ptr).unwrap();
                     hardware::ApplicationSupport::init_android(&vm);
-                    hardware::CloudStorage::init_java_vm(&vm);
+                    hardware::CloudStorage::init_java_vm(vm);
                 }
             }
 
