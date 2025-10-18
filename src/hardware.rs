@@ -13,6 +13,7 @@ mod bluetooth;
 mod flash;
 
 use std::sync::mpsc::Sender;
+use std::collections::HashMap;
 
 pub use cache::{Cache, ActiveCache};
 pub use clipboard::Clipboard;
@@ -25,10 +26,9 @@ pub use safe_area::SafeAreaInsets;
 pub use haptics::Haptics;
 pub use notifications::Notifications;
 pub use logger::Logger;
-
-// Import bluetooth types
+pub use bluetooth::api as bluetooth_api;
 pub use bluetooth::DeviceInfo;
-use bluetooth::{central, peripheral, DISCOVERED_DEVICES};
+
 
 /// `HardwareContext` contains interfaces to various hardware.
 #[derive(Clone)]
@@ -176,7 +176,7 @@ impl Context {
     /// Save the key-value pair to cloud storage.
     ///
     /// ```rust
-    /// hardware_context.save("username", "alice");
+    /// hardware_context.cloud_save("username", "alice");
     /// ```
     pub fn cloud_save(&self, key: &str, value: &str) -> Result<(), String> {
         CloudStorage::save(key, value);
@@ -186,7 +186,7 @@ impl Context {
     /// Retrieves a value from cloud storage for the given key.
     ///
     /// ```rust
-    /// let username = hardware_context.get("username").expect("No username existed");
+    /// let username = hardware_context.cloud_get("username").expect("No username existed");
     /// ```
     pub fn cloud_get(&self, key: &str) -> Option<String> {
         CloudStorage::get(key)
@@ -195,7 +195,7 @@ impl Context {
     /// Removes the value associated with the given key from cloud storage.
     ///
     /// ```rust
-    /// hardware_context.remove("username");
+    /// hardware_context.cloud_remove("username");
     /// ```
     pub fn cloud_remove(&self, key: &str) -> Result<(), String> {
         CloudStorage::remove(key);
@@ -205,10 +205,192 @@ impl Context {
     /// Clears all key–value pairs from cloud storage.
     ///
     /// ```rust
-    /// hardware_context.clear();
+    /// hardware_context.cloud_clear();
     /// ```
     pub fn cloud_clear(&self) -> Result<(), String> {
         CloudStorage::clear();
         Ok(())
+    }
+
+    // ========== Bluetooth Functions ==========
+
+    /// Start the Bluetooth central manager.
+    /// 
+    /// This automatically:
+    /// - Scans for devices advertising the target service UUID
+    /// - Connects to discovered devices
+    /// - Discovers services and characteristics
+    /// - Subscribes to notify/indicate characteristics
+    /// - Reads incoming data automatically
+    /// - Handles reconnections
+    ///
+    /// ```rust
+    /// ctx.hardware.bluetooth_start_central();
+    /// ```
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    pub fn bluetooth_start_central(&self) {
+        bluetooth_api::start_central();
+    }
+
+    /// Stop the Bluetooth central manager and cleanup all connections.
+    /// 
+    /// This will:
+    /// - Stop scanning for devices
+    /// - Unsubscribe from all characteristics
+    /// - Disconnect from all connected devices
+    /// - Clean up resources
+    ///
+    /// ```rust
+    /// ctx.hardware.bluetooth_stop_central();
+    /// ```
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    pub fn bluetooth_stop_central(&self) {
+        bluetooth_api::stop_central();
+    }
+
+    /// Get all discovered Bluetooth devices.
+    /// Returns a HashMap where keys are device identifiers and values are DeviceInfo.
+    /// Useful for monitoring which devices have been discovered and their connection status.
+    ///
+    /// ```rust
+    /// let devices = ctx.hardware.bluetooth_get_devices();
+    /// for (id, info) in devices {
+    ///     println!("Device: {} ({})", info.name, id);
+    ///     println!("  Connected: {}", info.is_connected);
+    /// }
+    /// ```
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    pub fn bluetooth_get_devices(&self) -> HashMap<String, DeviceInfo> {
+        bluetooth_api::get_discovered_devices()
+    }
+
+    /// Get information about a specific discovered device.
+    ///
+    /// ```rust
+    /// if let Some(device) = ctx.hardware.bluetooth_get_device("device-id-123") {
+    ///     println!("Device: {}, RSSI: {}", device.name, device.rssi);
+    /// }
+    /// ```
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    pub fn bluetooth_get_device(&self, identifier: &str) -> Option<DeviceInfo> {
+        bluetooth_api::get_device_info(identifier)
+    }
+
+    /// Initialize Bluetooth peripheral manager (advertiser).
+    /// This must be called before advertising.
+    ///
+    /// ```rust
+    /// ctx.hardware.bluetooth_init_peripheral();
+    /// ```
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    pub fn bluetooth_init_peripheral(&self) {
+        bluetooth_api::init_peripheral();
+    }
+
+    /// Start advertising as a Bluetooth peripheral.
+    /// The peripheral manager must be initialized first.
+    ///
+    /// ```rust
+    /// ctx.hardware.bluetooth_start_advertising()?;
+    /// ```
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    pub fn bluetooth_start_advertising(&self) -> Result<(), String> {
+        bluetooth_api::start_advertising()
+    }
+
+    /// Stop advertising as a Bluetooth peripheral.
+    ///
+    /// ```rust
+    /// ctx.hardware.bluetooth_stop_advertising();
+    /// ```
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    pub fn bluetooth_stop_advertising(&self) {
+        bluetooth_api::stop_advertising();
+    }
+
+    /// Check if currently advertising as a peripheral.
+    ///
+    /// ```rust
+    /// if ctx.hardware.bluetooth_is_advertising() {
+    ///     println!("Currently advertising");
+    /// }
+    /// ```
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    pub fn bluetooth_is_advertising(&self) -> bool {
+        bluetooth_api::is_advertising()
+    }
+
+    /// Set the data to be sent to centrals that connect to this peripheral.
+    ///
+    /// ```rust
+    /// ctx.hardware.bluetooth_set_peripheral_data("Device ready for pairing");
+    /// ```
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    pub fn bluetooth_set_peripheral_data(&self, text: &str) {
+        bluetooth_api::set_peripheral_data(text);
+    }
+
+    /// Get all messages received from a specific peripheral.
+    /// Returns None if the peripheral hasn't sent any messages.
+    /// Messages persist until explicitly cleared or cleanup is called.
+    ///
+    /// ```rust
+    /// if let Some(messages) = ctx.hardware.bluetooth_get_peripheral_messages("device-id-123") {
+    ///     for msg in messages {
+    ///         println!("Message: {}", msg);
+    ///     }
+    /// }
+    /// ```
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    pub fn bluetooth_get_peripheral_messages(&self, identifier: &str) -> Option<Vec<String>> {
+        bluetooth_api::get_peripheral_messages(identifier)
+    }
+
+    /// Get the most recent message from a specific peripheral.
+    /// Returns None if no messages have been received.
+    ///
+    /// ```rust
+    /// if let Some(latest) = ctx.hardware.bluetooth_get_latest_message("device-id-123") {
+    ///     println!("Latest message: {}", latest);
+    /// }
+    /// ```
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    pub fn bluetooth_get_latest_message(&self, identifier: &str) -> Option<String> {
+        bluetooth_api::get_latest_peripheral_message(identifier)
+    }
+
+    /// Get all messages from all connected peripherals.
+    /// Returns a HashMap with peripheral identifiers as keys and message vectors as values.
+    ///
+    /// ```rust
+    /// let all_messages = ctx.hardware.bluetooth_get_all_messages();
+    /// for (device_id, messages) in all_messages {
+    ///     println!("Device {}: {} messages", device_id, messages.len());
+    /// }
+    /// ```
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    pub fn bluetooth_get_all_messages(&self) -> HashMap<String, Vec<String>> {
+        bluetooth_api::get_all_peripheral_messages()
+    }
+
+    /// Clear all stored messages for a specific peripheral.
+    ///
+    /// ```rust
+    /// ctx.hardware.bluetooth_clear_peripheral_messages("device-id-123");
+    /// ```
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    pub fn bluetooth_clear_peripheral_messages(&self, identifier: &str) {
+        bluetooth_api::clear_peripheral_messages(identifier)
+    }
+
+    /// Clean up all Bluetooth resources.
+    /// Should be called before application shutdown.
+    ///
+    /// ```rust
+    /// ctx.hardware.bluetooth_cleanup();
+    /// ```
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    pub fn bluetooth_cleanup(&self) {
+        bluetooth_api::cleanup();
     }
 }

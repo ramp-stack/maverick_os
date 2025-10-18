@@ -1,4 +1,3 @@
-// bluetooth/peripheral.rs - macOS/iOS only
 
 #![cfg(any(target_os = "macos", target_os = "ios"))]
 
@@ -9,27 +8,28 @@ use objc2::{define_class, msg_send};
 use objc2_foundation::{NSObject, NSString, NSData, NSArray, NSDictionary};
 use objc2_core_bluetooth::*;
 use objc2::runtime::AnyObject;
+use objc2::Message;
 use objc2::AnyThread;
 
 static PERIPHERAL: OnceLock<Mutex<Option<PeripheralWrapper>>> = OnceLock::new();
 
-#[derive(Clone)]
-struct PendingAdvertisement {
-    service_uuid: String,
-    local_name: String,
-    custom_data: Vec<u8>,
-}
+// Transfer Service UUIDs - matching Swift TransferService
+const SERVICE_UUID: &str = "E20A39F4-73F5-4BC4-A12F-17D1AD07A961";
+const CHARACTERISTIC_UUID: &str = "08590F7E-DB05-467E-8757-72F6FAEB13D4";
 
 struct PeripheralWrapper {
     delegate: Retained<MyPeripheralDelegate>,
     manager: Retained<CBPeripheralManager>,
-    shared_data: Mutex<Vec<u8>>,
-    custom_data: Mutex<Vec<u8>>,
-    pending_ad: Mutex<Option<PendingAdvertisement>>,
-    custom_characteristic: Mutex<Option<Retained<CBMutableCharacteristic>>>,
+    transfer_characteristic: Mutex<Option<Retained<CBMutableCharacteristic>>>,
+    connected_central: Mutex<Option<Retained<CBCentral>>>,
+    data_to_send: Mutex<Vec<u8>>,
+    send_data_index: Mutex<usize>,
+    sending_eom: Mutex<bool>,
+    advertising: Mutex<bool>,
 }
 
 unsafe impl Send for PeripheralWrapper {}
+unsafe impl Sync for PeripheralWrapper {}
 
 define_class!(
     #[unsafe(super(NSObject))]
@@ -38,127 +38,144 @@ define_class!(
 
     unsafe impl NSObjectProtocol for MyPeripheralDelegate {}
     unsafe impl CBPeripheralManagerDelegate for MyPeripheralDelegate {
+        // Required protocol method - waiting for CBPeripheralManager to be ready
         #[unsafe(method(peripheralManagerDidUpdateState:))]
         fn peripheral_manager_did_update_state(&self, peripheral: &CBPeripheralManager) {
-            unsafe {
-                let state = peripheral.state();
-                println!("[PERIPHERAL] State: {:?}", state);
-                
-                if state == CBManagerState::PoweredOn {
-                    // Check if we have a pending advertisement to start
-                    if let Some(ad) = get_pending_advertisement() {
-                        println!("[PERIPHERAL] Starting pending ad: {}", ad.local_name);
-                        start_advertising_internal(&ad.service_uuid, &ad.local_name, &ad.custom_data);
+            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                unsafe {
+                    let state = peripheral.state();
+                    println!("[PERIPHERAL] CBManager state: {:?}", state);
+                    
+                    match state {
+                        CBManagerState::PoweredOn => {
+                            println!("[PERIPHERAL] CBManager is powered on");
+                            setup_peripheral();
+                        }
+                        CBManagerState::PoweredOff => {
+                            println!("[PERIPHERAL] CBManager is not powered on");
+                        }
+                        CBManagerState::Resetting => {
+                            println!("[PERIPHERAL] CBManager is resetting");
+                        }
+                        CBManagerState::Unauthorized => {
+                            println!("[PERIPHERAL] Bluetooth is not authorized");
+                        }
+                        CBManagerState::Unknown => {
+                            println!("[PERIPHERAL] CBManager state is unknown");
+                        }
+                        CBManagerState::Unsupported => {
+                            println!("[PERIPHERAL] Bluetooth is not supported on this device");
+                        }
+                        _ => {
+                            println!("[PERIPHERAL] Unknown peripheral manager state");
+                        }
                     }
                 }
-            }
+            }));
         }
 
-        #[unsafe(method(peripheralManagerDidStartAdvertising:error:))]
-        fn peripheral_manager_did_start_advertising(
+        // Catch when someone subscribes to our characteristic, then start sending them data
+        #[unsafe(method(peripheralManager:central:didSubscribeToCharacteristic:))]
+        fn peripheral_manager_central_did_subscribe_to_characteristic(
             &self, 
             _peripheral: &CBPeripheralManager, 
-            error: Option<&objc2_foundation::NSError>
+            central: &CBCentral, 
+            _characteristic: &CBCharacteristic
         ) {
-            if let Some(err) = error {
-                println!("[PERIPHERAL] Advertising failed: {:?}", err);
-            } else {
-                println!("[PERIPHERAL] Advertising started");
-            }
-        }
-
-        #[unsafe(method(peripheralManager:didAddService:error:))]
-        fn peripheral_manager_did_add_service(
-            &self, 
-            peripheral: &CBPeripheralManager, 
-            _service: &CBService, 
-            error: Option<&objc2_foundation::NSError>
-        ) {
-            if let Some(err) = error {
-                println!("[PERIPHERAL] Failed to add service: {:?}", err);
-                return;
-            }
-            
-            println!("[PERIPHERAL] Service added, starting broadcast");
-            
-            if let Some(ad) = get_pending_advertisement() {
-                unsafe {
-                    let uuid = CBUUID::UUIDWithString(&NSString::from_str(&ad.service_uuid));
-                    let adv_data = NSDictionary::from_slices(
-                        &[&*CBAdvertisementDataServiceUUIDsKey, &*CBAdvertisementDataLocalNameKey],
-                        &[
-                            &*NSArray::from_slice(&[&*uuid]) as &AnyObject, 
-                            &*NSString::from_str(&ad.local_name) as &AnyObject
-                        ]
-                    );
-                    
-                    peripheral.startAdvertising(Some(&adv_data));
-                }
-            }
-        }
-
-        #[unsafe(method(peripheralManager:didReceiveReadRequest:))]
-        fn peripheral_manager_did_receive_read_request(
-            &self, 
-            peripheral: &CBPeripheralManager, 
-            request: &CBATTRequest
-        ) {
-            unsafe {
-                let char_uuid = request.characteristic().UUID().UUIDString().to_string();
+            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                println!("[PERIPHERAL] Central subscribed to characteristic");
                 
-                let data = match char_uuid.as_str() {
-                    "12345678-1234-1234-1234-123456789ABC" => get_shared_data(),
-                    "12345678-1234-1234-1234-123456789ABD" => get_custom_data(),
-                    _ => Vec::new()
-                };
-
-                println!("[PERIPHERAL] Read request for {}: {} bytes", char_uuid, data.len());
-                request.setValue(Some(&NSData::from_vec(data)));
-                peripheral.respondToRequest_withResult(request, CBATTError::Success);
-            }
+                // Save central
+                set_connected_central(Some(central.retain()));
+                
+                // Reset the index
+                reset_send_index();
+                
+                // Start sending
+                send_data();
+            }));
         }
 
+        // Recognize when the central unsubscribes
+        #[unsafe(method(peripheralManager:central:didUnsubscribeFromCharacteristic:))]
+        fn peripheral_manager_central_did_unsubscribe_from_characteristic(
+            &self, 
+            _peripheral: &CBPeripheralManager, 
+            _central: &CBCentral, 
+            _characteristic: &CBCharacteristic
+        ) {
+            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                println!("[PERIPHERAL] Central unsubscribed from characteristic");
+                set_connected_central(None);
+            }));
+        }
+
+        // This callback comes in when the PeripheralManager is ready to send the next chunk of data
+        // This ensures packets arrive in the order they are sent
+        #[unsafe(method(peripheralManagerIsReadyToUpdateSubscribers:))]
+        fn peripheral_manager_is_ready_to_update_subscribers(&self, _peripheral: &CBPeripheralManager) {
+            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                // Start sending again
+                send_data();
+            }));
+        }
+
+        // This callback comes in when the PeripheralManager received write to characteristics
         #[unsafe(method(peripheralManager:didReceiveWriteRequests:))]
         fn peripheral_manager_did_receive_write_requests(
             &self, 
             peripheral: &CBPeripheralManager, 
             requests: &NSArray
         ) {
-            unsafe {
-                println!("[PERIPHERAL] Write request: {} requests", requests.count());
-                
-                for i in 0..requests.count() {
-                    if let Ok(request) = requests.objectAtIndex(i).downcast::<CBATTRequest>() {
-                        if let Some(data) = request.value() {
-                            let bytes = data.as_bytes_unchecked().to_vec();
-                            println!("[PERIPHERAL] Writing {} bytes", bytes.len());
-                            set_shared_data(&bytes);
+            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                unsafe {
+                    println!("[PERIPHERAL] didReceiveWriteRequests called with {} requests", requests.count());
+                    
+                    // Process all write requests
+                    for i in 0..requests.count() {
+                        if let Some(request) = requests.objectAtIndex(i).downcast::<CBATTRequest>().ok() {
+                            if let Some(request_value) = request.value() {
+                                let bytes = request_value.as_bytes_unchecked();
+                                if let Ok(string_from_data) = std::str::from_utf8(bytes) {
+                                    println!("[PERIPHERAL] Received write request of {} bytes: {}", 
+                                        bytes.len(), string_from_data);
+                                    
+                                    // Update the data to send with received data AND reset index
+                                    set_text_data_and_reset(bytes);
+                                }
+                            }
+                        }
+                    }
+                    
+                    // Respond to the first write request (if any exist)
+                    if requests.count() > 0 {
+                        if let Some(request) = requests.objectAtIndex(0).downcast::<CBATTRequest>().ok() {
+                            peripheral.respondToRequest_withResult(&request, CBATTError::Success);
+                        } else {
+                            eprintln!("[PERIPHERAL] Failed to downcast request for response");
                         }
                     }
                 }
-
-                // Respond to first request
-                if requests.count() > 0 {
-                    if let Ok(request) = requests.objectAtIndex(0).downcast::<CBATTRequest>() {
-                        peripheral.respondToRequest_withResult(&request, CBATTError::Success);
-                    }
-                }
-            }
+            }));
         }
 
-        #[unsafe(method(peripheralManager:central:didSubscribeToCharacteristic:))]
-        fn peripheral_manager_central_did_subscribe_to_characteristic(
-            &self, 
-            _peripheral: &CBPeripheralManager, 
-            central: &CBCentral, 
-            characteristic: &CBCharacteristic
+        // Handle service add completion
+        #[unsafe(method(peripheralManager:didAddService:error:))]
+        fn peripheral_manager_did_add_service(
+            &self,
+            _peripheral: &CBPeripheralManager,
+            service: &CBService,
+            error: *mut NSObject
         ) {
-            unsafe {
-                println!("[PERIPHERAL] Central {} subscribed to {}", 
-                    central.identifier().UUIDString(), 
-                    characteristic.UUID().UUIDString()
-                );
-            }
+            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                unsafe {
+                    if error.is_null() {
+                        println!("[PERIPHERAL] Service added successfully");
+                    } else {
+                        eprintln!("[PERIPHERAL] Error adding service: {:?}", error);
+                    }
+                }
+            }));
         }
     }
 );
@@ -169,179 +186,297 @@ impl MyPeripheralDelegate {
     }
 }
 
-// Helper functions to safely access wrapper data
-fn get_pending_advertisement() -> Option<PendingAdvertisement> {
-    PERIPHERAL.get()?
-        .lock().ok()?
-        .as_ref()?
-        .pending_ad.lock().ok()?
-        .clone()
-}
+// MARK: - Helper Methods
 
-fn get_shared_data() -> Vec<u8> {
-    PERIPHERAL.get()
-        .and_then(|p| p.lock().ok())
-        .and_then(|g| g.as_ref().map(|w| w.shared_data.lock().unwrap().clone()))
-        .unwrap_or_default()
-}
+// Sends the next amount of data to the connected central
+fn send_data() {
+    let Some(peripheral) = PERIPHERAL.get() else { return };
+    let Ok(guard) = peripheral.lock() else { return };
+    let Some(wrapper) = guard.as_ref() else { return };
 
-fn get_custom_data() -> Vec<u8> {
-    PERIPHERAL.get()
-        .and_then(|p| p.lock().ok())
-        .and_then(|g| g.as_ref().map(|w| w.custom_data.lock().unwrap().clone()))
-        .unwrap_or_default()
-}
+    // Get the transfer characteristic first
+    let transfer_characteristic = {
+        let Ok(transfer_char_lock) = wrapper.transfer_characteristic.lock() else { return };
+        match transfer_char_lock.as_ref() {
+            Some(tc) => tc.clone(),
+            None => return,
+        }
+    };
 
-fn set_shared_data(data: &[u8]) {
-    if let Some(peripheral) = PERIPHERAL.get() {
-        if let Ok(guard) = peripheral.lock() {
-            if let Some(wrapper) = guard.as_ref() {
-                *wrapper.shared_data.lock().unwrap() = data.to_vec();
+    unsafe {
+        // First up, check if we're meant to be sending an EOM
+        let sending_eom_flag = {
+            let Ok(sending_eom) = wrapper.sending_eom.lock() else { return };
+            *sending_eom
+        };
+        
+        if sending_eom_flag {
+            // send it
+            let eom_data = NSData::from_vec(b"EOM".to_vec());
+            let did_send = wrapper.manager.updateValue_forCharacteristic_onSubscribedCentrals(
+                &eom_data,
+                &transfer_characteristic,
+                None
+            );
+            
+            // Did it send?
+            if did_send {
+                // It did, so mark it as sent
+                if let Ok(mut sending_eom) = wrapper.sending_eom.lock() {
+                    *sending_eom = false;
+                }
+                println!("[PERIPHERAL] Sent: EOM");
+            }
+            // It didn't send, so we'll exit and wait for peripheralManagerIsReady to call sendData again
+            return;
+        }
+
+        // We're not sending an EOM, so we're sending data
+        // Prepare chunk while holding locks, then release before sending
+        loop {
+            let (chunk_data, chunk_len, is_last_chunk) = {
+                let Ok(data_to_send) = wrapper.data_to_send.lock() else { return };
+                let Ok(mut send_data_index) = wrapper.send_data_index.lock() else { return };
+
+                // Is there any left to send?
+                if *send_data_index >= data_to_send.len() {
+                    // No data left. Do nothing
+                    return;
+                }
+
+                // Work out how big it should be
+                let mut amount_to_send = data_to_send.len() - *send_data_index;
+                
+                if let Ok(central_lock) = wrapper.connected_central.lock() {
+                    if let Some(central) = central_lock.as_ref() {
+                        let mtu = central.maximumUpdateValueLength();
+                        amount_to_send = amount_to_send.min(mtu);
+                    }
+                }
+
+                // Copy out the data we want
+                let chunk = &data_to_send[*send_data_index..(*send_data_index + amount_to_send)];
+                let chunk_vec = chunk.to_vec();
+                let chunk_len = chunk_vec.len();
+                
+                // Update index while we have the lock
+                *send_data_index += amount_to_send;
+                let is_last = *send_data_index >= data_to_send.len();
+                
+                (NSData::from_vec(chunk_vec), chunk_len, is_last)
+            }; // Locks released here
+
+            // Send it (no locks held)
+            let did_send = wrapper.manager.updateValue_forCharacteristic_onSubscribedCentrals(
+                &chunk_data,
+                &transfer_characteristic,
+                None
+            );
+
+            // If it didn't work, we need to roll back the index and wait for the callback
+            if !did_send {
+                // Roll back the send_data_index
+                if let Ok(mut send_data_index) = wrapper.send_data_index.lock() {
+                    *send_data_index = send_data_index.saturating_sub(chunk_len);
+                }
+                return;
+            }
+
+            let string_from_data = String::from_utf8_lossy(chunk_data.as_bytes_unchecked());
+            println!("[PERIPHERAL] Sent {} bytes: {}", chunk_len, string_from_data);
+
+            // Was it the last one?
+            if is_last_chunk {
+                // It was - send an EOM
+                
+                // Set this so if the send fails, we'll send it next time
+                if let Ok(mut sending_eom) = wrapper.sending_eom.lock() {
+                    *sending_eom = true;
+                }
+
+                // Send it
+                let eom_data = NSData::from_vec(b"EOM".to_vec());
+                let eom_sent = wrapper.manager.updateValue_forCharacteristic_onSubscribedCentrals(
+                    &eom_data,
+                    &transfer_characteristic,
+                    None
+                );
+
+                if eom_sent {
+                    // It sent; we're all done
+                    if let Ok(mut sending_eom) = wrapper.sending_eom.lock() {
+                        *sending_eom = false;
+                    }
+                    println!("[PERIPHERAL] Sent: EOM");
+                }
+                return;
             }
         }
     }
 }
 
-fn start_advertising_internal(service_uuid: &str, local_name: &str, custom_data: &[u8]) {
-    println!("[PERIPHERAL] Setting up service: {}", local_name);
-    
-    let Some(peripheral) = PERIPHERAL.get() else { return };
-    let Ok(guard) = peripheral.lock() else { return };
-    let Some(wrapper) = guard.as_ref() else { return };
+fn setup_peripheral() {
+    let Some(peripheral) = PERIPHERAL.get() else { 
+        eprintln!("[PERIPHERAL] Failed to get PERIPHERAL");
+        return;
+    };
+    let Ok(guard) = peripheral.lock() else { 
+        eprintln!("[PERIPHERAL] Failed to lock PERIPHERAL");
+        return;
+    };
+    let Some(wrapper) = guard.as_ref() else { 
+        eprintln!("[PERIPHERAL] PERIPHERAL wrapper is None");
+        return;
+    };
 
     unsafe {
-        if wrapper.manager.state() != CBManagerState::PoweredOn {
-            println!("[PERIPHERAL] Cannot advertise - not powered on");
-            return;
-        }
-
-        // Store custom data
-        *wrapper.custom_data.lock().unwrap() = custom_data.to_vec();
-
-        // Create service
-        let uuid = CBUUID::UUIDWithString(&NSString::from_str(service_uuid));
-        let service = CBMutableService::initWithType_primary(
-            CBMutableService::alloc(),
-            &uuid,
-            true
-        );
-
-        // Main characteristic (read/write/notify)
-        let char_uuid = CBUUID::UUIDWithString(&NSString::from_str("12345678-1234-1234-1234-123456789ABC"));
-        let characteristic = CBMutableCharacteristic::initWithType_properties_value_permissions(
+        // Build our service
+        
+        // Start with the CBMutableCharacteristic
+        // FIXED: Use Write (with response) instead of WriteWithoutResponse
+        // Note: Notify/Indicate characteristics cannot have an initial value
+        let char_uuid = CBUUID::UUIDWithString(&NSString::from_str(CHARACTERISTIC_UUID));
+        let transfer_characteristic = CBMutableCharacteristic::initWithType_properties_value_permissions(
             CBMutableCharacteristic::alloc(),
             &char_uuid,
-            CBCharacteristicProperties::Read | CBCharacteristicProperties::Write | CBCharacteristicProperties::Notify,
+            CBCharacteristicProperties::Read | CBCharacteristicProperties::Notify | CBCharacteristicProperties::Write,
             None,
             CBAttributePermissions::Readable | CBAttributePermissions::Writeable
         );
-        
-        // Initialize shared data if empty
-        if wrapper.shared_data.lock().unwrap().is_empty() {
-            *wrapper.shared_data.lock().unwrap() = b"Ready".to_vec();
-        }
 
-        // Custom data characteristic (read-only)
-        let custom_char_uuid = CBUUID::UUIDWithString(&NSString::from_str("12345678-1234-1234-1234-123456789ABD"));
-        let custom_data_value = if !custom_data.is_empty() {
-            NSData::from_vec(custom_data.to_vec())
-        } else {
-            NSData::from_vec(b"No custom data".to_vec())
-        };
-
-        let custom_characteristic = CBMutableCharacteristic::initWithType_properties_value_permissions(
-            CBMutableCharacteristic::alloc(),
-            &custom_char_uuid,
-            CBCharacteristicProperties::Read,
-            Some(&custom_data_value),
-            CBAttributePermissions::Readable
+        // Create a service from the characteristic
+        let service_uuid = CBUUID::UUIDWithString(&NSString::from_str(SERVICE_UUID));
+        let transfer_service = CBMutableService::initWithType_primary(
+            CBMutableService::alloc(),
+            &service_uuid,
+            true
         );
 
-        // Store custom characteristic for later updates
-        *wrapper.custom_characteristic.lock().unwrap() = Some(custom_characteristic.clone());
-
-        // Add both characteristics to service
-        service.setCharacteristics(Some(&NSArray::from_slice(&[
-            &*characteristic as &CBCharacteristic,
-            &*custom_characteristic as &CBCharacteristic
+        // Add the characteristic to the service
+        transfer_service.setCharacteristics(Some(&NSArray::from_slice(&[
+            &*transfer_characteristic as &CBCharacteristic
         ])));
-        
-        // Store pending advertisement
-        *wrapper.pending_ad.lock().unwrap() = Some(PendingAdvertisement {
-            service_uuid: service_uuid.to_string(),
-            local_name: local_name.to_string(),
-            custom_data: custom_data.to_vec(),
-        });
-        
-        // Add service - advertising will start in didAddService callback
-        println!("[PERIPHERAL] Adding service");
-        wrapper.manager.addService(&service);
+
+        // And add it to the peripheral manager
+        wrapper.manager.addService(&transfer_service);
+
+        // Save the characteristic for later
+        if let Ok(mut char_lock) = wrapper.transfer_characteristic.lock() {
+            *char_lock = Some(transfer_characteristic);
+            println!("[PERIPHERAL] Service and characteristic added");
+        } else {
+            eprintln!("[PERIPHERAL] Failed to lock transfer_characteristic");
+        }
     }
 }
 
-fn generate_random_uuid() -> String {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    
-    format!(
-        "{:08x}-{:04x}-4{:03x}-{:04x}-{:012x}",
-        (nanos & 0xFFFFFFFF) as u32,
-        ((nanos >> 32) & 0xFFFF) as u16,
-        ((nanos >> 48) & 0xFFF) as u16,
-        ((nanos >> 60) & 0xFFFF) as u16 | 0x8000,
-        ((nanos >> 76) & 0xFFFFFFFFFFFF) as u64
-    )
+// MARK: - Helper functions for safe data access
+
+fn set_connected_central(central: Option<Retained<CBCentral>>) {
+    if let Some(peripheral) = PERIPHERAL.get() {
+        if let Ok(guard) = peripheral.lock() {
+            if let Some(wrapper) = guard.as_ref() {
+                if let Ok(mut central_lock) = wrapper.connected_central.lock() {
+                    *central_lock = central;
+                }
+            }
+        }
+    }
 }
 
-// Public API
+fn reset_send_index() {
+    if let Some(peripheral) = PERIPHERAL.get() {
+        if let Ok(guard) = peripheral.lock() {
+            if let Some(wrapper) = guard.as_ref() {
+                if let Ok(mut index_lock) = wrapper.send_data_index.lock() {
+                    *index_lock = 0;
+                }
+                if let Ok(mut eom_lock) = wrapper.sending_eom.lock() {
+                    *eom_lock = false;
+                }
+            }
+        }
+    }
+}
+
+fn set_text_data(data: &[u8]) {
+    if let Some(peripheral) = PERIPHERAL.get() {
+        if let Ok(guard) = peripheral.lock() {
+            if let Some(wrapper) = guard.as_ref() {
+                if let Ok(mut data_lock) = wrapper.data_to_send.lock() {
+                    *data_lock = data.to_vec();
+                }
+            }
+        }
+    }
+}
+
+// FIXED: New function that sets data AND resets index
+fn set_text_data_and_reset(data: &[u8]) {
+    if let Some(peripheral) = PERIPHERAL.get() {
+        if let Ok(guard) = peripheral.lock() {
+            if let Some(wrapper) = guard.as_ref() {
+                // Set the data
+                if let Ok(mut data_lock) = wrapper.data_to_send.lock() {
+                    *data_lock = data.to_vec();
+                }
+                // Reset the index
+                if let Ok(mut index_lock) = wrapper.send_data_index.lock() {
+                    *index_lock = 0;
+                }
+                // Reset EOM flag
+                if let Ok(mut eom_lock) = wrapper.sending_eom.lock() {
+                    *eom_lock = false;
+                }
+                println!("[PERIPHERAL] Data set and index reset: {} bytes", data.len());
+            }
+        }
+    }
+}
+
+// MARK: - Public API
 
 pub fn create_peripheral() {
-    println!("[PERIPHERAL] Creating peripheral");
+    println!("[PERIPHERAL] Creating peripheral manager");
     
-    PERIPHERAL.get_or_init(|| {
-        let delegate = MyPeripheralDelegate::new();
-        let manager = unsafe {
-            CBPeripheralManager::initWithDelegate_queue(
+    // Initialize the peripheral wrapper
+    let _ = PERIPHERAL.get_or_init(|| {
+        unsafe {
+            // Create delegate first
+            let delegate = MyPeripheralDelegate::new();
+            
+            // Create peripheral manager with nil delegate initially
+            let manager = CBPeripheralManager::initWithDelegate_queue_options(
                 CBPeripheralManager::alloc(),
-                Some(ProtocolObject::from_ref(&*delegate)),
-                None
-            )
-        };
+                None, // Start with no delegate to avoid early callbacks
+                None,
+                None // Remove the options that might cause issues
+            );
+            
+            // Now set the delegate after manager is created
+            manager.setDelegate(Some(ProtocolObject::from_ref(&*delegate)));
+            
+            println!("[PERIPHERAL] Peripheral manager created successfully");
 
-        Mutex::new(Some(PeripheralWrapper { 
-            delegate, 
-            manager, 
-            shared_data: Mutex::new(Vec::new()),
-            custom_data: Mutex::new(Vec::new()),
-            pending_ad: Mutex::new(None),
-            custom_characteristic: Mutex::new(None),
-        }))
+            Mutex::new(Some(PeripheralWrapper {
+                delegate,
+                manager,
+                transfer_characteristic: Mutex::new(None),
+                connected_central: Mutex::new(None),
+                data_to_send: Mutex::new(b"Hello from Rust!".to_vec()),
+                send_data_index: Mutex::new(0),
+                sending_eom: Mutex::new(false),
+                advertising: Mutex::new(false),
+            }))
+        }
     });
-}
-
-pub fn advertise(local_name: &str, data: &str) -> Result<(), String> {
-    let service_uuid = generate_random_uuid();
-    println!("[PERIPHERAL] Advertise: {} (UUID: {})", local_name, service_uuid);
     
-    create_peripheral();
-    start_advertising_with_data(&service_uuid, local_name, data.as_bytes())
+    println!("[PERIPHERAL] Peripheral initialization complete");
 }
 
-pub fn start_advertising(service_uuid: &str, local_name: &str) -> Result<(), String> {
-    start_advertising_with_data(service_uuid, local_name, &[])
-}
-
-pub fn start_advertising_with_data<T: AsRef<[u8]>>(
-    service_uuid: &str, 
-    local_name: &str, 
-    custom_data: T
-) -> Result<(), String> {
-    let custom_data_bytes = custom_data.as_ref();
-    println!("[PERIPHERAL] Starting: {}", local_name);
+// Start advertising - advertises service UUID only
+pub fn start_advertising() -> Result<(), String> {
+    println!("[PERIPHERAL] Starting advertising");
     
     let peripheral = PERIPHERAL.get()
         .ok_or("Peripheral not initialized")?;
@@ -355,18 +490,23 @@ pub fn start_advertising_with_data<T: AsRef<[u8]>>(
     unsafe {
         let state = wrapper.manager.state();
         
-        if state == CBManagerState::PoweredOn {
-            drop(guard);
-            start_advertising_internal(service_uuid, local_name, custom_data_bytes);
-        } else {
-            // Store pending advertisement to start when powered on
-            *wrapper.pending_ad.lock().unwrap() = Some(PendingAdvertisement {
-                service_uuid: service_uuid.to_string(),
-                local_name: local_name.to_string(),
-                custom_data: custom_data_bytes.to_vec(),
-            });
-            println!("[PERIPHERAL] Waiting for Bluetooth to power on");
+        if state != CBManagerState::PoweredOn {
+            return Err(format!("Bluetooth is not powered on (state: {:?})", state));
         }
+
+        let service_uuid = CBUUID::UUIDWithString(&NSString::from_str(SERVICE_UUID));
+        let adv_data = NSDictionary::from_slices(
+            &[&*CBAdvertisementDataServiceUUIDsKey],
+            &[&*NSArray::from_slice(&[&*service_uuid]) as &AnyObject]
+        );
+
+        wrapper.manager.startAdvertising(Some(&adv_data));
+        
+        if let Ok(mut advertising) = wrapper.advertising.lock() {
+            *advertising = true;
+        }
+        
+        println!("[PERIPHERAL] Advertising started with service UUID");
     }
     
     Ok(())
@@ -378,48 +518,41 @@ pub fn stop_advertising() {
     if let Some(peripheral) = PERIPHERAL.get() {
         if let Ok(guard) = peripheral.lock() {
             if let Some(wrapper) = guard.as_ref() {
-                unsafe { 
+                unsafe {
                     wrapper.manager.stopAdvertising();
                 }
-            }
-        }
-    }
-}
-
-pub fn set_shareable_string(text: &str) {
-    set_shared_data(text.as_bytes());
-}
-
-pub fn update_custom_data(custom_data: &[u8]) {
-    println!("[PERIPHERAL] Updating custom data: {} bytes", custom_data.len());
-    
-    if let Some(peripheral) = PERIPHERAL.get() {
-        if let Ok(guard) = peripheral.lock() {
-            if let Some(wrapper) = guard.as_ref() {
-                *wrapper.custom_data.lock().unwrap() = custom_data.to_vec();
-                
-                // Notify subscribed centrals if characteristic exists
-                if let Some(characteristic) = wrapper.custom_characteristic.lock().unwrap().as_ref() {
-                    unsafe {
-                        let data = NSData::from_vec(custom_data.to_vec());
-                        let success = wrapper.manager.updateValue_forCharacteristic_onSubscribedCentrals(
-                            &data,
-                            characteristic,
-                            None
-                        );
-                        println!("[PERIPHERAL] Notification sent: {}", if success { "success" } else { "failed" });
-                    }
+                if let Ok(mut advertising) = wrapper.advertising.lock() {
+                    *advertising = false;
                 }
+                println!("[PERIPHERAL] Advertising stopped");
             }
         }
     }
 }
 
-pub(crate) fn cleanup_peripheral() {
+// Set the text data to be sent when a central subscribes
+pub fn set_text_to_send(text: &str) {
+    println!("[PERIPHERAL] Setting text data: {} bytes", text.len());
+    set_text_data_and_reset(text.as_bytes());
+}
+
+pub fn is_advertising() -> bool {
+    PERIPHERAL.get()
+        .and_then(|p| p.lock().ok())
+        .and_then(|g| g.as_ref().and_then(|w| w.advertising.lock().ok().map(|a| *a)))
+        .unwrap_or(false)
+}
+
+pub fn cleanup_peripheral() {
     println!("[PERIPHERAL] Cleanup");
     
     if let Some(peripheral) = PERIPHERAL.get() {
         if let Ok(mut guard) = peripheral.lock() {
+            if let Some(wrapper) = guard.as_ref() {
+                unsafe {
+                    wrapper.manager.stopAdvertising();
+                }
+            }
             *guard = None;
         }
     }
