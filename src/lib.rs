@@ -56,16 +56,6 @@ pub mod __private {
             #[cfg(target_os = "android")]
             app: AndroidApp
         ) {
-            #[cfg(target_os = "android")]
-            {
-                // Initialize JNI components on Android BEFORE creating hardware context
-                let vm_ptr = ndk_context::android_context().vm().cast();
-                unsafe {
-                    let vm = jni::JavaVM::from_raw(vm_ptr).unwrap();
-                    hardware::ApplicationSupport::init_android(&vm);
-                    hardware::CloudStorage::init_java_vm(vm);
-                }
-            }
 
             #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
             let mut hardware = hardware::Context::new();
