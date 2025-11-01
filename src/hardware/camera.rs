@@ -2,15 +2,15 @@
 mod apple;
 #[cfg(target_os = "android")]
 mod android;
-#[cfg(any(target_os = "windows", target_os = "linux"))]
-mod windows_linux;
+// #[cfg(any(target_os = "windows", target_os = "linux"))]
+// mod windows_linux;
 
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 use crate::hardware::camera::apple::AppleCamera;
 #[cfg(target_os = "android")]
 use crate::hardware::camera::android::AndroidCamera;
-#[cfg(any(target_os = "windows", target_os = "linux"))]
-use crate::hardware::camera::windows_linux::WindowsLinuxCamera;
+// #[cfg(any(target_os = "windows", target_os = "linux"))]
+// use crate::hardware::camera::windows_linux::WindowsLinuxCamera;
 
 use image::RgbaImage;
 use std::sync::{Arc, Mutex};
@@ -45,8 +45,8 @@ pub struct Camera(
     AppleCamera,
     #[cfg(target_os = "android")]
     AndroidCamera,
-    #[cfg(any(target_os = "windows", target_os = "linux"))]
-    WindowsLinuxCamera,
+    // #[cfg(any(target_os = "windows", target_os = "linux"))]
+    // WindowsLinuxCamera,
 );
 
 impl Camera {
@@ -62,7 +62,8 @@ impl Camera {
 
     #[cfg(any(target_os = "windows", target_os = "linux"))]
     pub fn new() -> Result<Self, CameraError> {
-        Ok(Camera(WindowsLinuxCamera::new()?))
+        // Ok(Camera(WindowsLinuxCamera::new()?))
+        Err(CameraError::DeviceNotFound)
     }
 
     #[cfg(not(any(target_os = "macos", target_os = "ios", target_os = "android", target_os = "windows", target_os = "linux")))]
@@ -81,7 +82,7 @@ impl Camera {
     }
 
     #[cfg(any(target_os = "windows", target_os = "linux"))]
-    pub fn inner(&mut self) -> &mut WindowsLinuxCamera { &mut self.0 }
+    pub fn inner(&mut self) { }
 
     #[cfg(target_os = "android")]
     pub fn inner(&mut self) -> &mut AndroidCamera { &mut self.0 }

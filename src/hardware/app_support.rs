@@ -8,7 +8,6 @@ use objc2_foundation::{NSString, NSURL};
 #[cfg(any(target_os = "ios", target_os = "macos"))]
 use objc2::msg_send;
 
-#[cfg(any(target_os = "ios", target_os = "macos", target_os = "android"))]
 use std::path::PathBuf;
 
 #[cfg(target_os = "ios")]
