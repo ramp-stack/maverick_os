@@ -14,6 +14,8 @@ pub use runtime::{Services, Context as RuntimeContext, ServiceList};
 pub mod window;
 use window::Event;
 
+mod config;
+pub use config::{IS_MOBILE, IS_WEB};
 
 pub mod air;
 pub use air::{Id};
