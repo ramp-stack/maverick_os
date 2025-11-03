@@ -21,15 +21,15 @@ impl Notifications {
         #[cfg(any(target_os = "ios", target_os = "macos"))]
         self.0.register();
         
-        #[cfg(not(any(target_os = "ios", target_os = "macos")))]
-        panic!("not supported os");
+        // #[cfg(not(any(target_os = "ios", target_os = "macos")))]
+        // panic!("not supported os");
     }
 
     pub fn push(&self, title: &str, body: &str) {
         #[cfg(any(target_os = "ios", target_os = "macos"))]
         self.0.push(title, body);
         
-        #[cfg(not(any(target_os = "ios", target_os = "macos")))]
-        panic!("not supported os");
+        // #[cfg(not(any(target_os = "ios", target_os = "macos")))]
+        // panic!("not supported os");
     }
 }
