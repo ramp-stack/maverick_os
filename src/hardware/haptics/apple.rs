@@ -1,6 +1,7 @@
 use objc2_ui_kit::{UIImpactFeedbackGenerator, UIImpactFeedbackStyle};
 use objc2::{MainThreadMarker, msg_send};
 use objc2::rc::{Retained, Allocated};
+use objc2::MainThreadOnly;
 
 #[derive(Clone)]
 pub struct OsHaptics;
