@@ -1,7 +1,12 @@
-#[cfg(any(target_os = "ios", target_os = "macos"))]
+#[cfg(any(target_os = "ios"))]
 mod ios;
-#[cfg(any(target_os = "ios", target_os = "macos"))]
+#[cfg(any(target_os = "ios"))]
 use ios::OsClipboard;
+
+#[cfg(any(target_os = "macos"))]
+mod macos;
+#[cfg(any(target_os = "macos"))]
+use macos::OsClipboard;
 
 #[cfg(target_os = "android")]
 mod android;
