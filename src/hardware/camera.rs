@@ -1,16 +1,22 @@
 #[cfg(any(target_os = "ios", target_os = "macos"))]
 mod apple;
+#[cfg(any(target_os = "ios", target_os = "macos"))]
+use apple::OsCamera;
+
 #[cfg(target_os = "android")]
 mod android;
-// #[cfg(any(target_os = "windows", target_os = "linux"))]
-// mod windows_linux;
-
-#[cfg(any(target_os = "macos", target_os = "ios"))]
-use crate::hardware::camera::apple::AppleCamera;
 #[cfg(target_os = "android")]
-use crate::hardware::camera::android::AndroidCamera;
-// #[cfg(any(target_os = "windows", target_os = "linux"))]
-// use crate::hardware::camera::windows_linux::WindowsLinuxCamera;
+use android::OsCamera;
+
+#[cfg(target_os = "linux")]
+mod linux;
+#[cfg(target_os = "linux")]
+use linux::OsCamera;
+
+#[cfg(target_os = "windows")]
+mod windows;
+#[cfg(target_os = "windows")]
+use windows::OsCamera;
 
 use image::RgbaImage;
 use std::sync::{Arc, Mutex};
@@ -38,89 +44,39 @@ impl std::fmt::Display for CameraError {
     }
 }
 
-/// Access the device camera.
+#[cfg(any(target_os = "ios", target_os = "macos", target_os = "android", target_os = "linux", target_os = "windows"))]
 #[derive(Debug, Clone)]
-pub struct Camera(
-    #[cfg(any(target_os = "macos", target_os = "ios"))]
-    AppleCamera,
-    #[cfg(target_os = "android")]
-    AndroidCamera,
-    // #[cfg(any(target_os = "windows", target_os = "linux"))]
-    // WindowsLinuxCamera,
-);
+pub struct Camera(OsCamera);
 
+#[cfg(any(target_os = "ios", target_os = "macos", target_os = "android", target_os = "linux", target_os = "windows"))]
 impl Camera {
-    #[cfg(any(target_os = "macos", target_os = "ios"))]
     pub fn new() -> Result<Self, CameraError> {
-        Ok(Camera(AppleCamera::new_standard()?))
+        Ok(Camera(OsCamera::new_standard()?))
     }
 
-    #[cfg(target_os = "android")]
-    pub fn new() -> Result<Self, CameraError> {
-        Ok(Camera(AndroidCamera::new().map_err(|_| CameraError::DeviceNotFound)?))
+    pub fn start_custom() -> Result<Self, CameraError> {
+        Ok(Camera(OsCamera::new_custom()?))
     }
 
-    #[cfg(any(target_os = "windows", target_os = "linux"))]
-    pub fn new() -> Result<Self, CameraError> {
-        // Ok(Camera(WindowsLinuxCamera::new()?))
-        Err(CameraError::DeviceNotFound)
+    pub fn frame(&self) -> Result<RgbaImage, CameraError> {
+        self.0.frame()
     }
 
-    #[cfg(not(any(target_os = "macos", target_os = "ios", target_os = "android", target_os = "windows", target_os = "linux")))]
-    pub fn new() -> Result<Self, CameraError> {
-        Err(CameraError::DeviceNotFound)
+    pub fn settings(&mut self) -> Option<Arc<Mutex<CameraSettings>>> {
+        self.0.settings()
     }
-
-    #[cfg(any(target_os = "macos", target_os = "ios"))]
-    pub fn new_unprocessed() -> Result<Self, CameraError> {
-        Ok(Camera(AppleCamera::new_unprocessed()?))
-    }
-
-    #[cfg(not(any(target_os = "macos", target_os = "ios")))]
-    pub fn new_unprocessed() -> Result<Self, CameraError> {
-        Err(CameraError::DeviceNotFound)
-    }
-
-    #[cfg(any(target_os = "windows", target_os = "linux"))]
-    pub fn inner(&mut self) { }
-
-    #[cfg(target_os = "android")]
-    pub fn inner(&mut self) -> &mut AndroidCamera { &mut self.0 }
-
-    #[cfg(any(target_os = "macos", target_os = "ios"))]
-    pub fn inner(&mut self) -> &mut AppleCamera { &mut self.0 }
-
-    // pub fn toggle_flashlight(&mut self) { self.0.toggle_flashlight() }
-
-    pub fn frame(&self) -> Result<RgbaImage, CameraError> { self.0.frame() }
-
-    pub fn start(mut self) -> Self {
-        self.0.start();
-        self
-    }
-
-    pub fn settings(&mut self) -> Option<Arc<Mutex<CameraSettings>>> { 
-        #[cfg(any(target_os = "macos", target_os = "ios"))]
-        return self.0.settings(); 
-        #[cfg(not(any(target_os = "macos", target_os = "ios")))]
-        None
-    }
-}
-
-impl Drop for Camera {
-    fn drop(&mut self) {}
 }
 
 #[derive(Debug, Clone)]
 pub struct CameraSettings {
-    pub exposure_mode: ExposureMode, //
-    pub custom_exposure: Option<CustomExposure>, // duration + ISO
-    pub exposure_compensation: Option<f32>,      // EV
+    pub exposure_mode: ExposureMode,
+    pub custom_exposure: Option<CustomExposure>,
+    pub exposure_compensation: Option<f32>,
     pub exposure_stacking: bool,
 
     pub focus_mode: FocusMode,
-    pub focus_distance: Option<f32>,            // 0.0..1.0 lens position for manual
-    pub focus_point_of_interest: Option<(f32,f32)>, // normalized x,y for focus
+    pub focus_distance: Option<f32>,
+    pub focus_point_of_interest: Option<(f32, f32)>,
 
     pub white_balance_mode: WhiteBalanceMode,
     pub white_balance_gains: Option<WhiteBalanceGains>,
@@ -131,7 +87,7 @@ pub struct CameraSettings {
     pub resolution: Option<Resolution>,
     pub hdr_enabled: bool,
     pub stabilization_enabled: bool,
-    
+
     pub low_light_boost: Option<bool>,
     pub scene_mode_hint: Option<SceneMode>,
 
@@ -143,13 +99,13 @@ pub struct CameraSettings {
     pub noise_reduction: Option<f32>,
     pub gamma: Option<f32>,
     pub color_filter: Option<ColorFilter>,
-    
+
     pub is_updated: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
 pub struct CustomExposure {
-    pub duration: f32, // seconds
+    pub duration: f32,
     pub iso: f32,
 }
 
@@ -192,7 +148,7 @@ pub struct WhiteBalanceGains {
 }
 
 impl WhiteBalanceGains {
-    fn from(red: f32, green: f32, blue: f32) -> Self {
+    pub fn from(red: f32, green: f32, blue: f32) -> Self {
         WhiteBalanceGains { red, green, blue }
     }
 }
@@ -202,7 +158,7 @@ impl Default for WhiteBalanceGains {
         Self {
             red: 0.0,
             green: 0.0,
-            blue: 0.0
+            blue: 0.0,
         }
     }
 }
@@ -247,7 +203,10 @@ impl Default for CameraSettings {
             white_balance_gains: None,
             zoom_factor: Some(1.0),
             frame_rate: Some(30.0),
-            resolution: Some(Resolution{width: 1920, height: 1080}),
+            resolution: Some(Resolution {
+                width: 1920,
+                height: 1080,
+            }),
             hdr_enabled: false,
             stabilization_enabled: true,
             low_light_boost: Some(false),
@@ -265,79 +224,67 @@ impl Default for CameraSettings {
     }
 }
 
-
 impl CameraSettings {
     pub fn set_brightness(&mut self, value: f32) {
-        let v = value.clamp(0.0, 1.0);
-        self.brightness = Some(v);
+        self.brightness = Some(value.clamp(0.0, 1.0));
         self.is_updated = true;
     }
 
     pub fn set_contrast(&mut self, value: f32) {
-        let v = value.clamp(0.0, 1.0);
-        self.contrast = Some(v);
+        self.contrast = Some(value.clamp(0.0, 1.0));
         self.is_updated = true;
     }
 
     pub fn set_saturation(&mut self, value: f32) {
-        let v = value.clamp(0.0, 1.0);
-        self.saturation = Some(v);
+        self.saturation = Some(value.clamp(0.0, 1.0));
         self.is_updated = true;
     }
 
     pub fn set_sharpness(&mut self, value: f32) {
         let v = value.clamp(0.0, 1.0);
-        match v < 0.1 {
-            true => self.sharpness = None,
-            false => self.sharpness = Some(v)
-        }
+        self.sharpness = if v < 0.1 { None } else { Some(v) };
         self.is_updated = true;
     }
 
     pub fn set_hue(&mut self, value: f32) {
-        let v = value.clamp(0.0, 1.0);
-        self.hue = Some(v);
+        self.hue = Some(value.clamp(0.0, 1.0));
         self.is_updated = true;
     }
 
     pub fn set_noise_reduction(&mut self, value: f32) {
         let v = value.clamp(0.0, 1.0);
-        match v < 0.1 {
-            true => self.noise_reduction = None,
-            false => self.noise_reduction = Some(v)
-        }
+        self.noise_reduction = if v < 0.1 { None } else { Some(v) };
         self.is_updated = true;
     }
 
     pub fn set_gamma(&mut self, value: f32) {
-        let v = value.clamp(0.0, 1.0);
-        self.gamma = Some(v);
+        self.gamma = Some(value.clamp(0.0, 1.0));
         self.is_updated = true;
     }
 
     pub fn set_focus_mode(&mut self, mode: FocusMode) {
-        if mode != FocusMode::Manual { self.focus_distance = Some(0.5) };
+        if mode != FocusMode::Manual {
+            self.focus_distance = Some(0.5)
+        };
         self.focus_mode = mode;
         self.is_updated = true;
     }
 
     pub fn set_focus_distance(&mut self, value: f32) {
         if self.focus_mode == FocusMode::Manual {
-            let v = value.clamp(0.0, 1.0);
-            self.focus_distance = Some(v);
+            self.focus_distance = Some(value.clamp(0.0, 1.0));
             self.is_updated = true;
         }
     }
 
     pub fn set_exposure_compensation(&mut self, value: f32) {
-        let ev = (value.clamp(0.0, 1.0) * 4.0) - 2.0;
-        self.exposure_compensation = Some(ev);
+        self.exposure_compensation = Some((value.clamp(0.0, 1.0) * 4.0) - 2.0);
         self.is_updated = true;
     }
 
     pub fn set_custom_exposure(&mut self, duration_percentage: f32, iso_percentage: f32) {
-        self.custom_exposure = Some(CustomExposure { 
-            duration: duration_percentage.clamp(0.0, 1.0), 
+        self.custom_exposure = Some(CustomExposure {
+            duration: duration_percentage.clamp(0.0, 1.0),
             iso: iso_percentage.clamp(0.0, 1.0),
         });
         self.exposure_mode = ExposureMode::Custom;
@@ -345,44 +292,53 @@ impl CameraSettings {
     }
 
     pub fn set_exposure_mode(&mut self, mode: ExposureMode) {
-        if mode != ExposureMode::Custom { self.custom_exposure = None };
+        if mode != ExposureMode::Custom {
+            self.custom_exposure = None
+        };
         self.exposure_mode = mode;
         self.is_updated = true;
     }
 
     pub fn set_white_balance_mode(&mut self, mode: WhiteBalanceMode) {
-        if mode != WhiteBalanceMode::Custom { self.white_balance_gains = None };
+        if mode != WhiteBalanceMode::Custom {
+            self.white_balance_gains = None
+        };
         self.white_balance_mode = mode;
         self.is_updated = true;
     }
 
     pub fn set_white_balance_gains_red(&mut self, red: f32) {
         let g = self.white_balance_gains.unwrap_or_default();
-        let gains = WhiteBalanceGains::from(red.clamp(0.0, 1.0), g.green, g.blue);
-        self.white_balance_gains = Some(gains);
+        self.white_balance_gains =
+            Some(WhiteBalanceGains::from(red.clamp(0.0, 1.0), g.green, g.blue));
         self.white_balance_mode = WhiteBalanceMode::Custom;
         self.is_updated = true;
     }
 
     pub fn set_white_balance_gains_green(&mut self, green: f32) {
         let g = self.white_balance_gains.unwrap_or_default();
-        let gains = WhiteBalanceGains::from(g.red, green.clamp(0.0, 1.0), g.blue);
-        self.white_balance_gains = Some(gains);
+        self.white_balance_gains = Some(WhiteBalanceGains::from(
+            g.red,
+            green.clamp(0.0, 1.0),
+            g.blue,
+        ));
         self.white_balance_mode = WhiteBalanceMode::Custom;
         self.is_updated = true;
     }
 
     pub fn set_white_balance_gains_blue(&mut self, blue: f32) {
         let g = self.white_balance_gains.unwrap_or_default();
-        let gains = WhiteBalanceGains::from(g.red, g.green, blue.clamp(0.0, 1.0));
-        self.white_balance_gains = Some(gains);
+        self.white_balance_gains = Some(WhiteBalanceGains::from(
+            g.red,
+            g.green,
+            blue.clamp(0.0, 1.0),
+        ));
         self.white_balance_mode = WhiteBalanceMode::Custom;
         self.is_updated = true;
     }
 
     pub fn set_zoom_factor(&mut self, value: f32) {
-        let zoom = 1.0 + value.clamp(0.0, 1.0) * 9.0;
-        self.zoom_factor = Some(zoom);
+        self.zoom_factor = Some(1.0 + value.clamp(0.0, 1.0) * 9.0);
         self.is_updated = true;
     }
 
@@ -407,8 +363,7 @@ impl CameraSettings {
     }
 
     pub fn set_focus_point_of_interest(&mut self, x: f32, y: f32) {
-        let clamped = (x.clamp(0.0, 1.0), y.clamp(0.0, 1.0));
-        self.focus_point_of_interest = Some(clamped);
+        self.focus_point_of_interest = Some((x.clamp(0.0, 1.0), y.clamp(0.0, 1.0)));
         self.is_updated = true;
     }
 }

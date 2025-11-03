@@ -48,7 +48,7 @@ objc2-app-kit = "0.3.1"
 android_logger = "0.15.1"
 ndk-context = "0.1.1"
 jni = "0.21.1"
-android-activity = { version = "0.6", features = ["game-activity"] }
+android-activity = { version = "0.6", features = ["native-activity"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 rusqlite = {version="0.34.0", features=["bundled"]}
