@@ -8,9 +8,11 @@ mod haptics;
 mod photo_picker;
 mod safe_area;
 mod notifications;
+mod app_support;
 
 use std::sync::mpsc::Sender;
 
+pub use app_support::ApplicationSupport;
 pub use cache::{Cache, ActiveCache};
 pub use clipboard::Clipboard;
 pub use camera::{Camera, CameraError, CameraSettings};
@@ -59,6 +61,10 @@ impl Context {
             haptics: Haptics::new(),
             notifications: Notifications::new(),
         }
+    }
+
+    pub fn application_support(&self) -> Option<std::path::PathBuf> {
+        ApplicationSupport::get()
     }
     
     pub fn camera(&self) -> Result<Camera, CameraError> {
