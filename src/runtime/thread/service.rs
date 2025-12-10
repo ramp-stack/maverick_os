@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::time::{Instant, Duration};
 use std::any::TypeId;
 
-use crate::{hardware, State, Id};
+use crate::{hardware, State};
 use crate::runtime::Error;
 use super::{Thread, Context, Constructor, IntoThread, ThreadChannel, Callback, ThreadResponse, StringifyCallback};
 use serde::{Serialize, Deserialize};

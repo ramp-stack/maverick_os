@@ -9,7 +9,6 @@ repository = "https://github.com/ramp-stack/maverick_os"
 documentation = "https://docs.rs/maverick_os"
 
 [dependencies]
-active_rusqlite = "0.1.0"
 async-trait = "0.1.88"
 log = "0.4.27"
 raw-window-handle = "0.6.2"
@@ -23,9 +22,7 @@ image = "0.25.6"
 libc = "0.2.172"
 imageproc = "0.25.0"
 dirs = "6.0.0"
-air = "0.2.6"
-#bayer = "0.1.5"
-owo-colors = "3"
+anyanymap = "1.0.0"
 
 [target.'cfg(any(target_os = "ios", target_os = "macos"))'.dependencies]
 objc2 = "0.6.1"

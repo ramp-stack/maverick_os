@@ -1,10 +1,5 @@
 use std::future::Future;
 
-mod state;
-pub use state::State;
-
-pub use active_rusqlite;
-
 pub mod hardware;
 pub use hardware::Context as HardwareContext;
 
@@ -14,15 +9,13 @@ pub use runtime::{Services, Context as RuntimeContext, ServiceList};
 pub mod window;
 use window::Event;
 
-
-pub mod air;
-pub use air::{Id};
-// pub use air::{Service as AirService};
-
 pub trait Application: Services {
     fn new(context: &mut Context) -> impl Future<Output = Self>;
     fn on_event(&mut self, context: &mut Context, event: Event) -> impl Future<Output = ()>;
 }
+
+
+Map!(State: std::fmt::Debug, std::any::Any);
 
 pub struct Context {
     pub state: Option<State>,
@@ -34,11 +27,11 @@ pub struct Context {
 pub mod __private {
     #[cfg(target_os = "android")]
     pub use winit::platform::android::activity::AndroidApp;
+
     use runtime::{Runtime, ThreadConstructor, Service};
     use window::{WindowManager, EventHandler, Event, Lifetime};
-    use state::State;
 
-    use crate::{Context, Application, air, window, runtime, hardware, state};
+    use crate::{Context, Application,  window, runtime, hardware, State};
 
     use std::collections::BTreeMap;
     use std::any::TypeId;
