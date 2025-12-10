@@ -1,41 +1,84 @@
-#[cfg(target_os = "android")]
 use image::{Rgba, RgbaImage};
 use jni::objects::JClass;
 use jni::sys::jobject;
-#[cfg(target_os = "android")]
 use jni::{
     objects::{GlobalRef, JByteBuffer, JObject, JObjectArray, JString, JValue},
     JNIEnv, JavaVM,
 };
 use ndk_context;
 
-#[cfg(target_os = "android")]
-use crate::hardware::CameraError;
+use crate::hardware::{CameraError, CameraSettings};
 
-#[cfg(target_os = "android")]
 use std::error::Error;
-#[cfg(target_os = "android")]
 use std::thread;
-#[cfg(target_os = "android")]
 use std::time::Duration;
-#[cfg(target_os = "android")]
 use std::fs;
-#[cfg(target_os = "android")]
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
-#[cfg(target_os = "android")]
 #[derive(Clone, Debug)]
-pub struct AndroidCamera {
+pub struct OsCamera {
     java_vm: Arc<JavaVM>,
     app_context: GlobalRef,
     camera_manager: GlobalRef,
     camera_helper_class_loader: Option<GlobalRef>,
     camera_helper_instance: Option<GlobalRef>,
+    settings: Option<Arc<Mutex<CameraSettings>>>,
 }
 
-#[cfg(target_os = "android")]
-impl AndroidCamera {
+impl OsCamera {
+    pub fn new_standard() -> Result<Self, CameraError> {
+        Self::new_internal(false)
+    }
+
+    pub fn new_custom() -> Result<Self, CameraError> {
+        Self::new_internal(true)
+    }
+
+    fn new_internal(custom: bool) -> Result<Self, CameraError> {
+        let jvm = Arc::new(unsafe { 
+            JavaVM::from_raw(ndk_context::android_context().vm().cast())
+                .map_err(|_| CameraError::InitializationFailed)?
+        });
+
+        let (global_context, global_camera_manager) = {
+            let mut env = jvm.attach_current_thread()
+                .map_err(|_| CameraError::InitializationFailed)?;
+
+            let ctx_ptr = ndk_context::android_context().context();
+            if ctx_ptr.is_null() {
+                return Err(CameraError::InitializationFailed);
+            }
+
+            let context_obj = unsafe { JObject::from_raw(ctx_ptr as jobject) };
+            let global_context = env.new_global_ref(context_obj)
+                .map_err(|_| CameraError::InitializationFailed)?;
+            let global_camera_manager = Self::initialize_camera_manager_static(&mut env, &global_context)
+                .map_err(|_| CameraError::InitializationFailed)?;
+
+            (global_context, global_camera_manager)
+        };
+
+        let settings = if custom {
+            Some(Arc::new(Mutex::new(CameraSettings::default())))
+        } else {
+            None
+        };
+
+        let mut camera = Self {
+            java_vm: jvm.clone(),
+            app_context: global_context,
+            camera_manager: global_camera_manager,
+            camera_helper_class_loader: None,
+            camera_helper_instance: None,
+            settings,
+        };
+        
+        camera.start().map_err(|_| CameraError::InitializationFailed)?;
+        
+        Ok(camera)
+    }
+
     pub fn new() -> Result<Self, Box<dyn Error>> {
         let jvm = Arc::new(unsafe { JavaVM::from_raw(ndk_context::android_context().vm().cast())? });
 
@@ -55,13 +98,23 @@ impl AndroidCamera {
             (global_context, global_camera_manager)
         };
 
-        Ok(Self {
+        let mut camera = Self {
             java_vm: jvm.clone(),
             app_context: global_context,
             camera_manager: global_camera_manager,
             camera_helper_class_loader: None,
             camera_helper_instance: None,
-        })
+            settings: None,
+        };
+        
+        camera.start().expect("Failed to start camera");
+        
+        Ok(camera)
+    }
+
+    // Add settings method
+    pub fn settings(&mut self) -> Option<Arc<Mutex<CameraSettings>>> {
+        self.settings.clone()
     }
 
     fn initialize_camera_manager_static(
@@ -85,7 +138,7 @@ impl AndroidCamera {
     }
 
     fn get_embedded_dex_bytes(&self) -> &'static [u8] {
-        static DEX_BYTES: &[u8] = include_bytes!(".././classes.dex");
+        static DEX_BYTES: &[u8] = include_bytes!(".././camera/android/classes.dex");
         println!("Using embedded dex bytes: {} bytes", DEX_BYTES.len());
         DEX_BYTES
     }
@@ -186,7 +239,7 @@ impl AndroidCamera {
         self.dex_loader_from_bytes(dex_bytes)
     }
 
-    pub fn has_camera_permission(&self) -> Result<bool, Box<dyn Error>> {
+    fn has_camera_permission(&self) -> Result<bool, Box<dyn Error>> {
         let mut env = self.java_vm.attach_current_thread()?;
         let camera_helper = self.camera_helper_instance.as_ref().ok_or("CameraHelper not initialized")?;
 
@@ -200,7 +253,7 @@ impl AndroidCamera {
         Ok(has_permission)
     }
 
-    pub fn request_camera_permission(&self) -> Result<(), Box<dyn Error>> {
+    fn request_camera_permission(&self) -> Result<(), Box<dyn Error>> {
         let mut env = self.java_vm.attach_current_thread()?;
         let camera_helper = self.camera_helper_instance.as_ref().ok_or("CameraHelper not initialized")?;
 
@@ -214,7 +267,7 @@ impl AndroidCamera {
         Ok(())
     }
 
-    pub fn is_waiting_for_permission(&self) -> Result<bool, Box<dyn Error>> {
+    fn is_waiting_for_permission(&self) -> Result<bool, Box<dyn Error>> {
         let mut env = self.java_vm.attach_current_thread()?;
         let camera_helper = self.camera_helper_instance.as_ref().ok_or("CameraHelper not initialized")?;
 
@@ -228,7 +281,7 @@ impl AndroidCamera {
         Ok(waiting)
     }
 
-    pub fn wait_for_permission(&self, timeout_seconds: u64) -> Result<bool, Box<dyn Error>> {
+    fn wait_for_permission(&self, timeout_seconds: u64) -> Result<bool, Box<dyn Error>> {
         println!("Waiting for camera permission (timeout: {}s)", timeout_seconds);
 
         let start_time = std::time::Instant::now();
@@ -263,7 +316,7 @@ impl AndroidCamera {
         Ok(false)
     }
 
-    pub fn open_camera_with_dex_file(&mut self, dex_file_path: &str) -> Result<(), Box<dyn Error>> {
+    fn open_camera_with_dex_file(&mut self, dex_file_path: &str) -> Result<(), Box<dyn Error>> {
         println!("Opening camera with dex file: {}", dex_file_path);
 
         let dex_bytes = self.load_dex_from_file(dex_file_path)?;
@@ -327,7 +380,7 @@ impl AndroidCamera {
         Ok(())
     }
 
-    pub fn wait_for_camera_ready(&self, timeout_seconds: u64) -> Result<bool, Box<dyn Error>> {
+    fn wait_for_camera_ready(&self, timeout_seconds: u64) -> Result<bool, Box<dyn Error>> {
         println!("Waiting for camera session to be ready (timeout: {}s)", timeout_seconds);
 
         let start_time = std::time::Instant::now();

@@ -9,13 +9,15 @@ pub use runtime::{Services, Context as RuntimeContext, ServiceList};
 pub mod window;
 use window::Event;
 
+mod config;
+pub use config::{IS_MOBILE, IS_WEB};
+
 pub trait Application: Services {
     fn new(context: &mut Context) -> impl Future<Output = Self>;
     fn on_event(&mut self, context: &mut Context, event: Event) -> impl Future<Output = ()>;
 }
 
-
-Map!(State: std::fmt::Debug, std::any::Any);
+anyanymap::Map!(State: );
 
 pub struct Context {
     pub state: Option<State>,
@@ -28,7 +30,7 @@ pub mod __private {
     #[cfg(target_os = "android")]
     pub use winit::platform::android::activity::AndroidApp;
 
-    use runtime::{Runtime, ThreadConstructor, Service};
+    use runtime::{Runtime, ThreadConstructor};
     use window::{WindowManager, EventHandler, Event, Lifetime};
 
     use crate::{Context, Application,  window, runtime, hardware, State};
@@ -49,16 +51,6 @@ pub mod __private {
             #[cfg(target_os = "android")]
             app: AndroidApp
         ) {
-            #[cfg(target_os = "android")]
-            {
-                // Initialize JNI components on Android BEFORE creating hardware context
-                let vm_ptr = ndk_context::android_context().vm().cast();
-                unsafe {
-                    let vm = jni::JavaVM::from_raw(vm_ptr).unwrap();
-                    hardware::ApplicationSupport::init_android(&vm);
-                    hardware::CloudStorage::init_java_vm(vm);
-                }
-            }
 
             #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
             let mut hardware = hardware::Context::new();
@@ -100,7 +92,6 @@ pub mod __private {
 
         async fn on_event(&mut self, event: Event) {
             if self.app.is_none() {
-                self.context.runtime.spawn(air::Service::new(&mut self.context.hardware).await);
                 for service in self.services.values() {
                     self.context.runtime.spawn(service(&mut self.context.hardware).await);
                 }

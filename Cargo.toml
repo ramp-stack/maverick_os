@@ -1,6 +1,6 @@
 [package]
 name = "maverick_os"
-version = "0.1.24"
+version = "0.2.2"
 edition = "2024"
 authors = ["Caleb Couch <caleb@orange.me>"]
 description = "Maverick OS"
@@ -14,7 +14,7 @@ log = "0.4.27"
 raw-window-handle = "0.6.2"
 winit = "0.30.11"
 serde_json = "1.0.140"
-serde = "1.0.219"
+serde = {version="1.0.219", features=["derive"]}
 hex = "0.4.3"
 rand = "0.9.1"
 downcast-rs = "2.0.1"
@@ -22,7 +22,7 @@ image = "0.25.6"
 libc = "0.2.172"
 imageproc = "0.25.0"
 dirs = "6.0.0"
-anyanymap = "1.0.0"
+anyanymap = "1.0.2"
 
 [target.'cfg(any(target_os = "ios", target_os = "macos"))'.dependencies]
 objc2 = "0.6.1"
@@ -32,20 +32,21 @@ objc2-av-foundation = {version = "0.3.1", features=["objc2-core-media"]}
 objc2-core-foundation = "0.3.1"
 objc2-core-media = "0.3.1"
 objc2-foundation = "0.3.1"
-objc2-ui-kit = "0.3.1"
 objc2-core-video = "0.3.1"
 dispatch2 = "0.3.0"
 block = "0.1.6"
 block2 = "0.6.1"
 objc2-app-kit = "0.3.1"
 
-[target.'cfg(target_os = "macos")'.dependencies]
+[target.'cfg(target_os = "ios")'.dependencies]
+objc2-ui-kit = "0.3.1"
+
 
 [target.'cfg(target_os = "android")'.dependencies]
 android_logger = "0.15.1"
 ndk-context = "0.1.1"
 jni = "0.21.1"
-android-activity = { version = "0.6", features = ["game-activity"] }
+android-activity = { version = "0.6", features = ["native-activity"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 rusqlite = {version="0.34.0", features=["bundled"]}

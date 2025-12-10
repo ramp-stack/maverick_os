@@ -5,7 +5,6 @@ use objc2_ui_kit::UIApplication;
 #[cfg(target_os = "ios")]
 use objc2::rc::Retained;
 
-/// Provides the safe area insets of the device screen.
 pub struct SafeAreaInsets;
 
 impl SafeAreaInsets {
