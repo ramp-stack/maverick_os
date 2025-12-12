@@ -147,6 +147,74 @@ pub mod __private {
 macro_rules! start {
     ($app:ty) => {
         use $crate::__private::*;
+
+        #[cfg(any(target_os = "ios", target_os = "macos"))]
+        #[link(name = "PhotosUI", kind = "framework")]
+        extern "C" {}
+
+        #[cfg(target_os = "macos")]
+        #[link(name = "Cocoa", kind = "framework")]
+        extern "C" {}
+
+        #[cfg(target_os = "macos")]
+        #[link(name = "ApplicationServices", kind = "framework")]
+        extern "C" {}
+
+        #[cfg(target_os = "macos")]
+        #[link(name = "AppKit", kind = "framework")]
+        extern "C" {}
+
+        #[cfg(target_os = "macos")]
+        #[link(name = "Carbon", kind = "framework")]
+        extern "C" {}
+
+        #[cfg(target_os = "ios")]
+        #[link(name = "UIKit", kind = "framework")]
+        extern "C" {}
+
+        #[cfg(any(target_os = "ios", target_os = "macos"))]
+        #[link(name = "CoreGraphics", kind = "framework")]
+        extern "C" {}
+
+        #[cfg(any(target_os = "ios", target_os = "macos"))]
+        #[link(name = "Metal", kind = "framework")]
+        extern "C" {}
+
+        #[cfg(any(target_os = "ios", target_os = "macos"))]
+        #[link(name = "CoreVideo", kind = "framework")]
+        extern "C" {}
+
+        #[cfg(any(target_os = "ios", target_os = "macos"))]
+        #[link(name = "CoreMedia", kind = "framework")]
+        extern "C" {}
+
+        #[cfg(any(target_os = "ios", target_os = "macos"))]
+        #[link(name = "AVKit", kind = "framework")]
+        extern "C" {}
+
+        #[cfg(any(target_os = "ios", target_os = "macos"))]
+        #[link(name = "AVFoundation", kind = "framework")]
+        extern "C" {}
+
+        #[cfg(any(target_os = "ios", target_os = "macos"))]#[link(name = "Security", kind = "framework")]
+        extern "C" {}
+
+        #[cfg(any(target_os = "ios", target_os = "macos"))]
+        #[link(name = "QuartzCore", kind = "framework")]
+        extern "C" {}
+
+        #[cfg(any(target_os = "ios", target_os = "macos"))]
+        #[link(name = "c++")]
+        extern "C" {}
+
+        #[cfg(any(target_os = "ios", target_os = "macos"))]
+        #[link(name = "AudioToolbox", kind = "framework")]
+        extern "C" {}
+
+        #[cfg(any(target_os = "ios", target_os = "macos"))]
+        #[link(name = "Foundation", kind = "framework")]
+        extern "C" {}
+
         #[cfg(target_arch = "wasm32")]
         #[cfg_attr(target_arch = "wasm32", wasm_bindgen(start))]
         pub fn maverick_main() {
