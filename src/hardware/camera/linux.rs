@@ -21,4 +21,6 @@ impl OsCamera {
     pub fn settings(&mut self) -> Option<Arc<Mutex<CameraSettings>>> {
         None
     }
+
+    pub fn stop(self) {}
 }
