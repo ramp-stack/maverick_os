@@ -17,7 +17,7 @@ use std::sync::Arc;
 pub use winit::keyboard::{NamedKey, SmolStr, Key};
 pub use winit::window::Window;
 
-const TICK: Duration = Duration::from_millis(16);//60 fps
+const TICK: Duration = Duration::from_millis(0);//60 fps
 
 ///Window Context contains window information and its handle, The context is cheaply clonable but
 ///does not get remotely updated each resume/resize event creates a new window Context
