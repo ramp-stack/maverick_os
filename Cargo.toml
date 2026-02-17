@@ -23,6 +23,7 @@ libc = "0.2.172"
 imageproc = "0.25.0"
 dirs = "6.0.0"
 anyanymap = "1.0.2"
+include_dir = "0.7.4"
 
 [target.'cfg(any(target_os = "ios", target_os = "macos"))'.dependencies]
 objc2 = "0.6.1"

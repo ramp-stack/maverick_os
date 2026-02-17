@@ -275,9 +275,9 @@ impl CustomProcessor {
     fn process_pixel_buffer(&self, pixel_buffer: &CVPixelBuffer) -> Option<RgbaImage> {
         unsafe { CVPixelBufferLockBaseAddress(pixel_buffer, CVPixelBufferLockFlags(0)) };
 
-        let format = CVPixelBufferGetPixelFormatType(pixel_buffer);
+        let format = unsafe{CVPixelBufferGetPixelFormatType(pixel_buffer)};
         let (h, w, row_stride) =
-            (CVPixelBufferGetHeight(pixel_buffer), CVPixelBufferGetWidth(pixel_buffer), CVPixelBufferGetBytesPerRow(pixel_buffer))
+            (unsafe{CVPixelBufferGetHeight(pixel_buffer)}, unsafe{CVPixelBufferGetWidth(pixel_buffer)}, unsafe{CVPixelBufferGetBytesPerRow(pixel_buffer)})
         ;
 
         let result = match format {
@@ -296,12 +296,12 @@ impl CustomProcessor {
 
     fn process_bayer(&self, pixel_buffer: &CVPixelBuffer, width: usize, height: usize, row_bytes: usize, pattern: BayerPattern) -> Option<RgbaImage> {
         *self.ivars().bayer_format_verified.lock().unwrap() = true;
-        let addr = CVPixelBufferGetBaseAddress(pixel_buffer) as *const u8;
+        let addr = unsafe{CVPixelBufferGetBaseAddress(pixel_buffer) as *const u8};
         if addr.is_null() { None } else { ImageProcessor::process_bayer_data(addr, width, height, row_bytes, pattern) }
     }
 
     fn process_bgra(&self, pixel_buffer: &CVPixelBuffer, width: usize, height: usize, row_bytes: usize) -> Option<RgbaImage> {
-        let addr = CVPixelBufferGetBaseAddress(pixel_buffer) as *const u8;
+        let addr = unsafe{CVPixelBufferGetBaseAddress(pixel_buffer) as *const u8};
         if addr.is_null() { return None; }
 
         let data = unsafe { from_raw_parts(addr, height * row_bytes) };
@@ -318,12 +318,12 @@ impl CustomProcessor {
     }
     
     fn process_yuv(&self, pb: &CVPixelBuffer, width: usize, height: usize) -> Option<RgbaImage> {
-        let y_base = CVPixelBufferGetBaseAddressOfPlane(pb, 0) as *const u8;
-        let uv_base = CVPixelBufferGetBaseAddressOfPlane(pb, 1) as *const u8;
+        let y_base = unsafe{CVPixelBufferGetBaseAddressOfPlane(pb, 0) as *const u8};
+        let uv_base = unsafe{CVPixelBufferGetBaseAddressOfPlane(pb, 1) as *const u8};
         if y_base.is_null() || uv_base.is_null() { return None; }
 
-        let y_stride = CVPixelBufferGetBytesPerRowOfPlane(pb, 0);
-        let uv_stride = CVPixelBufferGetBytesPerRowOfPlane(pb, 1);
+        let y_stride = unsafe{CVPixelBufferGetBytesPerRowOfPlane(pb, 0)};
+        let uv_stride = unsafe{CVPixelBufferGetBytesPerRowOfPlane(pb, 1)};
 
         let y = unsafe { from_raw_parts(y_base, y_stride * height) };
         let uv = unsafe { from_raw_parts(uv_base, uv_stride * height / 2) };

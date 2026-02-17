@@ -1,4 +1,9 @@
 use std::future::Future;
+use std::sync::Arc;
+
+use image::{RgbaImage, load_from_memory};
+
+pub use include_dir::{Dir, include_dir};
 
 pub mod hardware;
 pub use hardware::Context as HardwareContext;
@@ -13,27 +18,46 @@ mod config;
 pub use config::{IS_MOBILE, IS_WEB};
 
 pub trait Application: Services {
-    fn new(context: &mut Context) -> impl Future<Output = Self>;
+    fn new(context: &mut Context, assets: Assets) -> impl Future<Output = Self>;
     fn on_event(&mut self, context: &mut Context, event: Event) -> impl Future<Output = ()>;
 }
 
 anyanymap::Map!(State: );
 
 pub struct Context {
-    pub state: Option<State>,
+    state: Option<State>,
     pub window: window::Context,
     pub runtime: runtime::Context,
     pub hardware: hardware::Context,
 }
 
+#[derive(Clone)]
+pub struct Assets {inner: Dir<'static>}
+
+impl Assets {
+    pub fn new(inner: Dir<'static>) -> Self { Self { inner } }
+
+    pub fn get_image(&self, path: &str) -> Option<Arc<RgbaImage>> {
+        let bytes = self.inner.get_file(path)?.contents().to_vec();
+        Some(Arc::new(load_from_memory(&bytes).ok()?.to_rgba8()))
+    }
+
+    pub fn get_font(&self, path: &str) -> Option<Vec<u8>> {
+        Some(self.inner.get_file(path)?.contents().to_vec())
+    }
+}
+
+
 pub mod __private {
     #[cfg(target_os = "android")]
     pub use winit::platform::android::activity::AndroidApp;
 
+    pub use include_dir;
+
     use runtime::{Runtime, ThreadConstructor};
     use window::{WindowManager, EventHandler, Event, Lifetime};
 
-    use crate::{Context, Application,  window, runtime, hardware, State};
+    use crate::{Assets, Context, Application,  window, runtime, hardware, State};
 
     use std::collections::BTreeMap;
     use std::any::TypeId;
@@ -43,13 +67,15 @@ pub mod __private {
     pub struct MaverickOS<A: Application> {
         context: Context,
         services: BTreeMap<TypeId, ThreadConstructor>,
-        app: Option<A>
+        app: Option<A>,
+        assets: Assets
     }
 
     impl<A: Application + 'static> MaverickOS<A> {
         pub fn start(
             #[cfg(target_os = "android")]
-            app: AndroidApp
+            app: AndroidApp,
+            assets: include_dir::Dir<'static>
         ) {
 
             #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
@@ -82,12 +108,12 @@ pub mod __private {
             WindowManager::start(
                 #[cfg(target_os = "android")]
                 app,
-                MaverickService::<A>::new(runtime, services, hardware)
+                MaverickService::<A>::new(runtime, services, hardware, Assets::new(assets))
             )
         }
 
-        fn new(services: BTreeMap<TypeId, ThreadConstructor>, context: Context) -> Self {
-            MaverickOS::<A>{context, services, app: None}
+        fn new(services: BTreeMap<TypeId, ThreadConstructor>, context: Context, assets: Assets) -> Self {
+            MaverickOS::<A>{context, services, app: None, assets}
         }
 
         async fn on_event(&mut self, event: Event) {
@@ -95,7 +121,7 @@ pub mod __private {
                 for service in self.services.values() {
                     self.context.runtime.spawn(service(&mut self.context.hardware).await);
                 }
-                self.app = Some(A::new(&mut self.context).await);
+                self.app = Some(A::new(&mut self.context, self.assets.clone()).await);
             }
             self.app.as_mut().unwrap().on_event(&mut self.context, event).await;
         }
@@ -105,12 +131,13 @@ pub mod __private {
         runtime: Option<Runtime>,
         services: Option<BTreeMap<TypeId, ThreadConstructor>>,
         hardware: Option<hardware::Context>,
-        os: Option<MaverickOS::<A>>
+        os: Option<MaverickOS::<A>>,
+        assets: Assets
     }
 
     impl<A: Application> MaverickService<A> {
-        fn new(runtime: Runtime, services: BTreeMap<TypeId, ThreadConstructor>, hardware: hardware::Context) -> Self {
-            MaverickService{runtime: Some(runtime), services: Some(services), hardware: Some(hardware), os: None}
+        fn new(runtime: Runtime, services: BTreeMap<TypeId, ThreadConstructor>, hardware: hardware::Context, assets: Assets) -> Self {
+            MaverickService{runtime: Some(runtime), services: Some(services), hardware: Some(hardware), os: None, assets,}
         }
     }
 
@@ -123,7 +150,7 @@ pub mod __private {
                         runtime: runtime.context().clone(),
                         window: window_ctx.clone(),
                         state: Some(State::default())
-                    }))
+                    }, self.assets.clone()))
                 }
                 self.os.as_mut().map(|a| {
                     runtime.tick(a.context.state.as_mut().unwrap())
@@ -218,24 +245,24 @@ macro_rules! start {
         #[cfg(target_arch = "wasm32")]
         #[cfg_attr(target_arch = "wasm32", wasm_bindgen(start))]
         pub fn maverick_main() {
-            MaverickOS::<$app>::start()
+            MaverickOS::<$app>::start(include_dir::include_dir!("$CARGO_MANIFEST_DIR/resources"))
         }
 
         #[cfg(target_os = "ios")]
         #[unsafe(no_mangle)]
         pub extern "C" fn maverick_main() {
-            MaverickOS::<$app>::start()
+            MaverickOS::<$app>::start(include_dir::include_dir!("$CARGO_MANIFEST_DIR/resources"))
         }
 
         #[cfg(target_os = "android")]
         #[unsafe(no_mangle)]
         pub fn android_main(app: AndroidApp) {
-            MaverickOS::<$app>::start(app)
+            MaverickOS::<$app>::start(app, include_dir::include_dir!("$CARGO_MANIFEST_DIR/resources"))
         }
 
         #[cfg(not(any(target_os = "android", target_os="ios", target_arch = "wasm32")))]
         pub fn maverick_main() {
-            MaverickOS::<$app>::start()
+            MaverickOS::<$app>::start(include_dir::include_dir!("$CARGO_MANIFEST_DIR/resources"))
         }
     };
 }
