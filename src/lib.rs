@@ -31,7 +31,7 @@ pub struct Context {
     pub hardware: hardware::Context,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Assets {inner: Dir<'static>}
 
 impl Assets {
@@ -44,6 +44,15 @@ impl Assets {
 
     pub fn get_font(&self, path: &str) -> Option<Vec<u8>> {
         Some(self.inner.get_file(path)?.contents().to_vec())
+    }
+
+    pub fn get_svg(&self, path: &str) -> Option<Arc<RgbaImage>> {
+        let svg = self.inner.get_file(path)?.contents().to_vec();
+        let svg = std::str::from_utf8(&svg).unwrap();
+        let svg = nsvg::parse_str(svg, nsvg::Units::Pixel, 96.0).unwrap();
+        let rgba = svg.rasterize(8.0).unwrap();
+        let size = rgba.dimensions();
+        Some(Arc::new(RgbaImage::from_raw(size.0, size.1, rgba.into_raw()).unwrap()))
     }
 }
 
