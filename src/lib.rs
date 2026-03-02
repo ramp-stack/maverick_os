@@ -37,6 +37,8 @@ pub struct Assets {inner: Dir<'static>}
 impl Assets {
     pub fn new(inner: Dir<'static>) -> Self { Self { inner } }
 
+    pub fn all(&self) -> &Dir<'static> {&self.inner}
+
     pub fn get_image(&self, path: &str) -> Option<Arc<RgbaImage>> {
         let bytes = self.inner.get_file(path)?.contents().to_vec();
         Some(Arc::new(load_from_memory(&bytes).ok()?.to_rgba8()))
