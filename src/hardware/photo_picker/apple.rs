@@ -6,6 +6,23 @@ use objc2::rc::{Retained, autoreleasepool};
 use std::path::PathBuf;
 use std::fs;
 
+#[cfg(target_os = "ios")]
+use std::ffi::c_void;
+#[cfg(target_os = "ios")]
+use block::{ConcreteBlock, RcBlock};
+#[cfg(target_os = "ios")]
+use std::ffi::CString;
+#[cfg(target_os = "ios")]
+use objc2_foundation::NSObject;
+#[cfg(target_os = "ios")]
+use objc2::sel;
+#[cfg(target_os = "ios")]
+use objc2::declare::ClassBuilder;
+#[cfg(target_os = "ios")]
+use objc2::runtime::Sel;
+#[cfg(target_os = "ios")]
+use objc2::ffi::objc_retain;
+
 #[derive(Clone)]
 pub struct OsPhotoPicker;
 
@@ -100,10 +117,10 @@ impl OsPhotoPicker {
         println!("STARTED");
         println!("ATTEMPTING TO OPEN PHOTO PICKER");
         let sender_box = Box::new(sender);
-        let sender_ptr = SenderPtr(Box::into_raw(sender_box) as usize);
+        let sender_ptr = Box::into_raw(sender_box) as usize;
 
         dispatch2::DispatchQueue::main().exec_async(move || {
-            let sender_ptr = sender_ptr.0 as *mut c_void;
+            let sender_ptr = sender_ptr as *mut c_void;
             println!("Started dispatcher");
             autoreleasepool(|_| unsafe {
                 println!("Inside autorelease pool");
