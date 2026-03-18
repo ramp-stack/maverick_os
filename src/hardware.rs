@@ -11,7 +11,7 @@ mod notifications;
 
 use std::sync::mpsc::Sender;
 
-pub use cache::{Cache, ActiveCache};
+pub use cache::Cache;
 pub use clipboard::Clipboard;
 pub use camera::{Camera, CameraError, CameraSettings};
 pub use share::Share;

@@ -5,14 +5,16 @@ use std::future::Future;
 use std::pin::Pin;
 
 use serde::{Serialize, Deserialize};
+use rand::Rng;
 
-use crate::{hardware, State, Id};
+use crate::{hardware, State};
 use super::Error;
 
 pub mod service;
 pub mod tasks;
 
 pub type ThreadChannel = Channel<ThreadResponse, ThreadRequest>;
+pub type Id = u64;
 
 pub type Constructor = Box<dyn for<'a> Fn(&'a mut hardware::Context) -> Pin<Box<dyn Future<Output = (Box<dyn Thread>, Callback<String>)> + 'a>>>;
 pub type Callback<S> = Box<dyn FnMut(&mut State, S)>;
@@ -109,7 +111,7 @@ impl<
         Context{hardware, channel, receive: VecDeque::new(), received: BTreeMap::new(), paused: false, _p: PhantomData::<fn() -> S>}
     }
     pub async fn blocking_request<T: Thread>(&mut self, request: T::Receive) -> T::Send {
-        let req_id = Id::random();
+        let req_id = rand::rng().random();
         self.channel.send(ThreadResponse::Request(req_id, T::type_id().expect("Cannot send messages to this thread"), serde_json::to_string(&request).unwrap()));
         loop {
             let res = self.channel.receive().await;
@@ -121,7 +123,7 @@ impl<
     }
 
     pub fn request<T: Thread>(&mut self, request: T::Receive) -> RequestHandle<T::Send> {
-        let req_id = Id::random();
+        let req_id = rand::rng().random();
         self.channel.send(ThreadResponse::Request(req_id, T::type_id().expect("Cannot send messages to this thread"), serde_json::to_string(&request).unwrap()));
         RequestHandle(req_id, PhantomData::<fn() -> T::Send>)
     }

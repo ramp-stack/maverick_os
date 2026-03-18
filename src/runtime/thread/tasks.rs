@@ -1,10 +1,13 @@
 use std::future::Future;
 use std::pin::Pin;
 
+pub type Id = u64;
+
 pub use tokio::time::{Instant, Duration};
 use serde::{Serialize, Deserialize};
+use rand::Rng;
 
-use crate::{hardware, State, Id};
+use crate::{hardware, State};
 use super::{Thread, Context, IntoThread, ThreadChannel, Callback, ThreadResponse, StringifyCallback, Error};
 
 //TICKING TASK
@@ -72,7 +75,7 @@ impl<
 > IntoThread<S, R, TaskTick<S, R>> for F {
     fn into(mut self) -> (Box<dyn Thread>, Callback<String>){
         let task: TaskTick<S, R> = Box::new(move |ctx: &mut Context<S, R>| Box::pin(self(ctx)));
-        (Box::new(TickingTask(Id::random(), task)), Box::new(|_: &mut State, _: String| {}))
+        (Box::new(TickingTask(rand::rng().random(), task)), Box::new(|_: &mut State, _: String| {}))
     }
 }
 
@@ -84,7 +87,7 @@ impl<
 > IntoThread<S, R, TaskTick<S, R>> for (F, CF) {
     fn into(mut self) -> (Box<dyn Thread>, Callback<String>){
         let task: TaskTick<S, R> = Box::new(move |ctx: &mut Context<S, R>| Box::pin((self.0)(ctx)));
-        (Box::new(TickingTask(Id::random(), task)), Box::new(self.1.stringify()))
+        (Box::new(TickingTask(rand::rng().random(), task)), Box::new(self.1.stringify()))
     }
 }
 
@@ -116,7 +119,7 @@ impl<
 > IntoThread<S, (), TaskOneshot<S>> for F {
     fn into(self) -> (Box<dyn Thread>, Callback<String>){
         let task: TaskOneshot<S> = Box::new(move || Box::pin(self()));
-        (Box::new((Id::random(), task)), Box::new(|_: &mut State, _: String| {}))
+        (Box::new((rand::rng().random(), task)), Box::new(|_: &mut State, _: String| {}))
     }
 }
 
@@ -128,7 +131,7 @@ impl<
 > IntoThread<S, (), TaskOneshot<S>> for (F, CF) {
     fn into(self) -> (Box<dyn Thread>, Callback<String>){
         let task: TaskOneshot<S> = Box::new(move || Box::pin((self.0)()));
-        (Box::new((Id::random(), task)), Box::new(self.1.stringify()))
+        (Box::new((rand::rng().random(), task)), Box::new(self.1.stringify()))
     }
 }
 

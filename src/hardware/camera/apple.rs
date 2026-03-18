@@ -8,7 +8,7 @@ mod custom;
 mod standard;
 
 use custom::CustomCamera;
-use standard::{StandardProcessor, StandardOsCamera};
+use standard::StandardOsCamera;
 
 #[derive(Clone, Debug)]
 pub enum OsCamera {
@@ -34,17 +34,24 @@ impl OsCamera {
         }
     }
 
-    pub fn toggle_flashlight(&self) {
-        // let _ = match self {
-        //     OsCamera::Standard(_) => {},
-        //     OsCamera::Custom(c) => c.toggle_flashlight()
-        // };
-    }
+  //pub fn toggle_flashlight(&self) {
+  //    // let _ = match self {
+  //    //     OsCamera::Standard(_) => {},
+  //    //     OsCamera::Custom(c) => c.toggle_flashlight()
+  //    // };
+  //}
 
     pub fn settings(&self) -> Option<Arc<Mutex<CameraSettings>>> {
         match self {
             OsCamera::Standard(_) => None,
             OsCamera::Custom(c) => Some(c.settings())
+        }
+    }
+
+    pub fn stop(self) {
+        match self {
+            OsCamera::Standard(s) => s.stop(),
+            OsCamera::Custom(c) => c.stop() 
         }
     }
 }
