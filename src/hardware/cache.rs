@@ -1,6 +1,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 use std::fmt::Debug;
+use std::future::Future;
 
 use tokio::sync::Mutex;
 
