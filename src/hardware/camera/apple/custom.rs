@@ -275,10 +275,10 @@ impl CustomProcessor {
     fn process_pixel_buffer(&self, pixel_buffer: &CVPixelBuffer) -> Option<RgbaImage> {
         unsafe { CVPixelBufferLockBaseAddress(pixel_buffer, CVPixelBufferLockFlags(0)) };
 
-        let format = unsafe { CVPixelBufferGetPixelFormatType(pixel_buffer) };
-        let (h, w, row_stride) = unsafe {
-            (CVPixelBufferGetHeight(pixel_buffer), CVPixelBufferGetWidth(pixel_buffer), CVPixelBufferGetBytesPerRow(pixel_buffer))
-        };
+        let format = unsafe{CVPixelBufferGetPixelFormatType(pixel_buffer)};
+        let (h, w, row_stride) =
+            (unsafe{CVPixelBufferGetHeight(pixel_buffer)}, unsafe{CVPixelBufferGetWidth(pixel_buffer)}, unsafe{CVPixelBufferGetBytesPerRow(pixel_buffer)})
+        ;
 
         let result = match format {
             kCVPixelFormatType_14Bayer_RGGB => self.process_bayer(pixel_buffer, w, h, row_stride, BayerPattern::RGGB),
@@ -296,12 +296,12 @@ impl CustomProcessor {
 
     fn process_bayer(&self, pixel_buffer: &CVPixelBuffer, width: usize, height: usize, row_bytes: usize, pattern: BayerPattern) -> Option<RgbaImage> {
         *self.ivars().bayer_format_verified.lock().unwrap() = true;
-        let addr = unsafe { CVPixelBufferGetBaseAddress(pixel_buffer) } as *const u8;
+        let addr = unsafe{CVPixelBufferGetBaseAddress(pixel_buffer) as *const u8};
         if addr.is_null() { None } else { ImageProcessor::process_bayer_data(addr, width, height, row_bytes, pattern) }
     }
 
     fn process_bgra(&self, pixel_buffer: &CVPixelBuffer, width: usize, height: usize, row_bytes: usize) -> Option<RgbaImage> {
-        let addr = unsafe { CVPixelBufferGetBaseAddress(pixel_buffer) } as *const u8;
+        let addr = unsafe{CVPixelBufferGetBaseAddress(pixel_buffer) as *const u8};
         if addr.is_null() { return None; }
 
         let data = unsafe { from_raw_parts(addr, height * row_bytes) };
@@ -318,12 +318,12 @@ impl CustomProcessor {
     }
     
     fn process_yuv(&self, pb: &CVPixelBuffer, width: usize, height: usize) -> Option<RgbaImage> {
-        let y_base = unsafe { CVPixelBufferGetBaseAddressOfPlane(pb, 0) } as *const u8;
-        let uv_base = unsafe { CVPixelBufferGetBaseAddressOfPlane(pb, 1) } as *const u8;
+        let y_base = unsafe{CVPixelBufferGetBaseAddressOfPlane(pb, 0) as *const u8};
+        let uv_base = unsafe{CVPixelBufferGetBaseAddressOfPlane(pb, 1) as *const u8};
         if y_base.is_null() || uv_base.is_null() { return None; }
 
-        let y_stride = unsafe { CVPixelBufferGetBytesPerRowOfPlane(pb, 0) };
-        let uv_stride = unsafe { CVPixelBufferGetBytesPerRowOfPlane(pb, 1) };
+        let y_stride = unsafe{CVPixelBufferGetBytesPerRowOfPlane(pb, 0)};
+        let uv_stride = unsafe{CVPixelBufferGetBytesPerRowOfPlane(pb, 1)};
 
         let y = unsafe { from_raw_parts(y_base, y_stride * height) };
         let uv = unsafe { from_raw_parts(uv_base, uv_stride * height / 2) };
@@ -377,8 +377,7 @@ pub enum PixelType { Red, Green, Blue }
 
 impl BayerPattern {
     pub fn pixel_type(&self, x: usize, y: usize) -> PixelType {
-        let (even_row, even_col) = (y % 2 == 0, x % 2 == 0);
-        match (self, even_row, even_col) {
+        match (self, y.is_multiple_of(2), x.is_multiple_of(2)) {
             (BayerPattern::RGGB, true, true) | (BayerPattern::BGGR, false, false) => PixelType::Red,
             (BayerPattern::RGGB, false, false) | (BayerPattern::BGGR, true, true) => PixelType::Blue,
             (BayerPattern::GRBG, true, false) | (BayerPattern::GBRG, false, true) => PixelType::Red,
@@ -447,10 +446,8 @@ impl ImageProcessor {
             b = ((b - 128.0) * contrast + 128.0).clamp(0.0, 255.0);
 
             #[cfg(target_os = "macos")]
-            if settings.white_balance_mode == WhiteBalanceMode::Custom {
-                if let Some(gains) = &settings.white_balance_gains {
-                    r *= gains.red; g *= gains.green; b *= gains.blue;
-                }
+            if settings.white_balance_mode == WhiteBalanceMode::Custom && let Some(gains) = &settings.white_balance_gains {
+                r *= gains.red; g *= gains.green; b *= gains.blue;
             }
 
             if need_hsv {
@@ -469,26 +466,22 @@ impl ImageProcessor {
             }
         }
 
-        if let Some(amount) = settings.noise_reduction {
-            if amount > 0.0 {
-                let kernel = [
-                    1.0/9.0, 1.0/9.0, 1.0/9.0,
-                    1.0/9.0, 1.0/9.0, 1.0/9.0,
-                    1.0/9.0, 1.0/9.0, 1.0/9.0,
-                ];
-                img = filter::filter3x3(&img, &kernel);
-            }
+        if let Some(amount) = settings.noise_reduction && amount > 0.0 {
+            let kernel = [
+                1.0/9.0, 1.0/9.0, 1.0/9.0,
+                1.0/9.0, 1.0/9.0, 1.0/9.0,
+                1.0/9.0, 1.0/9.0, 1.0/9.0,
+            ];
+            img = filter::filter3x3(&img, &kernel);
         }
 
-        if let Some(strength) = settings.sharpness {
-            if strength > 0.0 {
-                let kernel = [
-                    0.0, -0.5, 0.0,
-                    -0.5, 3.0, -0.5,
-                    0.0, -0.5, 0.0,
-                ];
-                img = filter::filter3x3(&img, &kernel);
-            }
+        if let Some(strength) = settings.sharpness && strength > 0.0 {
+            let kernel = [
+                0.0, -0.5, 0.0,
+                -0.5, 3.0, -0.5,
+                0.0, -0.5, 0.0,
+            ];
+            img = filter::filter3x3(&img, &kernel);
         }
 
         img

@@ -60,7 +60,6 @@ pub enum Lifetime {
 
 #[derive(Clone, Debug)]
 pub enum Input {
-    Tick,
     Focused(bool),
     DroppedFile(PathBuf),
     HoveredFile(PathBuf),
@@ -127,25 +126,21 @@ impl<E: EventHandler> WindowManager<E> {
 
 impl<E: EventHandler> ApplicationHandler for WindowManager<E> {
     fn new_events(&mut self, _event_loop: &ActiveEventLoop, cause: StartCause) {
-        if let StartCause::ResumeTimeReached{..} = cause {
-            if let Some(context) = &self.context { context.handle.request_redraw();}
+        if let StartCause::ResumeTimeReached{..} = cause && let Some(context) = &self.context {
+            context.handle.request_redraw();
         }
     }
 
     fn suspended(&mut self, _event_loop: &ActiveEventLoop) {
-        if !self.pause {
-            if let Some(context) = &self.context {
-                self.pause = true;
-                self.event_handler.event(context, Event::Lifetime(Lifetime::Paused));
-            }
+        if !self.pause && let Some(context) = &self.context {
+            self.pause = true;
+            self.event_handler.event(context, Event::Lifetime(Lifetime::Paused));
         }
     }
 
     fn device_event(&mut self, _event_loop: &ActiveEventLoop, device_id: DeviceId, event: DeviceEvent) {
-        if !self.pause {
-            if let Some(context) = &self.context {
-                self.event_handler.event(context, Event::Input(Input::Device{device_id, event}));
-            }
+        if !self.pause && let Some(context) = &self.context {
+            self.event_handler.event(context, Event::Input(Input::Device{device_id, event}));
         }
     }
 
@@ -166,58 +161,56 @@ impl<E: EventHandler> ApplicationHandler for WindowManager<E> {
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, i: WindowId, event: WindowEvent) {
-        if let Some(context) = &mut self.context {
-            if i == context.handle.id() && (!self.pause || matches!(event, WindowEvent::Occluded(false))) {
-                let event = match event {
-                    WindowEvent::CloseRequested | WindowEvent::Destroyed => {
-                        event_loop.exit();
-                        Event::Lifetime(Lifetime::Close)
-                    },
-                    WindowEvent::RedrawRequested => {
-                        event_loop.set_control_flow(ControlFlow::WaitUntil(Instant::now()+TICK));
-                        Event::Lifetime(Lifetime::Draw)
-                    },
-                    WindowEvent::Occluded(occluded) => {
-                        if occluded {
-                            self.pause = true;
-                            Event::Lifetime(Lifetime::Paused)
-                        } else {
-                            self.pause = false;
-                            //Only on IOS is this called and it is prior to an actual Resume event
-                            Event::Lifetime(Lifetime::Resumed)
-                        }
-                    },
-                    WindowEvent::Resized(size) => {
-                        context.size = size.into();
-                        Event::Lifetime(Lifetime::Resized)
-                    },
-                    WindowEvent::ScaleFactorChanged{scale_factor, ..} => {
-                        context.scale_factor = scale_factor;
-                        Event::Lifetime(Lifetime::Resized)
-                    },
-                    WindowEvent::Focused(focused) => Event::Input(Input::Focused(focused)),
-                    WindowEvent::KeyboardInput{device_id, event, is_synthetic} => Event::Input(Input::Keyboard{device_id, event, is_synthetic}),
-                    WindowEvent::CursorMoved{device_id, position} => Event::Input(Input::CursorMoved{device_id, position: position.into()}),
-                    WindowEvent::MouseWheel{device_id, delta, phase} => Event::Input(Input::MouseWheel{device_id, delta, phase}),
-                    WindowEvent::MouseInput{device_id, state, button} => Event::Input(Input::Mouse{device_id, state, button}),
-                    WindowEvent::Touch(touch) => Event::Input(Input::Touch(touch)),
-                    WindowEvent::DroppedFile(path) => Event::Input(Input::DroppedFile(path)),
-                    WindowEvent::HoveredFile(path) => Event::Input(Input::HoveredFile(path)),
-                    WindowEvent::HoveredFileCancelled => Event::Input(Input::HoveredFileCancelled),
-                    WindowEvent::ModifiersChanged(modifiers) => Event::Input(Input::ModifiersChanged(modifiers)),
-                    WindowEvent::CursorEntered{device_id} => Event::Input(Input::CursorEntered{device_id}),
-                    WindowEvent::CursorLeft{device_id} => Event::Input(Input::CursorLeft{device_id}),
-                    WindowEvent::PinchGesture{device_id, delta, phase} => Event::Input(Input::PinchGesture{device_id, delta, phase}),
-                    WindowEvent::PanGesture{device_id, delta, phase} => Event::Input(Input::PanGesture{device_id, delta: delta.into(), phase}),
-                    WindowEvent::DoubleTapGesture{device_id} => Event::Input(Input::DoubleTapGesture{device_id}),
-                    WindowEvent::RotationGesture{device_id, delta, phase} => Event::Input(Input::RotationGesture{device_id, delta, phase}),
-                    WindowEvent::TouchpadPressure{device_id, pressure, stage} => Event::Input(Input::TouchpadPressure{device_id, pressure, stage}),
-                    WindowEvent::AxisMotion{device_id, axis, value} => Event::Input(Input::AxisMotion{device_id, axis, value}),
-                    WindowEvent::Moved(position) => Event::Input(Input::Moved(position.into())),
-                    _ => {return;}
-                };
-                self.event_handler.event(context, event);
-            }
+        if let Some(context) = &mut self.context && i == context.handle.id() && (!self.pause || matches!(event, WindowEvent::Occluded(false))) {
+            let event = match event {
+                WindowEvent::CloseRequested | WindowEvent::Destroyed => {
+                    event_loop.exit();
+                    Event::Lifetime(Lifetime::Close)
+                },
+                WindowEvent::RedrawRequested => {
+                    event_loop.set_control_flow(ControlFlow::WaitUntil(Instant::now()+TICK));
+                    Event::Lifetime(Lifetime::Draw)
+                },
+                WindowEvent::Occluded(occluded) => {
+                    if occluded {
+                        self.pause = true;
+                        Event::Lifetime(Lifetime::Paused)
+                    } else {
+                        self.pause = false;
+                        //Only on IOS is this called and it is prior to an actual Resume event
+                        Event::Lifetime(Lifetime::Resumed)
+                    }
+                },
+                WindowEvent::Resized(size) => {
+                    context.size = size.into();
+                    Event::Lifetime(Lifetime::Resized)
+                },
+                WindowEvent::ScaleFactorChanged{scale_factor, ..} => {
+                    context.scale_factor = scale_factor;
+                    Event::Lifetime(Lifetime::Resized)
+                },
+                WindowEvent::Focused(focused) => Event::Input(Input::Focused(focused)),
+                WindowEvent::KeyboardInput{device_id, event, is_synthetic} => Event::Input(Input::Keyboard{device_id, event, is_synthetic}),
+                WindowEvent::CursorMoved{device_id, position} => Event::Input(Input::CursorMoved{device_id, position: position.into()}),
+                WindowEvent::MouseWheel{device_id, delta, phase} => Event::Input(Input::MouseWheel{device_id, delta, phase}),
+                WindowEvent::MouseInput{device_id, state, button} => Event::Input(Input::Mouse{device_id, state, button}),
+                WindowEvent::Touch(touch) => Event::Input(Input::Touch(touch)),
+                WindowEvent::DroppedFile(path) => Event::Input(Input::DroppedFile(path)),
+                WindowEvent::HoveredFile(path) => Event::Input(Input::HoveredFile(path)),
+                WindowEvent::HoveredFileCancelled => Event::Input(Input::HoveredFileCancelled),
+                WindowEvent::ModifiersChanged(modifiers) => Event::Input(Input::ModifiersChanged(modifiers)),
+                WindowEvent::CursorEntered{device_id} => Event::Input(Input::CursorEntered{device_id}),
+                WindowEvent::CursorLeft{device_id} => Event::Input(Input::CursorLeft{device_id}),
+                WindowEvent::PinchGesture{device_id, delta, phase} => Event::Input(Input::PinchGesture{device_id, delta, phase}),
+                WindowEvent::PanGesture{device_id, delta, phase} => Event::Input(Input::PanGesture{device_id, delta: delta.into(), phase}),
+                WindowEvent::DoubleTapGesture{device_id} => Event::Input(Input::DoubleTapGesture{device_id}),
+                WindowEvent::RotationGesture{device_id, delta, phase} => Event::Input(Input::RotationGesture{device_id, delta, phase}),
+                WindowEvent::TouchpadPressure{device_id, pressure, stage} => Event::Input(Input::TouchpadPressure{device_id, pressure, stage}),
+                WindowEvent::AxisMotion{device_id, axis, value} => Event::Input(Input::AxisMotion{device_id, axis, value}),
+                WindowEvent::Moved(position) => Event::Input(Input::Moved(position.into())),
+                _ => {return;}
+            };
+            self.event_handler.event(context, event);
         }
     }
 }

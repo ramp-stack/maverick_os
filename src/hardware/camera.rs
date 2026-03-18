@@ -65,6 +65,10 @@ impl Camera {
     pub fn settings(&mut self) -> Option<Arc<Mutex<CameraSettings>>> {
         self.0.settings()
     }
+
+    pub fn stop(self) {
+        self.0.stop()
+    }
 }
 
 #[derive(Debug, Clone)]

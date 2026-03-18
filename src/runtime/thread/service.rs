@@ -1,13 +1,15 @@
 use std::collections::BTreeMap;
+use std::hash::{DefaultHasher, Hasher, Hash};
 use std::time::{Instant, Duration};
 use std::any::TypeId;
 
-use crate::{hardware, State, Id};
+use crate::{hardware, State};
 use crate::runtime::Error;
 use super::{Thread, Context, Constructor, IntoThread, ThreadChannel, Callback, ThreadResponse, StringifyCallback};
 use serde::{Serialize, Deserialize};
 
 type Dependancies = Box<dyn FnOnce() -> ServiceList>;
+type Id = u64;
 
 pub trait Services {
     fn services() -> ServiceList {ServiceList::default()}
@@ -74,7 +76,9 @@ impl<
     }
 
     fn type_id() -> Option<Id> {
-        Some(Id::hash(&TypeId::of::<SE>()))
+        let mut hasher = DefaultHasher::new();
+        TypeId::of::<SE>().hash(&mut hasher);
+        Some(hasher.finish())
     }
 
     fn id(&self) -> Id {Self::type_id().unwrap()}
@@ -137,7 +141,9 @@ impl<
     }
 
     fn type_id() -> Option<Id> {
-        Some(Id::hash(&TypeId::of::<BT>()))
+        let mut hasher = DefaultHasher::new();
+        TypeId::of::<BT>().hash(&mut hasher);
+        Some(hasher.finish())
     }
 
     fn id(&self) -> Id {Self::type_id().unwrap()}

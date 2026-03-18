@@ -9,7 +9,9 @@ pub use tokio::time::Duration;
 use tokio::task::JoinHandle;
 use serde::{Serialize, Deserialize};
 
-use crate::{hardware, State, Id};
+use crate::{hardware, State};
+
+pub type Id = u64;
 
 mod thread;
 use thread::{Thread, ThreadRequest, ThreadResponse, Channel, IntoThread, Callback};

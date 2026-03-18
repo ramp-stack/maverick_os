@@ -11,7 +11,7 @@ impl OsClipboard {
         panic!("Clipboard not supported on macos")
     }
 
-    pub fn set_content(&self, text: String) {
+    pub fn set_content(&self, _text: String) {
         panic!("Clipboard not supported on macos")
     }
 }

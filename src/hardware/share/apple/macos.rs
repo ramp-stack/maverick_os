@@ -8,11 +8,11 @@ impl OsShare {
         Self
     }
 
-    pub fn share(&self, text: &str) {
-    
+    pub fn share(&self, _text: &str) {
+        unimplemented!() 
     }
 
-    pub fn share_image(&self, rgba_image: RgbaImage) {
-       
+    pub fn share_image(&self, _rgba_image: RgbaImage) {
+        unimplemented!() 
     }
 }
