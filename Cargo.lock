@@ -1349,7 +1349,7 @@ dependencies = [
 
 [[package]]
 name = "maverick_os"
-version = "0.3.3"
+version = "0.3.4"
 dependencies = [
  "android-activity",
  "android_logger",

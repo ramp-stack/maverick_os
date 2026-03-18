@@ -34,7 +34,7 @@ impl Clipboard {
         )
     }
 
-    pub fn get(&self) -> String {
+    pub fn get(&self) -> Option<String> {
         #[cfg(any(target_os = "ios", target_os = "macos", target_os = "android"))]
         {
             self.0.get_content()
