@@ -21,7 +21,7 @@ impl Haptics {
         #[cfg(target_os = "ios")]
         self.0.vibrate();
         
-        #[cfg(not(target_os = "ios"))]
-        panic!("Haptics not supported on this platform");
+        // #[cfg(not(target_os = "ios"))]
+        // panic!("Haptics not supported on this platform");
     }
 }

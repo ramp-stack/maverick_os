@@ -17,6 +17,21 @@ pub struct OsShare;
 
 impl OsShare {
     pub fn new() -> Self {
+        println!("initializing share");
+        autoreleasepool(|_| {
+            let ns_string = NSString::from_str("_prewarm");
+            let items = NSArray::from_slice(&[&*ns_string]);
+
+            let cls = class!(UIActivityViewController);
+            let activity_controller: *mut NSObject = unsafe { msg_send![cls, alloc] };
+
+            let activity_controller: *mut NSObject = unsafe {
+                msg_send![activity_controller, initWithActivityItems:&*items, applicationActivities: std::ptr::null_mut::<NSArray<NSObject>>()]
+            };
+
+            let ui_app = class!(UIApplication);
+        });
+
         Self
     }
 
