@@ -79,14 +79,16 @@ pub mod __private {
         context: Context,
         services: BTreeMap<TypeId, ThreadConstructor>,
         app: Option<A>,
-        assets: Assets
+        assets: Assets,
+        window_name: String,
     }
 
     impl<A: Application + 'static> MaverickOS<A> {
         pub fn start(
             #[cfg(target_os = "android")]
             app: AndroidApp,
-            assets: include_dir::Dir<'static>
+            window_name: &str,
+            assets: include_dir::Dir<'static>,
         ) {
 
             #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
@@ -119,12 +121,13 @@ pub mod __private {
             WindowManager::start(
                 #[cfg(target_os = "android")]
                 app,
-                MaverickService::<A>::new(runtime, services, hardware, Assets::new(assets))
+                MaverickService::<A>::new(runtime, services, hardware, Assets::new(assets), window_name.to_string()),
+                window_name.to_string()
             )
         }
 
-        fn new(services: BTreeMap<TypeId, ThreadConstructor>, context: Context, assets: Assets) -> Self {
-            MaverickOS::<A>{context, services, app: None, assets}
+        fn new(services: BTreeMap<TypeId, ThreadConstructor>, context: Context, assets: Assets, window_name: String) -> Self {
+            MaverickOS::<A>{context, services, app: None, assets, window_name}
         }
 
         async fn on_event(&mut self, event: Event) {
@@ -143,12 +146,13 @@ pub mod __private {
         services: Option<BTreeMap<TypeId, ThreadConstructor>>,
         hardware: Option<hardware::Context>,
         os: Option<MaverickOS::<A>>,
-        assets: Assets
+        assets: Assets,
+        window_name: String,
     }
 
     impl<A: Application> MaverickService<A> {
-        fn new(runtime: Runtime, services: BTreeMap<TypeId, ThreadConstructor>, hardware: hardware::Context, assets: Assets) -> Self {
-            MaverickService{runtime: Some(runtime), services: Some(services), hardware: Some(hardware), os: None, assets,}
+        fn new(runtime: Runtime, services: BTreeMap<TypeId, ThreadConstructor>, hardware: hardware::Context, assets: Assets, window_name: String) -> Self {
+            MaverickService{runtime: Some(runtime), services: Some(services), hardware: Some(hardware), os: None, assets, window_name}
         }
     }
 
@@ -160,8 +164,8 @@ pub mod __private {
                         hardware: self.hardware.take().unwrap(),
                         runtime: runtime.context().clone(),
                         window: window_ctx.clone(),
-                        state: Some(State::default())
-                    }, self.assets.clone()))
+                        state: Some(State::default()),
+                    }, self.assets.clone(), self.window_name.clone()))
                 }
                 self.os.as_mut().map(|a| {
                     runtime.tick(a.context.state.as_mut().unwrap())
@@ -256,24 +260,37 @@ macro_rules! start {
         #[cfg(target_arch = "wasm32")]
         #[cfg_attr(target_arch = "wasm32", wasm_bindgen(start))]
         pub fn maverick_main() {
-            MaverickOS::<$app>::start(include_dir::include_dir!("$CARGO_MANIFEST_DIR/resources"))
+            MaverickOS::<$app>::start(
+                env!("CARGO_PKG_NAME"),
+                include_dir::include_dir!("$CARGO_MANIFEST_DIR/resources"),
+            )
         }
 
         #[cfg(target_os = "ios")]
         #[unsafe(no_mangle)]
         pub extern "C" fn maverick_main() {
-            MaverickOS::<$app>::start(include_dir::include_dir!("$CARGO_MANIFEST_DIR/resources"))
+            MaverickOS::<$app>::start(
+                env!("CARGO_PKG_NAME"),
+                include_dir::include_dir!("$CARGO_MANIFEST_DIR/resources"),
+            )
         }
 
         #[cfg(target_os = "android")]
         #[unsafe(no_mangle)]
         pub fn android_main(app: AndroidApp) {
-            MaverickOS::<$app>::start(app, include_dir::include_dir!("$CARGO_MANIFEST_DIR/resources"))
+            MaverickOS::<$app>::start(
+                app,
+                env!("CARGO_PKG_NAME"),
+                include_dir::include_dir!("$CARGO_MANIFEST_DIR/resources"),
+            )
         }
 
-        #[cfg(not(any(target_os = "android", target_os="ios", target_arch = "wasm32")))]
+        #[cfg(not(any(target_os = "android", target_os = "ios", target_arch = "wasm32")))]
         pub fn maverick_main() {
-            MaverickOS::<$app>::start(include_dir::include_dir!("$CARGO_MANIFEST_DIR/resources"))
+            MaverickOS::<$app>::start(
+                env!("CARGO_PKG_NAME"),
+                include_dir::include_dir!("$CARGO_MANIFEST_DIR/resources"),
+            )
         }
     };
 }

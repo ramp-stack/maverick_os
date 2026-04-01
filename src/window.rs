@@ -89,16 +89,18 @@ pub trait EventHandler {
 pub struct WindowManager<E: EventHandler + 'static> {
     context: Option<Context>,
     event_handler: E,
-    pause: bool
+    pause: bool,
+    window_name: String,
 }
 
 impl<E: EventHandler> WindowManager<E> {
     pub fn start(
         #[cfg(target_os = "android")]
         app: AndroidApp,
-        event_handler: E
+        event_handler: E,
+        window_name: String,
     ) {
-        WindowManager{context: None, event_handler, pause: false}.start_loop(
+        WindowManager{context: None, event_handler, pause: false, window_name}.start_loop(
             #[cfg(target_os = "android")]
             app
         )
@@ -147,7 +149,7 @@ impl<E: EventHandler> ApplicationHandler for WindowManager<E> {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         self.pause = false;
         let window = Arc::new(event_loop.create_window(
-            Window::default_attributes().with_title("orange")
+            Window::default_attributes().with_transparent(true).with_title(&self.window_name)
         ).unwrap());
         let context = Context::from_window(window);
         self.event_handler.event(&context, Event::Lifetime(Lifetime::Resumed));
