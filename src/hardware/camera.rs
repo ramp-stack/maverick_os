@@ -54,6 +54,10 @@ impl Camera {
         Ok(Camera(OsCamera::new_standard()?))
     }
 
+    pub fn existing() -> Option<Self> {
+        Some(Camera(OsCamera::existing()?))
+    }
+
     pub fn start_custom() -> Result<Self, CameraError> {
         Ok(Camera(OsCamera::new_custom()?))
     }

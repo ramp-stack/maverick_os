@@ -28,8 +28,8 @@ impl Share {
         #[cfg(any(target_os = "ios", target_os = "macos", target_os = "android"))]
         self.0.share(text);
         
-        #[cfg(not(any(target_os = "ios", target_os = "macos", target_os = "android")))]
-        panic!("Share not supported for this platform");
+        // #[cfg(not(any(target_os = "ios", target_os = "macos", target_os = "android")))]
+        // panic!("Share not supported for this platform");
     }
 
     pub fn share_image(&self, rgba_image: RgbaImage) {

@@ -18,7 +18,7 @@ impl SafeAreaInsets {
             if let Some(key_window) = window.keyWindow() {
                 let insets = key_window.safeAreaInsets();
 
-                return (insets.top as f32, insets.bottom as f32, insets.left as f32, insets.right as f32);
+                return (insets.top as f32, insets.left as f32, insets.bottom as f32, insets.right as f32);
             }
         } 
 

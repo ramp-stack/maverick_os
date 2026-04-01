@@ -8,8 +8,11 @@ mod haptics;
 mod photo_picker;
 mod safe_area;
 mod notifications;
+mod app_support;
 
+use std::env;
 use std::sync::mpsc::Sender;
+use std::sync::{Arc, Mutex};
 
 pub use cache::Cache;
 pub use clipboard::Clipboard;
@@ -34,6 +37,7 @@ pub struct Context {
 
 impl Context {
     pub(crate) fn new() -> Self {
+        env::set_current_dir(&app_support::ApplicationSupport::get().expect("Could not get app suppport dir"));
         Logger::start(None);
         
         #[cfg(target_os = "android")]
@@ -61,8 +65,14 @@ impl Context {
         }
     }
     
-    pub fn camera(&self) -> Result<Camera, CameraError> {
-        Camera::new()
+    pub fn camera(&mut self) -> Option<Camera> {
+        // if self.camera.is_none() {self.camera = Camera::new().ok() }
+        // &self.camera
+        Camera::new().ok()
+    }
+
+    pub fn camera_existing(&mut self) -> Option<Camera> {
+        Camera::existing()
     }
     
     pub fn photo_picker(&self, sender: Sender<(Vec<u8>, ImageOrientation)>) {
@@ -81,13 +91,11 @@ impl Context {
         &self.cloud
     }
     
-    pub fn share(&self) -> &Share {
-        &self.share
+    pub fn share(&self, data: &str) {
+        self.share.share(data);
     }
     
-    pub fn haptic(&self) -> &Haptics {
-        &self.haptics
-    }
+    pub fn haptic(&self) { self.haptics.vibrate() }
     
     pub fn notifications(&self) -> &Notifications {
         &self.notifications

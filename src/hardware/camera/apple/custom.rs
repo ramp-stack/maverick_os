@@ -71,8 +71,8 @@ impl CustomCamera {
             let supported = output.availableVideoCVPixelFormatTypes().iter().map(|f| f.unsignedIntValue()).collect::<Vec<_>>();
 
             for f in [kCVPixelFormatType_14Bayer_RGGB, kCVPixelFormatType_14Bayer_BGGR, kCVPixelFormatType_14Bayer_GRBG, 
-                     kCVPixelFormatType_14Bayer_GBRG, kCVPixelFormatType_32BGRA, kCVPixelFormatType_420YpCbCr8BiPlanarFullRange, 
-                     kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange] {
+                    kCVPixelFormatType_14Bayer_GBRG, kCVPixelFormatType_32BGRA, kCVPixelFormatType_420YpCbCr8BiPlanarFullRange, 
+                    kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange] {
                 if supported.contains(&f) {
                     let settings = NSDictionary::from_slices(&[key], &[NSNumber::new_u32(f).as_ref()]);
                     let queue = DispatchQueue::new("CameraQueue", None);
