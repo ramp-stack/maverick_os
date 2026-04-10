@@ -110,8 +110,8 @@ pub mod __private {
                 });
             }
 
-            #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
-            if std::env::args().len() > 1 {
+           #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+            if std::env::args().any(|a| a == "--background") {
                 runtime.background(&mut hardware, background_tasks.into_values().collect());
                 return
             }
