@@ -177,7 +177,7 @@ impl<E: EventHandler> ApplicationHandler for WindowManager<E> {
                         Event::Lifetime(Lifetime::Paused)
                     } else {
                         self.pause = false;
-                        //Only on IOS is this called and it is prior to an actual Resume event
+                        //Only on IOS is this called and it is prior to an actual Resume event.
                         Event::Lifetime(Lifetime::Resumed)
                     }
                 },
