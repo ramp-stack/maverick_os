@@ -9,6 +9,7 @@ mod photo_picker;
 mod safe_area;
 mod notifications;
 mod app_support;
+mod context_menu;
 
 use std::env;
 use std::sync::mpsc::Sender;
@@ -24,6 +25,7 @@ pub use safe_area::SafeAreaInsets;
 pub use haptics::Haptics;
 pub use notifications::Notifications;
 pub use logger::Logger;
+pub use context_menu::{ContextMenu, ContextMenuAction};
 
 #[derive(Clone)]
 pub struct Context {
@@ -33,6 +35,7 @@ pub struct Context {
     pub share: Share,
     pub haptics: Haptics,
     pub notifications: Notifications,
+    pub context_menu: ContextMenu,
 }
 
 impl Context {
@@ -62,12 +65,11 @@ impl Context {
             share: Share::new(),
             haptics: Haptics::new(),
             notifications: Notifications::new(),
+            context_menu: ContextMenu::new(),
         }
     }
     
     pub fn camera(&mut self) -> Option<Camera> {
-        // if self.camera.is_none() {self.camera = Camera::new().ok() }
-        // &self.camera
         Camera::new().ok()
     }
 
@@ -99,5 +101,9 @@ impl Context {
     
     pub fn notifications(&self) -> &Notifications {
         &self.notifications
+    }
+
+    pub fn context_menu(&self) -> &ContextMenu {
+        &self.context_menu
     }
 }
