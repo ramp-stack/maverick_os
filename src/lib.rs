@@ -1,180 +1,97 @@
-use std::future::Future;
-use std::sync::Arc;
-
-use image::{RgbaImage, load_from_memory};
-
-pub use include_dir::{Dir, include_dir};
-
 pub mod hardware;
-pub use hardware::Context as HardwareContext;
 
 pub mod runtime;
-pub use runtime::{Services, Context as RuntimeContext, ServiceList};
+use runtime::Services;
 
 pub mod window;
-use window::Event;
+pub use window::Event;
+
+pub mod air;
+use air::Contracts;
 
 mod config;
 pub use config::{IS_MOBILE, IS_WEB};
 
-pub trait Application: Services {
-    fn new(context: &mut Context, assets: Assets) -> impl Future<Output = Self>;
-    fn on_event(&mut self, context: &mut Context, event: Event) -> impl Future<Output = ()>;
-}
+pub use include_dir::Dir;
 
-anyanymap::Map!(State: );
+pub trait Application {
+    fn new(context: &mut Context, assets: Dir<'static>) -> Self;
+    fn on_event(&mut self, context: &mut Context, event: Event);
+    fn contracts() -> Contracts {Contracts::default()}
+
+    fn background_services() -> Services {Vec::new()}
+    fn services() -> Services {Vec::new()}
+}
 
 pub struct Context {
-    state: Option<State>,
-    pub window: window::Context,
-    pub runtime: runtime::Context,
     pub hardware: hardware::Context,
+    pub window: window::Context,
+    pub air: air::Context
 }
-
-#[derive(Clone, Debug)]
-pub struct Assets {inner: Dir<'static>}
-
-impl Assets {
-    pub fn new(inner: Dir<'static>) -> Self { Self { inner } }
-
-    pub fn all(&self) -> &Dir<'static> {&self.inner}
-
-    pub fn get_image(&self, path: &str) -> Option<Arc<RgbaImage>> {
-        let bytes = self.inner.get_file(path)?.contents().to_vec();
-        Some(Arc::new(load_from_memory(&bytes).ok()?.to_rgba8()))
-    }
-
-    pub fn get_font(&self, path: &str) -> Option<Vec<u8>> {
-        Some(self.inner.get_file(path)?.contents().to_vec())
-    }
-
-    pub fn get_svg(&self, path: &str) -> Option<Arc<RgbaImage>> {
-        let svg = self.inner.get_file(path)?.contents().to_vec();
-        let svg = std::str::from_utf8(&svg).unwrap();
-        let svg = nsvg::parse_str(svg, nsvg::Units::Pixel, 96.0).unwrap();
-        let rgba = svg.rasterize(8.0).unwrap();
-        let size = rgba.dimensions();
-        Some(Arc::new(RgbaImage::from_raw(size.0, size.1, rgba.into_raw()).unwrap()))
-    }
-}
-
 
 pub mod __private {
     #[cfg(target_os = "android")]
     pub use winit::platform::android::activity::AndroidApp;
-
     pub use include_dir;
 
-    use runtime::{Runtime, ThreadConstructor};
+    use crate::{Context, Application, window, hardware, runtime, air};
+
+    use runtime::Runtime;
     use window::{WindowManager, EventHandler, Event, Lifetime};
+    use air::Air;
 
-    use crate::{Assets, Context, Application,  window, runtime, hardware, State};
-
-    use std::collections::BTreeMap;
-    use std::any::TypeId;
-    // use crate::runtime::Service as AirService;
-    //TODO: Need seperate cache for OS level
-    //TODO: All cloud access needs to go through the OS
     pub struct MaverickOS<A: Application> {
+        runtime: Runtime,
         context: Context,
-        services: BTreeMap<TypeId, ThreadConstructor>,
-        app: Option<A>,
-        assets: Assets
+        app: A,
     }
+
+    use include_dir::Dir;
+
+    struct S<A: Application>(Option<Dir<'static>>, Option<MaverickOS<A>>);
 
     impl<A: Application + 'static> MaverickOS<A> {
         pub fn start(
             #[cfg(target_os = "android")]
             app: AndroidApp,
-            assets: include_dir::Dir<'static>
+            dir: Dir<'static>
         ) {
-
-            #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
-            let mut hardware = hardware::Context::new();
-
-            #[cfg(any(target_os = "ios", target_os = "android"))]
-            let hardware = hardware::Context::new();
-            
-            let runtime = Runtime::start(hardware.clone());
-
-            let mut services = BTreeMap::new();
-            let mut background_tasks = BTreeMap::new();
-            let mut pre = A::services().0;
-            while let Some((id, (constructor, backgrounds, deps))) = pre.pop_first() {
-                services.entry(id).or_insert_with(|| {
-                    for (id, background) in backgrounds.0 {
-                        background_tasks.insert(id, background);
-                    }
-                    pre.extend(deps().0);
-                    constructor
-                });
-            }
-
-            #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
-            if std::env::args().len() > 1 {
-                runtime.background(&mut hardware, background_tasks.into_values().collect());
-                return
-            }
-
             WindowManager::start(
                 #[cfg(target_os = "android")]
                 app,
-                MaverickService::<A>::new(runtime, services, hardware, Assets::new(assets))
+                S::<A>(Some(dir), None)
             )
         }
-
-        fn new(services: BTreeMap<TypeId, ThreadConstructor>, context: Context, assets: Assets) -> Self {
-            MaverickOS::<A>{context, services, app: None, assets}
-        }
-
-        async fn on_event(&mut self, event: Event) {
-            if self.app.is_none() {
-                for service in self.services.values() {
-                    self.context.runtime.spawn(service(&mut self.context.hardware).await);
-                }
-                self.app = Some(A::new(&mut self.context, self.assets.clone()).await);
-            }
-            self.app.as_mut().unwrap().on_event(&mut self.context, event).await;
-        }
     }
 
-    pub struct MaverickService<A: Application> {
-        runtime: Option<Runtime>,
-        services: Option<BTreeMap<TypeId, ThreadConstructor>>,
-        hardware: Option<hardware::Context>,
-        os: Option<MaverickOS::<A>>,
-        assets: Assets
-    }
-
-    impl<A: Application> MaverickService<A> {
-        fn new(runtime: Runtime, services: BTreeMap<TypeId, ThreadConstructor>, hardware: hardware::Context, assets: Assets) -> Self {
-            MaverickService{runtime: Some(runtime), services: Some(services), hardware: Some(hardware), os: None, assets,}
-        }
-    }
-
-    impl<A: Application + 'static> EventHandler for MaverickService<A> {
-        fn event(&mut self, window_ctx: &window::Context, event: Event) {
-            if let Some(runtime) = self.runtime.as_mut() {
-                if self.os.is_none() {
-                    self.os = Some(MaverickOS::new(self.services.take().unwrap(), Context{
-                        hardware: self.hardware.take().unwrap(),
-                        runtime: runtime.context().clone(),
-                        window: window_ctx.clone(),
-                        state: Some(State::default())
-                    }, self.assets.clone()))
-                }
-                self.os.as_mut().map(|a| {
-                    runtime.tick(a.context.state.as_mut().unwrap())
-                });
-
-                let os = self.os.as_mut().unwrap();
-                os.context.window = window_ctx.clone();
-                runtime.block_on(os.on_event(event.clone()));
-                match &event {
-                    Event::Lifetime(Lifetime::Paused) => runtime.pause(),
-                    Event::Lifetime(Lifetime::Resumed) => runtime.resume(),
-                    Event::Lifetime(Lifetime::Close) => self.runtime.take().unwrap().close(),
-                    _ => {}
+    impl<A: Application + 'static> EventHandler for S<A> {
+        fn event(&mut self, window: &window::Context, event: Event) {
+            match &mut self.1 {
+                Some(maverick) => {
+                    maverick.context.window = window.clone();
+                    match &event {
+                        Event::Lifetime(Lifetime::Paused) => maverick.runtime.pause(),
+                        Event::Lifetime(Lifetime::Resumed) => maverick.runtime.resume(),
+                        Event::Lifetime(Lifetime::Close) => maverick.runtime.shutdown(),
+                        _ => {}
+                    }
+                    maverick.app.on_event(&mut maverick.context, event);
+                },
+                none => {
+                    let hardware = hardware::Context::new();
+                    let (air, service) = Air::start(&hardware, A::contracts()).unwrap();
+                    let runtime = Runtime::start(&air, service, A::services(), A::background_services());
+                    let mut context = Context{
+                        hardware,
+                        window: window.clone(),
+                        air,
+                    };
+                    let app = A::new(&mut context, self.0.take().unwrap());
+                    *none = Some(MaverickOS{
+                        runtime,
+                        context,
+                        app
+                    });
                 }
             }
         }

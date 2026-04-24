@@ -6,3 +6,4 @@ edition = "2024"
 [dependencies]
 log = "0.4.29"
 maverick_os = {path = "../"}
+serde = "1.0.228"

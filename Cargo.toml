@@ -1,6 +1,6 @@
 [package]
 name = "maverick_os"
-version = "0.3.4"
+version = "0.4.0"
 edition = "2024"
 authors = ["Caleb Couch <caleb@orange.me>"]
 description = "Maverick OS"
@@ -21,10 +21,14 @@ downcast-rs = "2.0.1"
 image = "0.25.6"
 libc = "0.2.172"
 imageproc = "0.25.0"
-nsvg = "0.5.1"
-dirs = "6.0.0"
-anyanymap = "1.0.2"
+
+arc-swap = "1.9.1"
+crossfire = "3.1.7"
+
+air = {path="../air"}
+
 include_dir = "0.7.4"
+
 
 [target.'cfg(any(target_os = "ios", target_os = "macos"))'.dependencies]
 objc2 = "0.6.1"
@@ -36,7 +40,6 @@ objc2-core-media = "0.3.1"
 objc2-foundation = "0.3.1"
 objc2-core-video = "0.3.1"
 dispatch2 = "0.3.0"
-block = "0.1.6"
 block2 = "0.6.1"
 objc2-app-kit = "0.3.1"
 
@@ -51,7 +54,7 @@ jni = "0.21.1"
 android-activity = { version = "0.6", features = ["native-activity"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-rusqlite = {version="0.34.0", features=["bundled"]}
+rusqlite = {version="0.39.0", features=["bundled"]}
 tokio = {version="1.45.1", features=["rt-multi-thread", "net", "time", "sync"]}
 
 [target.'cfg(not(any(target_os = "ios", target_os = "android")))'.dependencies]

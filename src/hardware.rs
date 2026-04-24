@@ -1,5 +1,5 @@
 mod logger;
-mod cache;
+//mod cache;
 mod camera;
 mod share;
 mod clipboard;
@@ -11,7 +11,7 @@ mod notifications;
 
 use std::sync::mpsc::Sender;
 
-pub use cache::Cache;
+//pub use cache::Cache;
 pub use clipboard::Clipboard;
 pub use camera::{Camera, CameraError, CameraSettings};
 pub use share::Share;
@@ -24,7 +24,7 @@ pub use logger::Logger;
 
 #[derive(Clone)]
 pub struct Context {
-    pub cache: Cache,
+    //pub cache: Cache,
     pub clipboard: Clipboard,
     pub cloud: CloudStorage,
     pub share: Share,
@@ -43,10 +43,10 @@ impl Context {
         };
         
         Self {
-            cache: Cache::new(
-                #[cfg(target_os = "android")]
-                &vm
-            ),
+          //cache: Cache::new(
+          //    #[cfg(target_os = "android")]
+          //    &vm
+          //),
             clipboard: Clipboard::new(
                 #[cfg(target_os = "android")]
                 &vm
@@ -76,8 +76,9 @@ impl Context {
     pub fn clipboard(&self) -> &Clipboard {
         &self.clipboard
     }
-    
-    pub fn cloud(&self) -> &CloudStorage {
+
+   #[allow(dead_code)] 
+    pub(crate) fn cloud(&self) -> &CloudStorage {
         &self.cloud
     }
     
