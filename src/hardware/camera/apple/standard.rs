@@ -45,15 +45,9 @@ define_class!(
             if pixel_buffer.is_none() { return; }
 
             let pixel_buffer = pixel_buffer.unwrap();
-<<<<<<< HEAD
             let height = CVPixelBufferGetHeight(&pixel_buffer);
             let width = CVPixelBufferGetWidth(&pixel_buffer);
             let bytes_per_row = CVPixelBufferGetBytesPerRow(&pixel_buffer);
-=======
-            let height = unsafe { CVPixelBufferGetHeight(&pixel_buffer) };
-            let width = unsafe { CVPixelBufferGetWidth(&pixel_buffer) };
-            let bytes_per_row = unsafe { CVPixelBufferGetBytesPerRow(&pixel_buffer) };
->>>>>>> c5ea2da7d2e888c318fb2d84f32db31b68633345
             let size = bytes_per_row * height;
 
             use objc2_core_video::{CVPixelBufferLockBaseAddress, CVPixelBufferUnlockBaseAddress};
@@ -61,25 +55,10 @@ define_class!(
             let lock_result = unsafe { CVPixelBufferLockBaseAddress(&pixel_buffer, CVPixelBufferLockFlags(0)) };
             if lock_result != 0 { return; }
 
-<<<<<<< HEAD
+
             let base_address = CVPixelBufferGetBaseAddress(&pixel_buffer) as *const u8;
-
-            if base_address.is_null() {
-                unsafe {
-                    CVPixelBufferUnlockBaseAddress(&pixel_buffer, CVPixelBufferLockFlags(0));
-                }
-                return;
-            }
-
-            if size > isize::MAX as usize {
-                unsafe {
-                    CVPixelBufferUnlockBaseAddress(&pixel_buffer, CVPixelBufferLockFlags(0));
-                }
-=======
-            let base_address = unsafe { CVPixelBufferGetBaseAddress(&pixel_buffer) as *const u8 };
             if base_address.is_null() || size > isize::MAX as usize {
                 unsafe { CVPixelBufferUnlockBaseAddress(&pixel_buffer, CVPixelBufferLockFlags(0)); }
->>>>>>> c5ea2da7d2e888c318fb2d84f32db31b68633345
                 return;
             }
 
