@@ -23,6 +23,10 @@ impl OsCamera {
             .map_err(|_| CameraError::FailedToGetFrame)
     }
 
+    pub fn existing() -> Option<Self> {
+        StandardOsCamera::existing().map(OsCamera::Standard)
+    }
+
     pub fn new_custom() -> Result<Self, CameraError> {
         Ok(OsCamera::Custom(CustomCamera::new()))
     }
