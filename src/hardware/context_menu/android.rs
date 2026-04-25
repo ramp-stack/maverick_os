@@ -45,8 +45,6 @@ impl ContextMenu {
         }
     }
 
-    /// Show a context menu at the given screen coordinates with the specified actions.
-    /// Returns the selected action, or None if dismissed.
     pub fn show(x: f32, y: f32, actions: &[ContextMenuAction]) -> Option<ContextMenuAction> {
         let vm = JAVA_VM.get().or_else(|| {
             eprintln!("ERROR: Android JavaVM not initialized! Call ContextMenu::init_android() first.");
@@ -87,7 +85,6 @@ impl ContextMenu {
             .l()
             .ok()?;
 
-        // Build a string array of action labels to pass to Java side
         let string_class = env.find_class("java/lang/String").ok()?;
         let labels = env
             .new_object_array(actions.len() as i32, string_class, JObject::null())
@@ -98,10 +95,7 @@ impl ContextMenu {
             env.set_object_array_element(&labels, i as i32, label)
                 .ok()?;
         }
-
-        // Call into our helper Java class that shows a PopupMenu
-        // and blocks until the user selects an item or dismisses it.
-        // Returns the selected index, or -1 if dismissed.
+        
         let helper_class = env
             .find_class("org/ramp/orange/ContextMenuHelper")
             .ok()?;

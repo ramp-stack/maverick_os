@@ -70,8 +70,6 @@ mod win32 {
 }
 
 impl ContextMenu {
-    /// Show a native Win32 popup context menu at screen coordinates (x, y).
-    /// Blocks until the user selects an item or dismisses the menu.
     pub fn show(x: f32, y: f32, actions: &[ContextMenuAction]) -> Option<ContextMenuAction> {
         #[cfg(target_os = "windows")]
         unsafe {
@@ -85,7 +83,7 @@ impl ContextMenu {
                 win32::AppendMenuW(
                     hmenu,
                     win32::MF_STRING,
-                    (i + 1) as usize, // menu IDs are 1-based; 0 means dismissed
+                    (i + 1) as usize, 
                     wide_label.as_ptr(),
                 );
             }
