@@ -5,6 +5,7 @@ use jni::{
 };
 use std::sync::OnceLock;
 
+
 static JAVA_VM: OnceLock<JavaVM> = OnceLock::new();
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -95,7 +96,7 @@ impl ContextMenu {
             env.set_object_array_element(&labels, i as i32, label)
                 .ok()?;
         }
-        
+
         let helper_class = env
             .find_class("org/ramp/orange/ContextMenuHelper")
             .ok()?;
