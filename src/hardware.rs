@@ -12,7 +12,6 @@ mod app_support;
 
 use std::env;
 use std::sync::mpsc::Sender;
-use std::sync::{Arc, Mutex};
 
 //pub use cache::Cache;
 pub use clipboard::Clipboard;
@@ -37,7 +36,7 @@ pub struct Context {
 
 impl Context {
     pub(crate) fn new() -> Self {
-        env::set_current_dir(&app_support::ApplicationSupport::get().expect("Could not get app suppport dir"));
+        let _ = env::set_current_dir(app_support::ApplicationSupport::get().expect("Could not get app suppport dir"));
         Logger::start(None);
         
         #[cfg(target_os = "android")]
@@ -47,10 +46,6 @@ impl Context {
         };
         
         Self {
-          //cache: Cache::new(
-          //    #[cfg(target_os = "android")]
-          //    &vm
-          //),
             clipboard: Clipboard::new(
                 #[cfg(target_os = "android")]
                 &vm

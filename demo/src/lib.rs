@@ -1,6 +1,6 @@
-use maverick_os::{Application, Context, Event, start, Dir};
+use maverick_os::{Application, Context, start};
 use maverick_os::air::{Contracts, Contract, Substance, Id, Reactants, Reactant, Beaker, Name};
-use maverick_os::window::{Input, KeyEvent};
+use maverick_os::window::{self, Input, KeyEvent, Renderer, Handle};
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -60,21 +60,31 @@ impl Reactant for SendMessage {
     }
 }
 
+pub struct DemoRenderer<'surface>(&'surface dyn Handle);
+impl<'surface> Renderer<'surface> for DemoRenderer<'surface> {
+    fn new(context: &window::Context, handle: &'surface dyn Handle) -> Self {DemoRenderer(handle)}
+    fn resize(&mut self, context: &window::Context) {}
+}
+
 pub struct DemoApplication(Id);
 impl Application for DemoApplication {
-    fn new(ctx: &mut Context, _dir: Dir<'static>) -> Self {
+    type Renderer<'surface> = DemoRenderer<'surface>;
+
+    fn new(ctx: &Context) -> Self {
         let id = ctx.air.create(ChatRoom("Goodbye".to_string())).unwrap();
         //ctx.air.send(id, "/name", ChangeName("INIT".to_string())).unwrap();
         DemoApplication(id)
     }
-    fn on_event(&mut self, ctx: &mut Context, event: Event) {
-        if let Event::Input(Input::Keyboard{event: KeyEvent{text: Some(text), ..}, ..}) = event {
+    fn on_input(&mut self, ctx: &Context, input: Input) {
+        if let Input::Keyboard{event: KeyEvent{text: Some(text), ..}, ..} = input {
             ctx.air.send(self.0, "/name", ChangeName(text.to_string())).unwrap();
         }
         if let Some(r) = ctx.air.get::<ChatRoom>(&self.0).and_then(|t| t.query("/name").ok()) {
             log::info!("Room Name: {:?}", r)
         }
     }
+    
+    fn draw<'surface>(&self, ctx: &Context, renderer: &mut Self::Renderer<'surface>) {}
 
     fn contracts() -> Contracts {Contracts::new().add::<ChatRoom>()}
 }

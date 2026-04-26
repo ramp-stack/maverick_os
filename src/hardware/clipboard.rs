@@ -37,12 +37,12 @@ impl Clipboard {
     pub fn get(&self) -> Option<String> {
         #[cfg(any(target_os = "ios", target_os = "android"))]
         {
-            return Some(self.0.get_content());
+            Some(self.0.get_content())
         }
 
         #[cfg(target_os = "macos")]
         {
-            return self.0.get_content();
+            self.0.get_content()
         }
 
         #[cfg(not(any(target_os = "ios", target_os = "macos", target_os = "android")))]

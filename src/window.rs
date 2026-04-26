@@ -15,51 +15,56 @@ use std::time::Duration;
 use std::sync::Arc;
 
 pub use winit::keyboard::{NamedKey, SmolStr, Key};
-pub use winit::window::Window;
+use winit::window::Window;
+
+use crate::{MaverickOS, Application};
+
+use raw_window_handle::{HasWindowHandle, HasDisplayHandle};
 
 const TICK: Duration = Duration::from_millis(16);//60 fps
 
-///Window Context contains window information and its handle, The context is cheaply clonable but
-///does not get remotely updated each resume/resize event creates a new window Context
-#[derive(Clone)]
+pub trait Handle: HasWindowHandle + HasDisplayHandle {}
+impl<T: HasWindowHandle + HasDisplayHandle> Handle for T {}
+
+pub trait Renderer<'surface> {
+    fn new(context: &Context, window: &'surface dyn Handle) -> Self;
+    fn resize(&mut self, context: &Context);
+}
+
 pub struct Context {
-    pub scale_factor: f64,
-    pub size: (u32, u32),
-    pub handle: Arc<Window>,
+    pub width: u32,
+    pub height: u32,
+    pub scale_factor: f64
 }
 impl Context {
-    fn from_window(window: Arc<Window>) -> Self {
-        Context{
-            size: window.inner_size().into(),
-            scale_factor: window.scale_factor(),
-            handle: window
-        }
+    pub fn new(window: &Window) -> Self {
+        let size = window.inner_size();
+        Context{width: size.width, height: size.height, scale_factor: window.scale_factor()}
     }
 }
 
-#[derive(Clone, Debug)]
-pub enum Event {
-    Lifetime(Lifetime),
-    Input(Input),
-}
-
-#[derive(Clone, Debug)]
-pub enum Lifetime {
-    Resized,
-    ///Window was created and is ready for the first frame
-    Resumed,
-    ///App was paused, Create one last frame and render it before the event ends and destroy window
-    Paused,
-    ///App is being closed and the window is or has been destroyed render no more
-    Close,
-    ///Equivelent to a tick draw a frame
-    Draw,
-    ///On mobile this app will be terminiated if it does not free some memory
-    MemoryWarning,
+pub(crate) struct Surface<A: Application>(Arc<Window>, &'static dyn Handle, Option<A::Renderer<'static>>);
+impl<A: Application> Surface<A> {
+    pub fn id(&self) -> WindowId {self.0.id()}
+    pub fn new(window: Window, context: &Context) -> Self {
+        let window = Arc::new(window);
+        let handle: &'static dyn Handle = unsafe {
+            std::mem::transmute::<&dyn Handle, &'static dyn Handle>(&*window)
+        };
+        let renderer = A::Renderer::new(context, handle);
+        Surface(window, handle, Some(renderer))
+    }
+    pub fn suspend(&mut self) {self.2 = None;}
+    pub fn resurface(&mut self, context: &Context) {self.2 = Some(A::Renderer::new(context, self.1));}
+    pub fn request_redraw(&mut self) {self.0.request_redraw()}
+    pub fn as_mut(&mut self) -> Option<&mut A::Renderer<'static>> {self.2.as_mut()}
 }
 
 #[derive(Clone, Debug)]
 pub enum Input {
+    Tick,
+    Resized(u32, u32),
+    ScaleFactorChange(f64),
     Focused(bool),
     DroppedFile(PathBuf),
     HoveredFile(PathBuf),
@@ -82,135 +87,113 @@ pub enum Input {
     Device{device_id: DeviceId, event: DeviceEvent},
 }
 
-pub trait EventHandler {
-    fn event(&mut self, ctx: &Context, event: Event);
-}
-
-pub struct WindowManager<E: EventHandler + 'static> {
-    context: Option<Context>,
-    event_handler: E,
-    pause: bool
-}
-
-impl<E: EventHandler> WindowManager<E> {
-    pub fn start(
-        #[cfg(target_os = "android")]
-        app: AndroidApp,
-        event_handler: E
-    ) {
-        WindowManager{context: None, event_handler, pause: false}.start_loop(
-            #[cfg(target_os = "android")]
-            app
-        )
-    }
-
+pub(crate) struct WindowManager<A: Application>(Option<MaverickOS<A>>);
+impl<A: Application> WindowManager<A> {
     #[cfg(target_os = "android")]
-    fn start_loop(mut self, app: AndroidApp) {
-        let event_loop = EventLoop::builder().with_android_app(app).build().unwrap();
-        event_loop.run_app(&mut self).unwrap();
+    pub fn start(app: AndroidApp) {
+        EventLoop::builder().with_android_app(app).build().unwrap().run_app(&mut Self(None)).unwrap();
     }
 
     #[cfg(target_arch = "wasm32")]
-    fn start_loop(mut self) {
-        let event_loop = EventLoop::new().unwrap();
-        //event_loop.set_control_flow(ControlFlow::Poll);
-        event_loop.run_app(self).unwrap();
+    pub fn start() {
+        EventLoop::new().unwrap().spawn_app(Self(None)).unwrap();
     }
 
     #[cfg(not(any(target_os = "android", target_arch = "wasm32")))]
-    fn start_loop(mut self) {
-        let event_loop = EventLoop::new().unwrap();
-        event_loop.run_app(&mut self).unwrap();
+    pub fn start() {
+        EventLoop::new().unwrap().run_app(&mut Self(None)).unwrap();
     }
 }
-
-impl<E: EventHandler> ApplicationHandler for WindowManager<E> {
+impl<A: Application> ApplicationHandler for WindowManager<A> {
     fn new_events(&mut self, _event_loop: &ActiveEventLoop, cause: StartCause) {
-        if let StartCause::ResumeTimeReached{..} = cause && let Some(context) = &self.context {
-            context.handle.request_redraw();
+        if let Some(maverick) = self.0.as_mut() && let StartCause::ResumeTimeReached{..} = cause {
+            maverick.surface.request_redraw()
         }
     }
 
     fn suspended(&mut self, _event_loop: &ActiveEventLoop) {
-        if !self.pause && let Some(context) = &self.context {
-            self.pause = true;
-            self.event_handler.event(context, Event::Lifetime(Lifetime::Paused));
+        if let Some(maverick) = self.0.as_mut() {
+            maverick.runtime.pause();
+            maverick.surface.suspend();
         }
     }
 
     fn device_event(&mut self, _event_loop: &ActiveEventLoop, device_id: DeviceId, event: DeviceEvent) {
-        if !self.pause && let Some(context) = &self.context {
-            self.event_handler.event(context, Event::Input(Input::Device{device_id, event}));
+        if let Some(maverick) = self.0.as_mut() {
+            maverick.app.on_input(&maverick.context, Input::Device{device_id, event});
         }
     }
 
-    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        self.pause = false;
-        let window = Arc::new(event_loop.create_window(
-            Window::default_attributes().with_title("orange")
-        ).unwrap());
-        let context = Context::from_window(window);
-        self.event_handler.event(&context, Event::Lifetime(Lifetime::Resumed));
-        self.context = Some(context);
-    }
+    fn resumed(&mut self, event_loop: &ActiveEventLoop) {match &mut self.0 {
+        Some(maverick) => {
+            maverick.runtime.resume();
+            maverick.surface.resurface(&maverick.context.window);
+        },
+        none => {
+            let window = event_loop.create_window(Window::default_attributes().with_title("orange")).unwrap();
+            let context = Context::new(&window);
+            let surface = Surface::new(window, &context);
+            *none = Some(MaverickOS::new(context, surface));
+        }
+    }}
 
     fn memory_warning(&mut self, _event_loop: &ActiveEventLoop) {
-        if let Some(context) = &mut self.context {
-            self.event_handler.event(context, Event::Lifetime(Lifetime::MemoryWarning));
-        }
+        log::warn!("Memory Warning");
     }
 
-    fn window_event(&mut self, event_loop: &ActiveEventLoop, i: WindowId, event: WindowEvent) {
-        if let Some(context) = &mut self.context && i == context.handle.id() && (!self.pause || matches!(event, WindowEvent::Occluded(false))) {
+    fn window_event(&mut self, event_loop: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
+        if let Some(maverick) = self.0.as_mut() && id == maverick.surface.id() {
             let event = match event {
                 WindowEvent::CloseRequested | WindowEvent::Destroyed => {
+                    let mut maverick = self.0.take().unwrap();
+                    maverick.runtime.shutdown();
                     event_loop.exit();
-                    Event::Lifetime(Lifetime::Close)
+                    return;
                 },
                 WindowEvent::RedrawRequested => {
                     event_loop.set_control_flow(ControlFlow::WaitUntil(Instant::now()+TICK));
-                    Event::Lifetime(Lifetime::Draw)
+                    maverick.app.on_input(&maverick.context, Input::Tick);
+                    if let Some(surface) = maverick.surface.as_mut() {
+                        maverick.app.draw(&maverick.context, surface);
+                    } else {log::warn!("Redraw Requested Without A Valid Surface");}
+                    return;
                 },
-                WindowEvent::Occluded(occluded) => {
-                    if occluded {
-                        self.pause = true;
-                        Event::Lifetime(Lifetime::Paused)
-                    } else {
-                        self.pause = false;
-                        //Only on IOS is this called and it is prior to an actual Resume event
-                        Event::Lifetime(Lifetime::Resumed)
-                    }
+                WindowEvent::Occluded(true) => {
+                    #[cfg(target_os = "ios")]
+                    maverick.runtime.pause();
+                    return;
                 },
                 WindowEvent::Resized(size) => {
-                    context.size = size.into();
-                    Event::Lifetime(Lifetime::Resized)
+                    maverick.context.window.width = size.width;
+                    maverick.context.window.height = size.height;
+                    Input::Resized(size.width, size.height)
                 },
                 WindowEvent::ScaleFactorChanged{scale_factor, ..} => {
-                    context.scale_factor = scale_factor;
-                    Event::Lifetime(Lifetime::Resized)
+                    maverick.context.window.scale_factor = scale_factor;
+                    Input::ScaleFactorChange(scale_factor)
                 },
-                WindowEvent::Focused(focused) => Event::Input(Input::Focused(focused)),
-                WindowEvent::KeyboardInput{device_id, event, is_synthetic} => Event::Input(Input::Keyboard{device_id, event, is_synthetic}),
-                WindowEvent::CursorMoved{device_id, position} => Event::Input(Input::CursorMoved{device_id, position: position.into()}),
-                WindowEvent::MouseWheel{device_id, delta, phase} => Event::Input(Input::MouseWheel{device_id, delta, phase}),
-                WindowEvent::MouseInput{device_id, state, button} => Event::Input(Input::Mouse{device_id, state, button}),
-                WindowEvent::Touch(touch) => Event::Input(Input::Touch(touch)),
-                WindowEvent::DroppedFile(path) => Event::Input(Input::DroppedFile(path)),
-                WindowEvent::HoveredFile(path) => Event::Input(Input::HoveredFile(path)),
-                WindowEvent::HoveredFileCancelled => Event::Input(Input::HoveredFileCancelled),
-                WindowEvent::ModifiersChanged(modifiers) => Event::Input(Input::ModifiersChanged(modifiers)),
-                WindowEvent::CursorEntered{device_id} => Event::Input(Input::CursorEntered{device_id}),
-                WindowEvent::CursorLeft{device_id} => Event::Input(Input::CursorLeft{device_id}),
-                WindowEvent::PinchGesture{device_id, delta, phase} => Event::Input(Input::PinchGesture{device_id, delta, phase}),
-                WindowEvent::PanGesture{device_id, delta, phase} => Event::Input(Input::PanGesture{device_id, delta: delta.into(), phase}),
-                WindowEvent::DoubleTapGesture{device_id} => Event::Input(Input::DoubleTapGesture{device_id}),
-                WindowEvent::RotationGesture{device_id, delta, phase} => Event::Input(Input::RotationGesture{device_id, delta, phase}),
-                WindowEvent::TouchpadPressure{device_id, pressure, stage} => Event::Input(Input::TouchpadPressure{device_id, pressure, stage}),
-                WindowEvent::AxisMotion{device_id, axis, value} => Event::Input(Input::AxisMotion{device_id, axis, value}),
-                WindowEvent::Moved(position) => Event::Input(Input::Moved(position.into())),
-                _ => {return;}
+                WindowEvent::Focused(focused) => Input::Focused(focused),
+                WindowEvent::KeyboardInput{device_id, event, is_synthetic} => Input::Keyboard{device_id, event, is_synthetic},
+                WindowEvent::CursorMoved{device_id, position} => Input::CursorMoved{device_id, position: position.into()},
+                WindowEvent::MouseWheel{device_id, delta, phase} => Input::MouseWheel{device_id, delta, phase},
+                WindowEvent::MouseInput{device_id, state, button} => Input::Mouse{device_id, state, button},
+                WindowEvent::Touch(touch) => Input::Touch(touch),
+                WindowEvent::DroppedFile(path) => Input::DroppedFile(path),
+                WindowEvent::HoveredFile(path) => Input::HoveredFile(path),
+                WindowEvent::HoveredFileCancelled => Input::HoveredFileCancelled,
+                WindowEvent::ModifiersChanged(modifiers) => Input::ModifiersChanged(modifiers),
+                WindowEvent::CursorEntered{device_id} => Input::CursorEntered{device_id},
+                WindowEvent::CursorLeft{device_id} => Input::CursorLeft{device_id},
+                WindowEvent::PinchGesture{device_id, delta, phase} => Input::PinchGesture{device_id, delta, phase},
+                WindowEvent::PanGesture{device_id, delta, phase} => Input::PanGesture{device_id, delta: delta.into(), phase},
+                WindowEvent::DoubleTapGesture{device_id} => Input::DoubleTapGesture{device_id},
+                WindowEvent::RotationGesture{device_id, delta, phase} => Input::RotationGesture{device_id, delta, phase},
+                WindowEvent::TouchpadPressure{device_id, pressure, stage} => Input::TouchpadPressure{device_id, pressure, stage},
+                WindowEvent::AxisMotion{device_id, axis, value} => Input::AxisMotion{device_id, axis, value},
+                WindowEvent::Moved(position) => Input::Moved(position.into()),
+                e => {log::info!("Ignored Event: {:?}", e); return;}
             };
-            self.event_handler.event(context, event);
+            maverick.app.on_input(&maverick.context, event);
         }
     }
 }

@@ -1,6 +1,6 @@
 #![allow(non_snake_case, non_upper_case_globals)]
 use std::{cell::RefCell};
-use std::{slice::from_raw_parts, sync::{Mutex, OnceLock}};
+use std::{slice::from_raw_parts, sync::{Mutex}};
 use image::RgbaImage;
 use image::Rgba;
 
@@ -11,7 +11,7 @@ use objc2::{define_class, AllocAnyThread, DeclaredClass};
 use objc2_core_media::CMSampleBuffer;
 use objc2_av_foundation::*;
 use objc2_core_video::*;
-use objc2_foundation::{NSArray, NSDictionary, NSNumber, NSString, NSPoint};
+use objc2_foundation::{NSArray, NSDictionary, NSNumber, NSString};
 use dispatch2::DispatchQueue;
 use objc2::runtime::ProtocolObject;
 
@@ -162,7 +162,7 @@ impl StandardOsCamera {
             let device = devices.into_iter().next().ok_or("No camera device found")?;
 
 
-            device.lockForConfiguration();
+            let _ = device.lockForConfiguration();
 
             for preset in [AVCaptureSessionPreset3840x2160, AVCaptureSessionPresetPhoto, AVCaptureSessionPresetHigh, AVCaptureSessionPresetMedium] {
                 if self.session.canSetSessionPreset(preset) {
@@ -189,11 +189,11 @@ impl StandardOsCamera {
             self.session.beginConfiguration();
             self.session.setSessionPreset(AVCaptureSessionPresetMedium);
 
-            if self.session.inputs().len() == 0 && self.session.canAddInput(&input) {
+            if self.session.inputs().is_empty() && self.session.canAddInput(&input) {
                 self.session.addInput(&input);
             }
 
-            if self.session.outputs().len() == 0 {
+            if self.session.outputs().is_empty() {
                 let output = AVCaptureVideoDataOutput::new();
 
                 let pixel_format_value = NSNumber::new_u32(kCVPixelFormatType_32BGRA);
