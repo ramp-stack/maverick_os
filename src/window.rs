@@ -23,8 +23,8 @@ use raw_window_handle::{HasWindowHandle, HasDisplayHandle};
 
 const TICK: Duration = Duration::from_millis(16);//60 fps
 
-pub trait Handle: HasWindowHandle + HasDisplayHandle {}
-impl<T: HasWindowHandle + HasDisplayHandle> Handle for T {}
+pub trait Handle: HasWindowHandle + HasDisplayHandle + Send + Sync {}
+impl<T: HasWindowHandle + HasDisplayHandle + Send + Sync> Handle for T {}
 
 pub trait Renderer<'surface> {
     type Application: Application;
