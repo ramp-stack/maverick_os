@@ -1743,6 +1743,7 @@ dependencies = [
  "arboard",
  "arc-swap",
  "async-trait",
+ "block2 0.6.2",
  "cli-clipboard",
  "crossfire",
  "dispatch2",

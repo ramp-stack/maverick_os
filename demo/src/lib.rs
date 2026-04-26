@@ -62,8 +62,12 @@ impl Reactant for SendMessage {
 
 pub struct DemoRenderer<'surface>(&'surface dyn Handle);
 impl<'surface> Renderer<'surface> for DemoRenderer<'surface> {
-    fn new(context: &window::Context, handle: &'surface dyn Handle) -> Self {DemoRenderer(handle)}
-    fn resize(&mut self, context: &window::Context) {}
+    type Application = DemoApplication;
+    fn new(_context: &window::Context, handle: &'surface dyn Handle) -> Self {DemoRenderer(handle)}
+    fn resize(&mut self, _context: &window::Context) {}
+    fn draw(&mut self, _context: &window::Context, _app: &Self::Application) {
+        self.0.display_handle().unwrap();
+    }
 }
 
 pub struct DemoApplication(Id);
@@ -84,8 +88,6 @@ impl Application for DemoApplication {
         }
     }
     
-    fn draw<'surface>(&self, ctx: &Context, renderer: &mut Self::Renderer<'surface>) {}
-
     fn contracts() -> Contracts {Contracts::new().add::<ChatRoom>()}
 }
 

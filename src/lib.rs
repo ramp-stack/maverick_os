@@ -17,11 +17,11 @@ mod config;
 pub use config::{IS_MOBILE, IS_WEB};
 
 pub trait Application: 'static {
-    type Renderer<'surface>: Renderer<'surface>;
+    type Renderer<'surface>: Renderer<'surface, Application=Self>;
 
     fn new(context: &Context) -> Self;
     fn on_input(&mut self, context: &Context, input: Input);
-    fn draw<'surface>(&self, context: &Context, renderer: &mut Self::Renderer<'surface>);
+    //fn draw<'surface>(&self, context: &Context, renderer: &mut Self::Renderer<'surface>);
 
     fn contracts() -> Contracts {Contracts::default()}
     fn background_services() -> Services {Vec::new()}

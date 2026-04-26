@@ -27,8 +27,11 @@ pub trait Handle: HasWindowHandle + HasDisplayHandle {}
 impl<T: HasWindowHandle + HasDisplayHandle> Handle for T {}
 
 pub trait Renderer<'surface> {
+    type Application: Application;
+
     fn new(context: &Context, window: &'surface dyn Handle) -> Self;
     fn resize(&mut self, context: &Context);
+    fn draw(&mut self, context: &Context, app: &Self::Application);
 }
 
 pub struct Context {
@@ -154,7 +157,7 @@ impl<A: Application> ApplicationHandler for WindowManager<A> {
                     event_loop.set_control_flow(ControlFlow::WaitUntil(Instant::now()+TICK));
                     maverick.app.on_input(&maverick.context, Input::Tick);
                     if let Some(surface) = maverick.surface.as_mut() {
-                        maverick.app.draw(&maverick.context, surface);
+                        surface.draw(&maverick.context.window, &maverick.app);
                     } else {log::warn!("Redraw Requested Without A Valid Surface");}
                     return;
                 },
