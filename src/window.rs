@@ -66,8 +66,7 @@ impl<A: Application> Surface<A> {
 #[derive(Clone, Debug)]
 pub enum Input {
     Tick,
-    Resized(u32, u32),
-    ScaleFactorChange(f64),
+    Resized,
     Focused(bool),
     DroppedFile(PathBuf),
     HoveredFile(PathBuf),
@@ -169,11 +168,11 @@ impl<A: Application> ApplicationHandler for WindowManager<A> {
                 WindowEvent::Resized(size) => {
                     maverick.context.window.width = size.width;
                     maverick.context.window.height = size.height;
-                    Input::Resized(size.width, size.height)
+                    Input::Resized
                 },
                 WindowEvent::ScaleFactorChanged{scale_factor, ..} => {
                     maverick.context.window.scale_factor = scale_factor;
-                    Input::ScaleFactorChange(scale_factor)
+                    Input::Resized
                 },
                 WindowEvent::Focused(focused) => Input::Focused(focused),
                 WindowEvent::KeyboardInput{device_id, event, is_synthetic} => Input::Keyboard{device_id, event, is_synthetic},
