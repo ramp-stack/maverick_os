@@ -8,16 +8,24 @@ use std::convert::Infallible;
 
 use serde::{Serialize, Deserialize};
 
+//  pub struct ChatBot;
+//  impl Service for ChatBot {
+//      async fn run(&mut self, ctx: &mut air::Context) -> Option<Duration> {
+//          ctx.query.
+//          Some(Duration::from_millis(1))
+//      }
+//  }
+
 #[derive(Serialize, Deserialize, Hash)]
-pub struct ChatRoom(String);
+pub struct ChatRoom;
 impl ChatRoom {
-    pub fn new(name: &str) -> Self {ChatRoom(name.to_string())}
+    pub fn new(_name: &str) -> Self {ChatRoom}
 }
 impl Contract for ChatRoom {
-    fn id() -> Id {Id::hash("ChatRoom")}
+    fn id() -> Id {Id::hash("ChatRoom2.4")}
 
     fn init(self, signer: &Name, _timestamp: u64) -> Substance {Substance::Map(BTreeMap::from([
-        ("name".to_string(), Substance::String(self.0)),
+        ("name".to_string(), Substance::String("myroom".to_string())),
         ("author".to_string(), Substance::String(signer.to_string())),
         ("messages".to_string(), Substance::map())
     ]))}
@@ -75,16 +83,16 @@ impl Application for DemoApplication {
     type Renderer<'surface> = DemoRenderer<'surface>;
 
     fn new(ctx: &Context) -> Self {
-        let id = ctx.air.create(ChatRoom("Goodbye".to_string())).unwrap();
-        //ctx.air.send(id, "/name", ChangeName("INIT".to_string())).unwrap();
+        let id = ctx.air.create(ChatRoom).unwrap();
+        ctx.air.send(id, "/name", ChangeName("The Room".to_string())).unwrap();
         DemoApplication(id)
     }
     fn on_input(&mut self, ctx: &Context, input: Input) {
         if let Input::Keyboard{event: KeyEvent{text: Some(text), ..}, ..} = input {
-            ctx.air.send(self.0, "/name", ChangeName(text.to_string())).unwrap();
+            ctx.air.send(self.0, "/name", SendMessage(text.to_string())).unwrap();
         }
-        if let Some(r) = ctx.air.get::<ChatRoom>(&self.0).and_then(|t| t.query("/name").ok()) {
-            log::info!("Room Name: {:?}", r)
+        if let Some(r) = ctx.air.get::<ChatRoom>(&self.0).and_then(|t| t.query("/").ok()) {
+            log::info!("Room: {:?}", r)
         }
     }
     

@@ -40,6 +40,13 @@ impl Context {
         Some(self.value.load().get(&C::id())?.get(iid)?.clone())
     }
 
+    pub fn list(&self, c_id: &Id) -> Vec<Id> {
+        match self.value.load().get(c_id) {
+            Some(instances) => instances.keys().map(|k| *k).collect(),
+            None => vec![]
+        }
+    }
+
     pub fn create<C: Contract>(&self, contract: C) -> Result<Id, Error> {
         let (id, request) = self.builder.create(contract)?;
         let _ = self.tx.send(request);
