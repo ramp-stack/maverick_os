@@ -89,7 +89,7 @@ impl Application for DemoApplication {
     }
     fn on_input(&mut self, ctx: &Context, input: Input) {
         if let Input::Keyboard{event: KeyEvent{text: Some(text), ..}, ..} = input {
-            ctx.air.send(self.0, "/name", SendMessage(text.to_string())).unwrap();
+            ctx.air.send(self.0, "/name", ChangeName(text.to_string())).unwrap();
         }
         if let Some(r) = ctx.air.get::<ChatRoom>(&self.0).and_then(|t| t.query("/").ok()) {
             log::info!("Room: {:?}", r)
