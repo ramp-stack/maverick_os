@@ -1,5 +1,5 @@
 mod logger;
-mod cache;
+//mod cache;
 mod camera;
 mod share;
 mod clipboard;
@@ -8,10 +8,12 @@ mod haptics;
 mod photo_picker;
 mod safe_area;
 mod notifications;
+mod app_support;
 
+use std::env;
 use std::sync::mpsc::Sender;
 
-pub use cache::Cache;
+//pub use cache::Cache;
 pub use clipboard::Clipboard;
 pub use camera::{Camera, CameraError, CameraSettings};
 pub use share::Share;
@@ -24,7 +26,7 @@ pub use logger::Logger;
 
 #[derive(Clone)]
 pub struct Context {
-    pub cache: Cache,
+    //pub cache: Cache,
     pub clipboard: Clipboard,
     pub cloud: CloudStorage,
     pub share: Share,
@@ -34,6 +36,7 @@ pub struct Context {
 
 impl Context {
     pub(crate) fn new() -> Self {
+        let _ = env::set_current_dir(app_support::ApplicationSupport::get().expect("Could not get app suppport dir"));
         Logger::start(None);
         
         #[cfg(target_os = "android")]
@@ -43,10 +46,6 @@ impl Context {
         };
         
         Self {
-            cache: Cache::new(
-                #[cfg(target_os = "android")]
-                &vm
-            ),
             clipboard: Clipboard::new(
                 #[cfg(target_os = "android")]
                 &vm
@@ -61,8 +60,14 @@ impl Context {
         }
     }
     
-    pub fn camera(&self) -> Result<Camera, CameraError> {
-        Camera::new()
+    pub fn camera(&mut self) -> Option<Camera> {
+        // if self.camera.is_none() {self.camera = Camera::new().ok() }
+        // &self.camera
+        Camera::new().ok()
+    }
+
+    pub fn camera_existing(&mut self) -> Option<Camera> {
+        Camera::existing()
     }
     
     pub fn photo_picker(&self, sender: Sender<(Vec<u8>, ImageOrientation)>) {
@@ -76,18 +81,17 @@ impl Context {
     pub fn clipboard(&self) -> &Clipboard {
         &self.clipboard
     }
-    
-    pub fn cloud(&self) -> &CloudStorage {
+
+   #[allow(dead_code)] 
+    pub(crate) fn cloud(&self) -> &CloudStorage {
         &self.cloud
     }
     
-    pub fn share(&self) -> &Share {
-        &self.share
+    pub fn share(&self, data: &str) {
+        self.share.share(data);
     }
     
-    pub fn haptic(&self) -> &Haptics {
-        &self.haptics
-    }
+    pub fn haptic(&self) { self.haptics.vibrate() }
     
     pub fn notifications(&self) -> &Notifications {
         &self.notifications

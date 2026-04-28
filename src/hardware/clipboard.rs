@@ -34,11 +34,17 @@ impl Clipboard {
         )
     }
 
-    pub fn get(&self) -> String {
-        #[cfg(any(target_os = "ios", target_os = "macos", target_os = "android"))]
+    pub fn get(&self) -> Option<String> {
+        #[cfg(any(target_os = "ios", target_os = "android"))]
+        {
+            Some(self.0.get_content())
+        }
+
+        #[cfg(target_os = "macos")]
         {
             self.0.get_content()
         }
+
         #[cfg(not(any(target_os = "ios", target_os = "macos", target_os = "android")))]
         panic!("Not Supported for Linux/Windows");
     }
