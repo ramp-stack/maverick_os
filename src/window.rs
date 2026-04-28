@@ -3,6 +3,8 @@ pub use winit::event::{WindowEvent, DeviceEvent, DeviceId, TouchPhase, Touch, Ax
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::application::ApplicationHandler;
 use winit::event::StartCause;
+use crate::hardware::photo_picker::ImageOrientation;
+use image::RgbaImage;
 
 #[cfg(target_os="android")]
 use winit::platform::android::activity::AndroidApp;
@@ -68,6 +70,8 @@ pub enum Input {
     Tick,
     Resized,
     Focused(bool),
+    CameraFrame(RgbaImage),
+    PickedPhoto(RgbaImage, bool),
     DroppedFile(PathBuf),
     HoveredFile(PathBuf),
     HoveredFileCancelled,
@@ -155,6 +159,10 @@ impl<A: Application> ApplicationHandler for WindowManager<A> {
                 WindowEvent::RedrawRequested => {
                     event_loop.set_control_flow(ControlFlow::WaitUntil(Instant::now()+TICK));
                     maverick.app.on_input(&maverick.context, Input::Tick);
+                    //for each event run on_input on the app with the event returned from hardware //TODO 
+                    for event in maverick.context.hardware.tick() {
+                        maverick.app.on_input(&maverick.context, event);
+                    }
                     if let Some(surface) = maverick.surface.as_mut() {
                         surface.draw(&maverick.context.window, &maverick.app);
                     } else {log::warn!("Redraw Requested Without A Valid Surface");}
