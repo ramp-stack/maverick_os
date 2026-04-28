@@ -24,8 +24,10 @@ pub use logger::Logger;
 use crate::window::Input;
 use image::RgbaImage;
 
+
 #[derive(Clone)]
 pub struct Context {
+    pub camera: Arc<Mutex<Option<Camera>>>,
     pub clipboard: Clipboard,
     pub cloud: CloudStorage,
     pub share: Share,
@@ -46,6 +48,7 @@ impl Context {
         };
 
         Self {
+            camera: Arc::new(Mutex::new(None)),
             clipboard: Clipboard::new(
                 #[cfg(target_os = "android")]
                 &vm
@@ -62,26 +65,40 @@ impl Context {
     }
 
     pub(crate) fn tick(&mut self) -> Vec<Input> {
+        if let Some(camera) = self.camera.lock().unwrap().as_ref() {
+           if let Ok(frame) = camera.frame() {
+                self.pending.lock().unwrap().push(Input::CameraFrame(frame));
+            }
+        }
         std::mem::take(&mut self.pending.lock().unwrap())
     }
+    //on tick if camera is let some then get frame then output Input::Frame
 
-    pub fn camera(&self) -> Option<Camera> {
-        Camera::new().ok()
+    //start_camera if camera is none create camera store in arc mutex
+    //stop_camera if camera is some store none in arc mutex
+
+
+     pub fn start_camera(&self) {
+        let mut camera_guard = self.camera.lock().unwrap();
+        if camera_guard.is_none() {
+            drop(camera_guard);
+            if let Ok(camera) = Camera::new() {
+                *self.camera.lock().unwrap() = Some(camera);
+            }
+        }
     }
 
-    pub fn camera_existing(&self) -> Option<Camera> {
-        Camera::existing()
+    pub fn stop_camera(&self) {
+        let mut camera_guard = self.camera.lock().unwrap();
+        *camera_guard = None;
     }
 
     pub fn photo_picker(&self) {
         let pending = self.pending.clone();
         PhotoPicker::open(move |bytes, orientation| {
-            let event = if let Ok(img) = image::load_from_memory(&bytes) {
-                Input::PickedPhoto(orientation.apply_to(img).to_rgba8(), true)
-            } else {
-                Input::PickedPhoto(RgbaImage::new(0, 0), false)
-            };
-            pending.lock().unwrap().push(event);
+            if let Ok(img) = image::load_from_memory(&bytes) {
+                pending.lock().unwrap().push(Input::PickedPhoto(orientation.apply_to(img).to_rgba8()));
+            }
         });
     }
 
