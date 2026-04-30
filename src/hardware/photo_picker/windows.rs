@@ -1,4 +1,3 @@
-use std::sync::mpsc::Sender;
 use super::ImageOrientation;
 use std::process::Command;
 use std::path::Path;
@@ -9,7 +8,7 @@ use std::thread;
 pub struct OsPhotoPicker;
 
 impl OsPhotoPicker {
-    pub fn open(sender: Sender<(Vec<u8>, ImageOrientation)>) {
+    pub fn open(callback: impl FnOnce(Vec<u8>, ImageOrientation) + Send + 'static) {
         thread::spawn(move || {
             let result = Command::new("powershell")
                 .args(&[
@@ -32,33 +31,16 @@ impl OsPhotoPicker {
                     let file_path = String::from_utf8_lossy(&output.stdout).trim().to_string();
                     if !file_path.is_empty() && Path::new(&file_path).exists() {
                         if let Ok(image_data) = fs::read(&file_path) {
-                            let orientation = Self::get_image_orientation(&file_path);
-                            let _ = sender.send((image_data, orientation));
+                            callback(image_data, ImageOrientation::Up);
                         } else {
-                            let _ = sender.send((Vec::new(), ImageOrientation::Up));
+                            callback(Vec::new(), ImageOrientation::Up);
                         }
                     } else {
-                        let _ = sender.send((Vec::new(), ImageOrientation::Up));
+                        callback(Vec::new(), ImageOrientation::Up);
                     }
                 }
-                _ => {
-                    let _ = sender.send((Vec::new(), ImageOrientation::Up));
-                }
+                _ => callback(Vec::new(), ImageOrientation::Up),
             }
         });
-    }
-
-    fn get_image_orientation(file_path: &str) -> ImageOrientation {
-        let path = Path::new(file_path);
-        if let Some(extension) = path.extension() {
-            match extension.to_str().unwrap_or("").to_lowercase().as_str() {
-                "jpg" | "jpeg" => {
-                    ImageOrientation::Up
-                }
-                _ => ImageOrientation::Up,
-            }
-        } else {
-            ImageOrientation::Up
-        }
     }
 }

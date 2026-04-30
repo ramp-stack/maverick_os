@@ -13,6 +13,7 @@ use std::path::PathBuf;
 use std::time::Instant;
 use std::time::Duration;
 use std::sync::Arc;
+use image::RgbaImage;
 
 pub use winit::keyboard::{NamedKey, SmolStr, Key};
 use winit::window::Window;
@@ -68,6 +69,8 @@ pub enum Input {
     Tick,
     Resized,
     Focused(bool),
+    CameraFrame(RgbaImage),
+    PickedPhoto(RgbaImage),
     DroppedFile(PathBuf),
     HoveredFile(PathBuf),
     HoveredFileCancelled,
@@ -155,6 +158,9 @@ impl<A: Application> ApplicationHandler for WindowManager<A> {
                 WindowEvent::RedrawRequested => {
                     event_loop.set_control_flow(ControlFlow::WaitUntil(Instant::now()+TICK));
                     maverick.app.on_input(&maverick.context, Input::Tick);
+                    for event in maverick.context.hardware.tick() {
+                        maverick.app.on_input(&maverick.context, event);
+                    }
                     if let Some(surface) = maverick.surface.as_mut() {
                         surface.draw(&maverick.context.window, &maverick.app);
                     } else {log::warn!("Redraw Requested Without A Valid Surface");}

@@ -1,4 +1,3 @@
-use std::sync::mpsc::Sender;
 use super::ImageOrientation;
 use objc2::{class, msg_send, runtime::{AnyClass, AnyObject}};
 use objc2_foundation::{NSArray, NSString};
@@ -26,38 +25,30 @@ use objc2::ffi::objc_retain;
 #[derive(Clone)]
 pub struct OsPhotoPicker;
 
-//  #[derive(Clone, Copy)]
-//  struct SenderPtr(usize);
-
-//  unsafe impl Send for SenderPtr {}
-//  unsafe impl Sync for SenderPtr {}
-
 impl OsPhotoPicker {
-    // macOS implementation
-    pub fn open(sender: Sender<(Vec<u8>, ImageOrientation)>) {
-        // Detect if we're on macOS or iOS at runtime
+    pub fn open(callback: impl FnOnce(Vec<u8>, ImageOrientation) + Send + 'static) {
         #[cfg(target_os = "macos")]
-        Self::open_macos(sender);
+        Self::open_macos(callback);
         
         #[cfg(target_os = "ios")]
-        Self::open_ios(sender);
+        Self::open_ios(callback);
     }
     
     #[cfg(target_os = "macos")]
-    fn open_macos(sender: Sender<(Vec<u8>, ImageOrientation)>) {
+    fn open_macos(callback: impl FnOnce(Vec<u8>, ImageOrientation) + Send + 'static) {
         dispatch2::DispatchQueue::main().exec_async(move || {
             autoreleasepool(|_| unsafe {
                 let cls: *const AnyClass = class!(NSOpenPanel);
                 if cls.is_null() {
                     eprintln!("NSOpenPanel class not found");
-                    let _ = sender.send((Vec::new(), ImageOrientation::Up));
+                    callback(Vec::new(), ImageOrientation::Up);
                     return;
                 }
 
                 let panel: *mut AnyObject = msg_send![cls, openPanel];
                 if panel.is_null() {
                     eprintln!("Failed to create NSOpenPanel");
-                    let _ = sender.send((Vec::new(), ImageOrientation::Up));
+                    callback(Vec::new(), ImageOrientation::Up);
                     return;
                 }
 
@@ -78,21 +69,21 @@ impl OsPhotoPicker {
                 const NS_MODAL_RESPONSE_OK: i64 = 1;
                 let response: i64 = msg_send![panel, runModal];
                 if response != NS_MODAL_RESPONSE_OK {
-                    let _ = sender.send((Vec::new(), ImageOrientation::Up));
+                    callback(Vec::new(), ImageOrientation::Up);
                     return;
                 }
 
                 let url: *mut AnyObject = msg_send![panel, URL];
                 if url.is_null() {
                     eprintln!("URL was null");
-                    let _ = sender.send((Vec::new(), ImageOrientation::Up));
+                    callback(Vec::new(), ImageOrientation::Up);
                     return;
                 }
 
                 let nsstring: *mut NSString = msg_send![url, path];
                 if nsstring.is_null() {
                     eprintln!("Path string was null");
-                    let _ = sender.send((Vec::new(), ImageOrientation::Up));
+                    callback(Vec::new(), ImageOrientation::Up);
                     return;
                 }
 
@@ -100,12 +91,10 @@ impl OsPhotoPicker {
                 let path = PathBuf::from(rust_path);
 
                 match fs::read(&path) {
-                    Ok(image_data) => {
-                        let _ = sender.send((image_data, ImageOrientation::Up));
-                    },
+                    Ok(image_data) => callback(image_data, ImageOrientation::Up),
                     Err(err) => {
                         eprintln!("Failed to read file: {err}");
-                        let _ = sender.send((Vec::new(), ImageOrientation::Up));
+                        callback(Vec::new(), ImageOrientation::Up);
                     }
                 }
             });
@@ -113,14 +102,14 @@ impl OsPhotoPicker {
     }
 
     #[cfg(target_os = "ios")]
-    fn open_ios(sender: Sender<(Vec<u8>, ImageOrientation)>) {
+    fn open_ios(callback: impl FnOnce(Vec<u8>, ImageOrientation) + Send + 'static) {
         println!("STARTED");
         println!("ATTEMPTING TO OPEN PHOTO PICKER");
-        let sender_box = Box::new(sender);
-        let sender_ptr = Box::into_raw(sender_box) as usize;
+        let callback_box = Box::new(callback);
+        let callback_ptr = Box::into_raw(callback_box) as usize;
 
         dispatch2::DispatchQueue::main().exec_async(move || {
-            let sender_ptr = sender_ptr as *mut c_void;
+            let callback_ptr = callback_ptr as *mut c_void;
             println!("Started dispatcher");
             autoreleasepool(|_| unsafe {
                 println!("Inside autorelease pool");
@@ -136,7 +125,7 @@ impl OsPhotoPicker {
                 let picker: *mut AnyObject = msg_send![picker_cls, alloc];
                 let picker: *mut AnyObject = msg_send![picker, initWithConfiguration: config];
 
-                let delegate = create_photo_picker_delegate(sender_ptr);
+                let delegate = create_photo_picker_delegate(callback_ptr);
                 let _: () = msg_send![picker, setDelegate: delegate];
 
                 let ui_app = class!(UIApplication);
@@ -160,7 +149,7 @@ impl OsPhotoPicker {
 }
 
 #[cfg(target_os = "ios")]
-fn create_photo_picker_delegate(sender_ptr: *mut c_void) -> *mut AnyObject {
+fn create_photo_picker_delegate(callback_ptr: *mut c_void) -> *mut AnyObject {
     static mut DELEGATE_CLASS: *const AnyClass = std::ptr::null();
 
     unsafe {
@@ -169,7 +158,7 @@ fn create_photo_picker_delegate(sender_ptr: *mut c_void) -> *mut AnyObject {
             let name = c"RustPHPickerDelegate";
             let mut decl = ClassBuilder::new(name, superclass).unwrap();
 
-            decl.add_ivar::<*mut c_void>(c"rustSenderPtr");
+            decl.add_ivar::<*mut c_void>(c"rustCallbackPtr");
 
             extern "C" fn picker_did_finish_picking(
                 this: &AnyObject,
@@ -179,7 +168,6 @@ fn create_photo_picker_delegate(sender_ptr: *mut c_void) -> *mut AnyObject {
             ) {
                 unsafe {
                     let null_block: *mut AnyObject = std::ptr::null_mut();
-
                     let _: () = msg_send![picker, dismissViewControllerAnimated: true, completion: null_block];
 
                     let results_array: &NSArray<NSObject> = &*(results as *const NSArray<NSObject>);
@@ -190,20 +178,21 @@ fn create_photo_picker_delegate(sender_ptr: *mut c_void) -> *mut AnyObject {
                     let result: *mut NSObject = msg_send![results_array, objectAtIndex: 0usize];
                     let item_provider: *mut AnyObject = msg_send![result, itemProvider];
 
-                    let ivar_name = c"rustSenderPtr";
+                    let ivar_name = c"rustCallbackPtr";
                     let ivar = this.class().instance_variable(ivar_name).unwrap();
-                    let sender_ptr = *ivar.load::<*mut c_void>(this);
+                    let callback_ptr = *ivar.load::<*mut c_void>(this);
 
-                    if sender_ptr.is_null() {
+                    if callback_ptr.is_null() {
                         return;
                     }
 
-                    let sender_box: Box<Sender<(Vec<u8>, ImageOrientation)>> = Box::from_raw(sender_ptr as *mut _);
+                    let callback_box: Box<Box<dyn FnOnce(Vec<u8>, ImageOrientation) + Send + 'static>> =
+                        Box::from_raw(callback_ptr as *mut _);
 
                     let uiimage_class = class!(UIImage);
                     let can_load: bool = msg_send![item_provider, canLoadObjectOfClass: uiimage_class];
                     if !can_load {
-                        let _ = sender_box.send((Vec::new(), ImageOrientation::Up));
+                        callback_box(Vec::new(), ImageOrientation::Up);
                         return;
                     }
 
@@ -231,7 +220,7 @@ fn create_photo_picker_delegate(sender_ptr: *mut c_void) -> *mut AnyObject {
                             (Vec::new(), 0)
                         };
 
-                        let _ = sender_box.send((data, ImageOrientation::from_ios_value(orientation)));
+                        callback_box(data, ImageOrientation::from_ios_value(orientation));
                     });
 
                     let rc_block: RcBlock<(*mut AnyObject, *mut AnyObject), ()> = block.copy();
@@ -256,10 +245,10 @@ fn create_photo_picker_delegate(sender_ptr: *mut c_void) -> *mut AnyObject {
 
         let delegate: &mut AnyObject = msg_send![DELEGATE_CLASS, new];
 
-        let ivar_name = c"rustSenderPtr";
+        let ivar_name = c"rustCallbackPtr";
         let ivar = (*DELEGATE_CLASS).instance_variable(ivar_name).unwrap();
         let ivar_ref: &mut *mut c_void = ivar.load_mut(delegate);
-        *ivar_ref = sender_ptr;
+        *ivar_ref = callback_ptr;
 
         delegate
     }

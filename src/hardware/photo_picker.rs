@@ -22,16 +22,16 @@ pub struct PhotoPicker(
 );
 
 impl PhotoPicker {
-    pub fn open(sender: Sender<(Vec<u8>, ImageOrientation)>) {
+    pub fn open(callback: impl FnOnce(Vec<u8>, ImageOrientation) + Send + 'static) {
         #[cfg(any(target_os = "ios", target_os = "macos", target_os = "linux", target_os = "windows"))]
-        OsPhotoPicker::open(sender);
+        OsPhotoPicker::open(callback);
         
         #[cfg(not(any(target_os = "ios", target_os = "macos", target_os = "linux", target_os = "windows")))]
         panic!("not supported os");
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum ImageOrientation {
     Up,
     Down,
