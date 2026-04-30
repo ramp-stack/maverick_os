@@ -66,19 +66,14 @@ impl Context {
 
     pub(crate) fn tick(&mut self) -> Vec<Input> {
         if let Some(camera) = self.camera.lock().unwrap().as_ref() {
-           if let Ok(frame) = camera.frame() {
+            if let Ok(frame) = camera.frame() {
                 self.pending.lock().unwrap().push(Input::CameraFrame(frame));
             }
         }
         std::mem::take(&mut self.pending.lock().unwrap())
     }
-    //on tick if camera is let some then get frame then output Input::Frame
 
-    //start_camera if camera is none create camera store in arc mutex
-    //stop_camera if camera is some store none in arc mutex
-
-
-     pub fn start_camera(&self) {
+    pub fn start_camera(&self) {
         let mut camera_guard = self.camera.lock().unwrap();
         if camera_guard.is_none() {
             drop(camera_guard);
@@ -89,8 +84,7 @@ impl Context {
     }
 
     pub fn stop_camera(&self) {
-        let mut camera_guard = self.camera.lock().unwrap();
-        *camera_guard = None;
+        *self.camera.lock().unwrap() = None;
     }
 
     pub fn photo_picker(&self) {
@@ -110,18 +104,20 @@ impl Context {
         &self.clipboard
     }
 
-    #[allow(dead_code)]
-    pub(crate) fn cloud(&self) -> &CloudStorage {
-        &self.cloud
-    }
-
     pub fn share(&self, data: &str) {
         self.share.share(data);
     }
 
-    pub fn haptic(&self) { self.haptics.vibrate() }
+    pub fn haptic(&self) {
+        self.haptics.vibrate();
+    }
 
     pub fn notifications(&self) -> &Notifications {
         &self.notifications
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn cloud(&self) -> &CloudStorage {
+        &self.cloud
     }
 }
