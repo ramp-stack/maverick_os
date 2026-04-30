@@ -40,13 +40,11 @@ impl Context {
     pub(crate) fn new() -> Self {
         let _ = env::set_current_dir(app_support::ApplicationSupport::get().expect("Could not get app support dir"));
         Logger::start(None);
-
         #[cfg(target_os = "android")]
         let vm = {
             let vm_ptr = ndk_context::android_context().vm().cast();
             unsafe { jni::JavaVM::from_raw(vm_ptr).unwrap() }
         };
-
         Self {
             camera: Arc::new(Mutex::new(None)),
             clipboard: Clipboard::new(
@@ -95,7 +93,7 @@ impl Context {
             }
         });
     }
-
+    
     pub fn safe_area_insets(&self) -> (f32, f32, f32, f32) {
         SafeAreaInsets::get()
     }
