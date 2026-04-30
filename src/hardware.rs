@@ -93,11 +93,11 @@ impl Context {
             }
         });
     }
-    
+
     pub fn safe_area_insets(&self) -> (f32, f32, f32, f32) {
         SafeAreaInsets::get()
     }
-
+    
     pub fn clipboard(&self) -> &Clipboard {
         &self.clipboard
     }
