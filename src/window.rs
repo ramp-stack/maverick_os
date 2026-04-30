@@ -13,6 +13,7 @@ use std::path::PathBuf;
 use std::time::Instant;
 use std::time::Duration;
 use std::sync::Arc;
+use image::RgbaImage;
 
 pub use winit::keyboard::{NamedKey, SmolStr, Key};
 use winit::window::Window;
