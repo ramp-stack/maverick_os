@@ -4,7 +4,7 @@ mod share;
 mod clipboard;
 mod cloud;
 mod haptics;
-pub mod photo_picker;
+mod photo_picker;
 mod safe_area;
 mod notifications;
 mod app_support;
@@ -97,7 +97,7 @@ impl Context {
     pub fn safe_area_insets(&self) -> (f32, f32, f32, f32) {
         SafeAreaInsets::get()
     }
-    
+
     pub fn clipboard(&self) -> &Clipboard {
         &self.clipboard
     }

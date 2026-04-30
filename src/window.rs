@@ -3,8 +3,6 @@ pub use winit::event::{WindowEvent, DeviceEvent, DeviceId, TouchPhase, Touch, Ax
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::application::ApplicationHandler;
 use winit::event::StartCause;
-use crate::hardware::photo_picker::ImageOrientation;
-use image::RgbaImage;
 
 #[cfg(target_os="android")]
 use winit::platform::android::activity::AndroidApp;
@@ -159,7 +157,6 @@ impl<A: Application> ApplicationHandler for WindowManager<A> {
                 WindowEvent::RedrawRequested => {
                     event_loop.set_control_flow(ControlFlow::WaitUntil(Instant::now()+TICK));
                     maverick.app.on_input(&maverick.context, Input::Tick);
-                    //for each event run on_input on the app with the event returned from hardware //TODO 
                     for event in maverick.context.hardware.tick() {
                         maverick.app.on_input(&maverick.context, event);
                     }
