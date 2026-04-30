@@ -21,7 +21,7 @@ use crate::{MaverickOS, Application};
 
 use raw_window_handle::{HasWindowHandle, HasDisplayHandle};
 
-const TICK: Duration = Duration::from_millis(16);//60 fps
+const TICK: Duration = Duration::from_millis(0);//60 fps
 
 pub trait Handle: HasWindowHandle + HasDisplayHandle + Send + Sync {}
 impl<T: HasWindowHandle + HasDisplayHandle + Send + Sync> Handle for T {}
@@ -168,10 +168,16 @@ impl<A: Application> ApplicationHandler for WindowManager<A> {
                 WindowEvent::Resized(size) => {
                     maverick.context.window.width = size.width;
                     maverick.context.window.height = size.height;
+                    if let Some(surface) = maverick.surface.as_mut() {
+                        surface.resize(&maverick.context.window);
+                    } else {log::warn!("Resize Requested Without A Valid Surface");}
                     Input::Resized
                 },
                 WindowEvent::ScaleFactorChanged{scale_factor, ..} => {
                     maverick.context.window.scale_factor = scale_factor;
+                    if let Some(surface) = maverick.surface.as_mut() {
+                        surface.resize(&maverick.context.window);
+                    } else {log::warn!("Resize Requested Without A Valid Surface");}
                     Input::Resized
                 },
                 WindowEvent::Focused(focused) => Input::Focused(focused),
