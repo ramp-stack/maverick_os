@@ -87,12 +87,12 @@ pub struct DemoApplication(Id);
 impl Application for DemoApplication {
     type Renderer<'surface> = DemoRenderer<'surface>;
 
-    fn new(ctx: &Context) -> Self {
+    fn new(ctx: &mut Context) -> Self {
         let id = ctx.air.create(ChatRoom).unwrap();
         ctx.air.send(id, "/name", ChangeName("The Room".to_string())).unwrap();
         DemoApplication(id)
     }
-    fn on_input(&mut self, ctx: &Context, input: Input) {
+    fn on_input(&mut self, ctx: &mut Context, input: Input) {
         if let Input::Keyboard{event: KeyEvent{text: Some(text), ..}, ..} = input {
             ctx.air.send(self.0, "/name", ChangeName(text.to_string())).unwrap();
         }

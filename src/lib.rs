@@ -20,7 +20,6 @@ pub trait Application: 'static {
 
     fn new(context: &mut Context) -> Self;
     fn on_input(&mut self, context: &mut Context, input: Input);
-    //fn draw<'surface>(&self, context: &Context, renderer: &mut Self::Renderer<'surface>);
 
     fn contracts() -> Contracts {Contracts::default()}
     fn background_services() -> Services {Vec::new()}
@@ -138,29 +137,27 @@ pub mod __private {
 #[macro_export]
 macro_rules! start {
     ($app:ty) => {
-        use $crate::__private::*;
-
         #[cfg(target_arch = "wasm32")]
         #[cfg_attr(target_arch = "wasm32", wasm_bindgen(start))]
         pub fn maverick_main() {
-            MaverickOS::<$app>::start()
+            $crate::__private::MaverickOS::<$app>::start()
         }
 
         #[cfg(target_os = "ios")]
         #[unsafe(no_mangle)]
         pub extern "C" fn maverick_main() {
-            MaverickOS::<$app>::start()
+            $crate::__private::MaverickOS::<$app>::start()
         }
 
         #[cfg(target_os = "android")]
         #[unsafe(no_mangle)]
-        pub fn android_main(app: AndroidApp) {
-            MaverickOS::<$app>::start(app)
+        pub fn android_main(app: $crate::__private::AndroidApp) {
+            $crate::__private::MaverickOS::<$app>::start(app)
         }
 
         #[cfg(not(any(target_os = "android", target_os="ios", target_arch = "wasm32")))]
         pub fn maverick_main() {
-            MaverickOS::<$app>::start()
+            $crate::__private::MaverickOS::<$app>::start()
         }
     };
 }
