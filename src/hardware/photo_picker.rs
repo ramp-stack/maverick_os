@@ -1,5 +1,3 @@
-use std::sync::mpsc::Sender;
-
 #[cfg(any(target_os = "ios", target_os = "macos"))]
 mod apple;
 #[cfg(any(target_os = "ios", target_os = "macos"))]

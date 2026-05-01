@@ -1,11 +1,10 @@
 pub mod hardware;
 
 pub mod runtime;
-use runtime::Services;
-use runtime::Runtime;
+use runtime::{Runtime, Services};
 
 pub mod window;
-use window::{WindowManager, Renderer, Surface, Input};
+use window::{Window, Renderer, Surface, Input};
 
 #[cfg(target_os = "android")]
 use winit::platform::android::activity::AndroidApp;
@@ -19,8 +18,8 @@ pub use config::{IS_MOBILE, IS_WEB};
 pub trait Application: 'static {
     type Renderer<'surface>: Renderer<'surface, Application=Self>;
 
-    fn new(context: &Context) -> Self;
-    fn on_input(&mut self, context: &Context, input: Input);
+    fn new(context: &mut Context) -> Self;
+    fn on_input(&mut self, context: &mut Context, input: Input);
     //fn draw<'surface>(&self, context: &Context, renderer: &mut Self::Renderer<'surface>);
 
     fn contracts() -> Contracts {Contracts::default()}
@@ -42,18 +41,18 @@ pub struct MaverickOS<A: Application> {
 }
 
 impl<A: Application> MaverickOS<A> {
-    pub fn start(#[cfg(target_os = "android")] app: AndroidApp) {WindowManager::<A>::start()}
+    pub fn start(#[cfg(target_os = "android")] app: AndroidApp) {Window::<A>::start()}
     fn new(window: window::Context, surface: Surface<A>) -> Self {
         let hardware = hardware::Context::new();
-        let (air, service) = Air::start(&hardware, A::contracts()).unwrap();
-        let runtime = Runtime::start(&air, service, A::services(), A::background_services());
+        let (air, air_ctx) = Air::start(&hardware, A::contracts()).unwrap();
+        let runtime = Runtime::start(&air_ctx, air, A::services(), A::background_services());
         
-        let context = Context{
+        let mut context = Context{
             hardware,
             window,
-            air,
+            air: air_ctx,
         };
-        let app = A::new(&context);
+        let app = A::new(&mut context);
         MaverickOS{
             runtime,
             context,

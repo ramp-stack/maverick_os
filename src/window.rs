@@ -16,7 +16,7 @@ use std::sync::Arc;
 use image::RgbaImage;
 
 pub use winit::keyboard::{NamedKey, SmolStr, Key};
-use winit::window::Window;
+use winit::window::Window as WinitWindow;
 
 use crate::{MaverickOS, Application};
 
@@ -41,16 +41,16 @@ pub struct Context {
     pub scale_factor: f64
 }
 impl Context {
-    pub fn new(window: &Window) -> Self {
+    pub fn new(window: &WinitWindow) -> Self {
         let size = window.inner_size();
         Context{width: size.width, height: size.height, scale_factor: window.scale_factor()}
     }
 }
 
-pub(crate) struct Surface<A: Application>(Arc<Window>, &'static dyn Handle, Option<A::Renderer<'static>>);
+pub(crate) struct Surface<A: Application>(Arc<WinitWindow>, &'static dyn Handle, Option<A::Renderer<'static>>);
 impl<A: Application> Surface<A> {
     pub fn id(&self) -> WindowId {self.0.id()}
-    pub fn new(window: Window, context: &Context) -> Self {
+    pub fn new(window: WinitWindow, context: &Context) -> Self {
         let window = Arc::new(window);
         let handle: &'static dyn Handle = unsafe {
             std::mem::transmute::<&dyn Handle, &'static dyn Handle>(&*window)
@@ -92,8 +92,8 @@ pub enum Input {
     Device{device_id: DeviceId, event: DeviceEvent},
 }
 
-pub(crate) struct WindowManager<A: Application>(Option<MaverickOS<A>>);
-impl<A: Application> WindowManager<A> {
+pub(crate) struct Window<A: Application>(Option<MaverickOS<A>>);
+impl<A: Application> Window<A> {
     #[cfg(target_os = "android")]
     pub fn start(app: AndroidApp) {
         EventLoop::builder().with_android_app(app).build().unwrap().run_app(&mut Self(None)).unwrap();
@@ -109,7 +109,7 @@ impl<A: Application> WindowManager<A> {
         EventLoop::new().unwrap().run_app(&mut Self(None)).unwrap();
     }
 }
-impl<A: Application> ApplicationHandler for WindowManager<A> {
+impl<A: Application> ApplicationHandler for Window<A> {
     fn new_events(&mut self, _event_loop: &ActiveEventLoop, cause: StartCause) {
         if let Some(maverick) = self.0.as_mut() && let StartCause::ResumeTimeReached{..} = cause {
             maverick.surface.request_redraw()
@@ -125,7 +125,7 @@ impl<A: Application> ApplicationHandler for WindowManager<A> {
 
     fn device_event(&mut self, _event_loop: &ActiveEventLoop, device_id: DeviceId, event: DeviceEvent) {
         if let Some(maverick) = self.0.as_mut() {
-            maverick.app.on_input(&maverick.context, Input::Device{device_id, event});
+            maverick.app.on_input(&mut maverick.context, Input::Device{device_id, event});
         }
     }
 
@@ -135,7 +135,7 @@ impl<A: Application> ApplicationHandler for WindowManager<A> {
             maverick.surface.resurface(&maverick.context.window);
         },
         none => {
-            let window = event_loop.create_window(Window::default_attributes().with_title("orange")).unwrap();
+            let window = event_loop.create_window(WinitWindow::default_attributes().with_title("orange")).unwrap();
             let context = Context::new(&window);
             let surface = Surface::new(window, &context);
             *none = Some(MaverickOS::new(context, surface));
@@ -157,9 +157,10 @@ impl<A: Application> ApplicationHandler for WindowManager<A> {
                 },
                 WindowEvent::RedrawRequested => {
                     event_loop.set_control_flow(ControlFlow::WaitUntil(Instant::now()+TICK));
-                    maverick.app.on_input(&maverick.context, Input::Tick);
+                    maverick.app.on_input(&mut maverick.context, Input::Tick);
+                    
                     for event in maverick.context.hardware.tick() {
-                        maverick.app.on_input(&maverick.context, event);
+                        maverick.app.on_input(&mut maverick.context, event);
                     }
                     if let Some(surface) = maverick.surface.as_mut() {
                         surface.draw(&maverick.context.window, &maverick.app);
@@ -207,7 +208,7 @@ impl<A: Application> ApplicationHandler for WindowManager<A> {
                 WindowEvent::Moved(position) => Input::Moved(position.into()),
                 e => {log::info!("Ignored Event: {:?}", e); return;}
             };
-            maverick.app.on_input(&maverick.context, event);
+            maverick.app.on_input(&mut maverick.context, event);
         }
     }
 }
