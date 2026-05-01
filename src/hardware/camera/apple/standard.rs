@@ -136,13 +136,9 @@ impl StandardOsCamera {
             }
 
             if device.isFocusModeSupported(AVCaptureFocusMode::ContinuousAutoFocus) {
-                println!("Setting focus mode to continouus");
                 device.setFocusMode(AVCaptureFocusMode::ContinuousAutoFocus);
             } else if device.isFocusModeSupported(AVCaptureFocusMode::AutoFocus) {
-                println!("Setting focus mode to auto");
                 device.setFocusMode(AVCaptureFocusMode::AutoFocus);
-            } else {
-                println!("COULD NOT SET FOCUS MODE");
             }
 
             device.unlockForConfiguration();
