@@ -1,7 +1,12 @@
-#[cfg(any(target_os = "ios", target_os = "macos"))]
-mod apple;
-#[cfg(any(target_os = "ios", target_os = "macos"))]
-use apple::OsPhotoPicker;
+#[cfg(target_os = "ios")]
+mod ios;
+#[cfg(target_os = "ios")]
+use ios::OsPhotoPicker;
+
+#[cfg(target_os = "macos")]
+mod macos;
+#[cfg(target_os = "macos")]
+use macos::OsPhotoPicker;
 
 #[cfg(target_os = "linux")]
 mod linux;
@@ -13,59 +18,34 @@ mod windows;
 #[cfg(target_os = "windows")]
 use windows::OsPhotoPicker;
 
-#[derive(Clone)]
-pub struct PhotoPicker(
-    #[cfg(any(target_os = "ios", target_os = "macos", target_os = "linux", target_os = "windows"))]
-    OsPhotoPicker
-);
+use std::sync::{Arc, Mutex};
+use image::RgbaImage;
+
+pub struct PhotoPicker {
+    pub photo: Arc<Mutex<Option<RgbaImage>>>,
+}
 
 impl PhotoPicker {
-    pub fn open(callback: impl FnOnce(Vec<u8>, ImageOrientation) + Send + 'static) {
-        #[cfg(any(target_os = "ios", target_os = "macos", target_os = "linux", target_os = "windows"))]
-        OsPhotoPicker::open(callback);
-        
-        #[cfg(not(any(target_os = "ios", target_os = "macos", target_os = "linux", target_os = "windows")))]
-        panic!("not supported os");
-    }
-}
-
-#[derive(Debug, Clone)]
-pub enum ImageOrientation {
-    Up,
-    Down,
-    Left,
-    Right,
-    UpMirrored,
-    DownMirrored,
-    LeftMirrored,
-    RightMirrored,
-}
-
-impl ImageOrientation {
-    pub fn from_ios_value(orientation: i64) -> Self {
-        match orientation {
-            0 => ImageOrientation::Up,
-            1 => ImageOrientation::Down,
-            2 => ImageOrientation::Left,
-            3 => ImageOrientation::Right,
-            4 => ImageOrientation::UpMirrored,
-            5 => ImageOrientation::DownMirrored,
-            6 => ImageOrientation::LeftMirrored,
-            7 => ImageOrientation::RightMirrored,
-            _ => ImageOrientation::Up,
+    pub fn new() -> Self {
+        Self {
+            photo: Arc::new(Mutex::new(None)),
         }
     }
 
-    pub fn apply_to(&self, image: image::DynamicImage) -> image::DynamicImage {
-        match self {
-            ImageOrientation::Up => image,
-            ImageOrientation::Down => image.rotate180(),
-            ImageOrientation::Left => image.rotate270(),
-            ImageOrientation::Right => image.rotate90(),
-            ImageOrientation::UpMirrored => image.fliph(),
-            ImageOrientation::DownMirrored => image.fliph().rotate180(),
-            ImageOrientation::LeftMirrored => image.fliph().rotate90(),
-            ImageOrientation::RightMirrored => image.fliph().rotate270(),
-        }
+    pub fn open(&self) {
+        let photo_ref = self.photo.clone();
+        OsPhotoPicker::open(move |rgba| {
+            *photo_ref.lock().unwrap() = rgba;
+        });
+    }
+
+    pub(crate) fn tick(&mut self) -> Option<RgbaImage> {
+        self.photo.lock().unwrap().take()
+    }
+}
+
+impl Default for PhotoPicker {
+    fn default() -> Self {
+        Self::new()
     }
 }

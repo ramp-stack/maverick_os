@@ -70,6 +70,7 @@ pub enum Input {
     Resized,
     Focused(bool),
     CameraFrame(RgbaImage),
+    Photo(RgbaImage),
     PickedPhoto(RgbaImage),
     DroppedFile(PathBuf),
     HoveredFile(PathBuf),

@@ -27,7 +27,7 @@ pub struct Context {
     pub share: Share,
     pub haptics: Haptics,
     pub notifications: Notifications,
-    //photo_picker: PhotoPicker
+    pub photo_picker: PhotoPicker,
 
     #[allow(dead_code)]
     pub(crate) cloud: CloudStorage
@@ -55,8 +55,8 @@ impl Context {
             share: Share::new(),
             haptics: Haptics::new(),
             notifications: Notifications::new(),
-            cloud
-            //photo_picker: PhotoPicker::new(tx),
+            cloud,
+            photo_picker: PhotoPicker::new(),
         }
     }
 
@@ -64,6 +64,9 @@ impl Context {
         let mut events = Vec::new();
         if let Some(frame) = self.camera.tick() {
             events.push(Input::CameraFrame(frame));
+        }
+        if let Some(photo) = self.photo_picker.tick() {
+            events.push(Input::Photo(photo));
         }
         events
     }

@@ -1,4 +1,3 @@
-use super::ImageOrientation;
 use std::process::Command;
 use std::path::Path;
 use std::fs;
@@ -6,9 +5,10 @@ use std::thread;
 
 #[derive(Clone)]
 pub struct OsPhotoPicker;
+//RC ref cell
 
 impl OsPhotoPicker {
-    pub fn open(callback: impl FnOnce(Vec<u8>, ImageOrientation) + Send + 'static) {
+    pub fn open(callback: impl FnOnce(Vec<u8>) + Send + 'static) {
         thread::spawn(move || {
             let result = Command::new("powershell")
                 .args(&[
@@ -31,15 +31,15 @@ impl OsPhotoPicker {
                     let file_path = String::from_utf8_lossy(&output.stdout).trim().to_string();
                     if !file_path.is_empty() && Path::new(&file_path).exists() {
                         if let Ok(image_data) = fs::read(&file_path) {
-                            callback(image_data, ImageOrientation::Up);
+                            callback(image_data);
                         } else {
-                            callback(Vec::new(), ImageOrientation::Up);
+                            callback(Vec::new());
                         }
                     } else {
-                        callback(Vec::new(), ImageOrientation::Up);
+                        callback(Vec::new());
                     }
                 }
-                _ => callback(Vec::new(), ImageOrientation::Up),
+                _ => callback(Vec::new()),
             }
         });
     }
