@@ -1,7 +1,7 @@
 use std::ffi::c_void;
 use std::ffi::CString;
 use std::sync::OnceLock;
-use block::ConcreteBlock;
+use block2::RcBlock;
 use objc2::{class, msg_send, sel};
 use objc2::declare::ClassBuilder;
 use objc2::rc::autoreleasepool;
@@ -145,7 +145,15 @@ fn create_photo_picker_delegate(callback_ptr: *mut c_void) -> *mut AnyObject {
                         return;
                     }
 
-                    let block = ConcreteBlock::new(move |image_obj: *mut AnyObject, _error: *mut AnyObject| {
+                    // Wrap in Option so the Fn closure can take it once
+                    let callback_box = std::sync::Mutex::new(Some(callback_box));
+
+                    let rc_block = RcBlock::new(move |image_obj: *mut AnyObject, _error: *mut AnyObject| {
+                        // Take the callback out — subsequent calls (if any) will be no-ops
+                        let Some(callback_box) = callback_box.lock().unwrap().take() else {
+                            return;
+                        };
+
                         let rgba = if !image_obj.is_null() {
                             let orientation: i64 = msg_send![image_obj, imageOrientation];
                             let symbol_name = CString::new("UIImagePNGRepresentation").unwrap();
@@ -174,13 +182,11 @@ fn create_photo_picker_delegate(callback_ptr: *mut c_void) -> *mut AnyObject {
                         callback_box(rgba);
                     });
 
-                    let rc_block = block.copy();
                     let _: *mut AnyObject = msg_send![
                         item_provider,
                         loadObjectOfClass: uiimage_class,
                         completionHandler: &*rc_block
                     ];
-                    std::mem::forget(rc_block);
                 }
             }
 
@@ -189,7 +195,8 @@ fn create_photo_picker_delegate(callback_ptr: *mut c_void) -> *mut AnyObject {
                 picker_did_finish_picking as extern "C" fn(&'static AnyObject, Sel, *mut AnyObject, *mut AnyObject),
             );
 
-            decl.register() as usize
+            // Fix: double-cast through raw pointer to satisfy the compiler
+            decl.register() as *const AnyClass as usize
         }) as *const AnyClass;
 
         let delegate: *mut AnyObject = msg_send![cls, new];
