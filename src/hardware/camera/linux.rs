@@ -1,26 +1,30 @@
+// linux.rs
+
 use super::{CameraError, CameraSettings};
 use image::RgbaImage;
 use std::sync::{Arc, Mutex};
 
-#[derive(Debug, Clone)]
-pub struct OsCamera;
+pub struct OsCamera {
+    running: bool,
+}
 
 impl OsCamera {
-    pub fn new_standard() -> Result<Self, CameraError> {
-        Err(CameraError::InitializationFailed)
+    pub fn new() -> Self {
+        OsCamera { running: false }
     }
 
-    pub fn new_custom() -> Result<Self, CameraError> {
-        Err(CameraError::InitializationFailed)
+    pub fn start(&mut self) {
+        self.running = true;
     }
 
-    pub fn frame(&self) -> Result<RgbaImage, CameraError> {
-        Err(CameraError::FailedToGetFrame)
+    pub fn frame(&mut self) -> Option<RgbaImage> {
+        if !self.running {
+            return None;
+        }
+        None 
     }
 
-    pub fn settings(&mut self) -> Option<Arc<Mutex<CameraSettings>>> {
-        None
+    pub fn stop(&mut self) {
+        self.running = false;
     }
-
-    pub fn stop(self) {}
 }
