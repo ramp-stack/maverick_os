@@ -1,8 +1,4 @@
-// linux.rs
-
-use super::{CameraError, CameraSettings};
 use image::RgbaImage;
-use std::sync::{Arc, Mutex};
 
 pub struct OsCamera {
     running: bool,
@@ -21,7 +17,7 @@ impl OsCamera {
         if !self.running {
             return None;
         }
-        None 
+        None // replace with actual frame capture
     }
 
     pub fn stop(&mut self) {
