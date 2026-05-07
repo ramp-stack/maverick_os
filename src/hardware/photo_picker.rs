@@ -18,8 +18,8 @@ mod windows;
 #[cfg(target_os = "windows")]
 use windows::OsPhotoPicker;
 
-use std::sync::{Arc, Mutex};
 use image::RgbaImage;
+use std::sync::{Arc, Mutex};
 
 pub struct PhotoPicker {
     pub photo: Arc<Mutex<Option<RgbaImage>>>,
@@ -34,6 +34,16 @@ impl PhotoPicker {
 
     pub fn open(&self) {
         let photo_ref = self.photo.clone();
+
+        #[cfg(target_os = "linux")]
+        OsPhotoPicker::open(move |bytes: Vec<u8>| {
+            let decoded = image::load_from_memory(&bytes)
+                .ok()
+                .map(|img| img.to_rgba8());
+            *photo_ref.lock().unwrap() = decoded;
+        });
+
+        #[cfg(not(target_os = "linux"))]
         OsPhotoPicker::open(move |rgba| {
             *photo_ref.lock().unwrap() = rgba;
         });
