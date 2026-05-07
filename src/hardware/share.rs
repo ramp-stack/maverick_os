@@ -8,18 +8,19 @@ mod android;
 #[cfg(target_os = "android")]
 use android::OsShare;
 
+#[cfg(target_os = "linux")]
+mod linux;
+#[cfg(target_os = "linux")]
+use linux::OsShare;
+
 use image::RgbaImage;
 
 #[derive(Clone)]
-pub struct Share(
-    OsShare
-);
+pub struct Share(OsShare);
 
 impl Share {
     pub(crate) fn new() -> Self {
-        Self(
-            OsShare::new()
-        )
+        Self(OsShare::new())
     }
 
     pub fn share(&self, text: &str) {
