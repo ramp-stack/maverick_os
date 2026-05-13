@@ -56,7 +56,7 @@ impl OsShare {
             let bits_per_component = 8usize;
 
             let buffer = rgba_image.as_raw();
-            let color_space = objc2_core_graphics::CGColorSpace::new_device_rgb();
+            let color_space = unsafe{objc2_core_graphics::CGColorSpace::new_device_rgb()};
 
             let context = unsafe {
                 CGBitmapContextCreate(
@@ -71,9 +71,9 @@ impl OsShare {
             }
             .expect("Failed to create bitmap context");
 
-            let cg_image: Retained<CGImage> = CGBitmapContextCreateImage(Some(&context))
+            let cg_image: Retained<CGImage> = unsafe{CGBitmapContextCreateImage(Some(&context))
                 .expect("Could not create image from context")
-                .into();
+                .into()};
 
             let ns_image_cls = class!(NSImage);
             let ns_image: *mut NSObject = unsafe { msg_send![ns_image_cls, alloc] };
