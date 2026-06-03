@@ -10,16 +10,40 @@ use std::time::Duration;
 
 use serde::{Serialize, Deserialize};
 
-pub struct ChatBot;
+pub struct ChatBot(u32);
 #[async_trait]
 impl Service for ChatBot {
     async fn run(&mut self, ctx: &mut air::Context) -> Option<Duration> {
+        //Listen for new push to /messages
+
+
         ctx.list(&ChatRoom::id()).into_iter().for_each(|id| {
-            ctx.send(id, "/messages", SendMessage("This is an automated message from the chat bot sent every second: 'Keep It Quiet!'".to_string())).unwrap();
+            ctx.send(id, "/messages", SendMessage("This is an automated message: 'Keep It Quiet!'".to_string())).unwrap();
         });
         Some(Duration::from_secs(5))
     }
 }
+
+RoomChannel {
+    server: IPAddress,
+    key: SecretKey
+}
+
+Room {
+    name: "My Room",
+    author: Bob,
+    invalid_name_change_attempts: 0,
+    messages: [
+        Message{
+            author: alice,
+            body: "message from alice",
+            timestamp: 8475734
+        },
+    ],
+}
+History:
+    Init("My Room"),
+    SendMessage("message from alice")
 
 #[derive(Serialize, Deserialize, Hash)]
 pub struct ChatRoom;
@@ -52,6 +76,12 @@ impl Reactant for ChangeName {
     fn apply<B: Beaker>(self, _path: &Path, signer: &Name, _timestamp: u64, substance: &mut B) -> Result<(), Self::Error> {
         if substance.query("/author") == Ok(Substance::String(signer.to_string())) {
             let _ = substance.insert("/name", Substance::String(self.0));
+            //Some failing operation
+        } else if /invalid_name_changes > 50 {
+            write new room key to /key
+            write 0 to /invalid_name_changes
+        } else {
+            write +1 to /invalid_name_changes
         }
         Ok(())
     }
@@ -97,7 +127,7 @@ impl Application for DemoApplication {
             ctx.air.send(self.0, "/name", ChangeName(text.to_string())).unwrap();
         }
         if let Some(r) = ctx.air.get::<ChatRoom>(&self.0).and_then(|t| t.query("/").ok()) {
-            log::info!("Room: {:?}", r)
+            log::info!("\n\n\n\n\n\n\n\n\n\n\n\n\nRoom: {:#?}", r)
         }
     }
     

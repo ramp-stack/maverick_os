@@ -18,7 +18,6 @@ use rusqlite::{OptionalExtension, Connection};
 
 use crate::hardware;
 
-
 #[derive(Debug, Clone)]
 pub struct Context {
     builder: RequestBuilder,

@@ -3,8 +3,7 @@ use tokio::time::sleep;
 
 use std::time::Duration;
 
-use crate::air;
-use air::Air;
+use air::{Air, Secret};
 
 pub use async_trait::async_trait;
 
@@ -35,14 +34,14 @@ impl Task {
 
 pub(crate) struct Runtime(Option<tokio::runtime::Runtime>, Sender<bool>);
 impl Runtime {
-    pub fn start(ctx: &air::Context, service: Air, services: Services, background: Services) -> Self {
+    pub fn start(secret: Secret, services: Services, background: Services) -> (Self, air::Context) {
         let runtime = tokio::runtime::Builder::new_multi_thread().enable_time().enable_io().build().unwrap();
+        let air = Air::start(secret);
         let (tx, rx) = channel(true);
-        runtime.spawn(service.run());
-        background.into_iter().for_each(|s| {runtime.spawn(Task(s).run(ctx.clone(), None));});
-        services.into_iter().for_each(|s| {runtime.spawn(Task(s).run(ctx.clone(), Some(rx.clone())));});
+        background.into_iter().for_each(|s| {runtime.spawn(Task(s).run(air.clone(), None));});
+        services.into_iter().for_each(|s| {runtime.spawn(Task(s).run(air.clone(), Some(rx.clone())));});
 
-        Runtime(Some(runtime), tx)
+        (Runtime(Some(runtime), tx), air)
     }
 
     pub fn pause(&mut self) {let _ = self.1.send(false);}

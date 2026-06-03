@@ -22,7 +22,6 @@ image = "0.25.6"
 libc = "0.2.172"
 imageproc = "0.25.0"
 
-arc-swap = "1.9.1"
 crossfire = "3.1.7"
 
 air = {path="../air"}
