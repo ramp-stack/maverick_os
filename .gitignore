@@ -3,3 +3,6 @@
 
 /demo/target
 /demo/air_cache.db
+/demo/SECRET.db
+/demo/03*
+/demo/02*

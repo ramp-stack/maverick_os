@@ -1,15 +1,14 @@
 pub mod hardware;
 
-pub mod runtime;
-use runtime::{Runtime, Services};
-
 pub mod window;
 use window::{Window, Renderer, Surface, Input};
+
+pub use air;
 
 #[cfg(target_os = "android")]
 use winit::platform::android::activity::AndroidApp;
 
-pub use air::{Air, Secret};
+use air::{Air, Secret, Services};
 
 mod config;
 pub use config::{IS_MOBILE, IS_WEB};
@@ -22,8 +21,8 @@ pub trait Application: 'static {
     fn new(context: &mut Context) -> Self;
     fn on_input(&mut self, context: &mut Context, input: Input);
 
-    fn background_services() -> Services {Vec::new()}
-    fn services() -> Services {Vec::new()}
+    fn background_services() -> Services {Services::default()}
+    fn services() -> Services {Services::default()}
 }
 
 pub struct Context {
@@ -33,9 +32,9 @@ pub struct Context {
 }
 
 pub struct MaverickOS<A: Application> {
-    runtime: Runtime,
     context: Context,
     surface: Surface<A>,
+    runtime: Air,
     app: A,
 }
 
@@ -48,21 +47,23 @@ impl<A: Application> MaverickOS<A> {
             value BLOB NOT NULL
         );", []).unwrap();
         let secret = match conn.query_row(
-            &format!("SELECT value FROM Cache WHERE key='secret'"),
+            "SELECT value FROM Cache WHERE key='secret'",
             [], |r| Ok(serde_json::from_slice(&r.get::<_, Vec<u8>>(0)?).ok()),
         ).optional().unwrap().flatten() {
             Some(secret) => secret,
             None => {
                 let secret = Secret::new();
                 conn.execute(
-                    &format!("INSERT INTO Cache(key, value) VALUES ('secret', ?1) ON CONFLICT DO UPDATE SET value=excluded.value;"),
+                    "INSERT INTO Cache(key, value) VALUES ('secret', ?1) ON CONFLICT DO UPDATE SET value=excluded.value;",
                     [serde_json::to_vec(&secret).unwrap()],
                 ).unwrap();
                 secret
             }
         };
         let hardware = hardware::Context::new();
-        let (runtime, air) = Runtime::start(secret, A::services(), A::background_services());
+        let (air, runtime) = Air::start(secret);
+        runtime.start_services(A::services());
+        runtime.start_services(A::background_services());
         
         let mut context = Context{
             hardware,
@@ -71,9 +72,9 @@ impl<A: Application> MaverickOS<A> {
         };
         let app = A::new(&mut context);
         MaverickOS{
-            runtime,
             context,
             surface,
+            runtime,
             app
         }
     }
