@@ -1,4 +1,3 @@
-use super::ImageOrientation;
 use std::process::Command;
 use std::path::Path;
 use std::fs;
@@ -8,7 +7,7 @@ use std::thread;
 pub struct OsPhotoPicker;
 
 impl OsPhotoPicker {
-    pub fn open(callback: impl FnOnce(Vec<u8>, ImageOrientation) + Send + 'static) {
+    pub fn open(callback: impl FnOnce(Vec<u8>) + Send + 'static) {
         thread::spawn(move || {
             let result = Self::try_zenity()
                 .or_else(|| Self::try_kdialog());
@@ -16,12 +15,12 @@ impl OsPhotoPicker {
             match result {
                 Some(file_path) => {
                     if let Ok(image_data) = fs::read(&file_path) {
-                        callback(image_data, ImageOrientation::Up);
+                        callback(image_data);
                     } else {
-                        callback(Vec::new(), ImageOrientation::Up);
+                        callback(Vec::new());
                     }
                 }
-                None => callback(Vec::new(), ImageOrientation::Up),
+                None => callback(Vec::new()),
             }
         });
     }
