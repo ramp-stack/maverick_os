@@ -35,8 +35,7 @@ impl Task {
 pub(crate) struct Runtime(Option<tokio::runtime::Runtime>, Sender<bool>);
 impl Runtime {
     pub fn start(secret: Secret, services: Services, background: Services) -> (Self, air::Context) {
-        let runtime = tokio::runtime::Builder::new_multi_thread().enable_time().enable_io().build().unwrap();
-        let air = Air::start(secret);
+        let air = runtime.block_on(async {Air::start(secret)});
         let (tx, rx) = channel(true);
         background.into_iter().for_each(|s| {runtime.spawn(Task(s).run(air.clone(), None));});
         services.into_iter().for_each(|s| {runtime.spawn(Task(s).run(air.clone(), Some(rx.clone())));});

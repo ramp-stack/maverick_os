@@ -109,7 +109,6 @@ impl Air {
     }
 }
 
-
 fn init(connection: &Connection) -> Result<(), rusqlite::Error> {
     connection.execute("CREATE TABLE if not exists Cache(
         key TEXT NOT NULL PRIMARY KEY,

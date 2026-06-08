@@ -151,7 +151,7 @@ impl<A: Application> ApplicationHandler for Window<A> {
         if let Some(maverick) = self.0.as_mut() && id == maverick.surface.id() {
             let event = match event {
                 WindowEvent::CloseRequested | WindowEvent::Destroyed => {
-                    let mut maverick = self.0.take().unwrap();
+                    let maverick = self.0.take().unwrap();
                     maverick.runtime.shutdown();
                     event_loop.exit();
                     return;
