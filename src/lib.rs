@@ -41,7 +41,8 @@ pub struct MaverickOS<A: Application> {
 impl<A: Application> MaverickOS<A> {
     pub fn start(#[cfg(target_os = "android")] app: AndroidApp) {Window::<A>::start()}
     fn new(window: window::Context, surface: Surface<A>) -> Self {
-        let conn = rusqlite::Connection::open("SECRET.db").unwrap();
+        let hardware = hardware::Context::new();
+        let conn = rusqlite::Connection::open("./SECRET.db").unwrap();
         conn.execute("CREATE TABLE if not exists Cache(
             key TEXT NOT NULL PRIMARY KEY,
             value BLOB NOT NULL
@@ -60,7 +61,6 @@ impl<A: Application> MaverickOS<A> {
                 secret
             }
         };
-        let hardware = hardware::Context::new();
         let (air, runtime) = Air::start(secret);
         runtime.start_services(A::services());
         runtime.start_services(A::background_services());
