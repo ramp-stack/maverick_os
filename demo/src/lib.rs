@@ -1,7 +1,8 @@
 use maverick_os::{Application, Context, start};
-use maverick_os::air::{self, Contracts, Contract, Substance, Id, Reactants, Reactant, Beaker, Name};
+use maverick_os::air::{self, Contract, Reactants, Reactant, Instance, Name, Service};
+use maverick_os::air::names::Id;
 use maverick_os::window::{self, Input, KeyEvent, Renderer, Handle};
-use maverick_os::runtime::{Services, Service, async_trait};
+//use maverick_os::runtime::{Services, Service, async_trait};
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -10,66 +11,60 @@ use std::time::Duration;
 
 use serde::{Serialize, Deserialize};
 
-pub struct ChatBot;
-#[async_trait]
+#[derive(Default)]
+pub struct ChatBot(u32, BTreeMap<Id, Instance<Room>>);
 impl Service for ChatBot {
     async fn run(&mut self, ctx: &mut air::Context) -> Option<Duration> {
-        ctx.list(&ChatRoom::id()).into_iter().for_each(|id| {
-            ctx.send(id, "/messages", SendMessage("This is an automated message from the chat bot sent every second: 'Keep It Quiet!'".to_string())).unwrap();
-        });
+      //match ctx.listen::<Room>() {
+      //    Update::Instance(room) => self.1
+      //}
+      //ctx.list(&ChatRoom::id()).into_iter().for_each(|id| {
+      //    ctx.send(id, "/messages", SendMessage("This is an automated message: 'Keep It Quiet!'".to_string())).unwrap();
+      //});
         Some(Duration::from_secs(5))
     }
 }
 
-#[derive(Serialize, Deserialize, Hash)]
-pub struct ChatRoom;
-impl ChatRoom {
-    pub fn new(_name: &str) -> Self {ChatRoom}
-}
-impl Contract for ChatRoom {
-    fn id() -> Id {Id::hash("ChatRoom2.7")}
-
-    fn init(self, signer: &Name, _timestamp: u64) -> Substance {Substance::Map(BTreeMap::from([
-        ("name".to_string(), Substance::String("myroom".to_string())),
-        ("author".to_string(), Substance::String(signer.to_string())),
-        ("messages".to_string(), Substance::Seq(Vec::new()))
-    ]))}
-
-    fn routes() -> BTreeMap<PathBuf, Reactants> {
-        BTreeMap::from([
-            (PathBuf::from("/name"), Reactants::new().add::<ChangeName>()),
-            (PathBuf::from("/messages"), Reactants::new().add::<SendMessage>())
-        ])
-    }
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct Message {
+    author: Name,
+    timestamp: u64,
+    body: String,
 }
 
-#[derive(Serialize, Deserialize, Hash)]
-pub struct ChangeName(String);
-impl Reactant for ChangeName {
-    type Error = Infallible;
-    type Contract = ChatRoom;
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct Room {
+    author: Name,
+    name: String,
+    messages: Vec<Message>
+}
+impl Contract for Room {
+    type Init = String;
+    fn id() -> Id {Id::hash("Room")}
 
-    fn apply<B: Beaker>(self, _path: &Path, signer: &Name, _timestamp: u64, substance: &mut B) -> Result<(), Self::Error> {
-        if substance.query("/author") == Ok(Substance::String(signer.to_string())) {
-            let _ = substance.insert("/name", Substance::String(self.0));
+    fn init(init: Self::Init, signer: Name, _timestamp: u64) -> Self {
+        Room {
+            author: signer,
+            name: init, 
+            messages: Vec::new()
         }
-        Ok(())
+    }
+
+    fn reactants() -> Reactants<Room> {
+        Reactants::default().add::<SendMessage>()
     }
 }
 
-#[derive(Serialize, Deserialize, Hash)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct SendMessage(String);
-impl Reactant for SendMessage {
-    type Error = Infallible;
-    type Contract = ChatRoom;
+impl Reactant<Room> for SendMessage {
+    type Result = usize;
 
-    fn apply<B: Beaker>(self, _path: &Path, signer: &Name, timestamp: u64, substance: &mut B) -> Result<(), Self::Error> {
-        let _ = substance.insert("/messages/-", Substance::Map(BTreeMap::from([
-            ("author".to_string(), Substance::String(signer.to_string())),
-            ("timestamp".to_string(), Substance::Integer(timestamp as i64)),
-            ("body".to_string(), Substance::String(self.0)),
-        ])));
-        Ok(())
+    fn id() -> Id {Id::hash("SendMessage")}
+
+    fn apply(self, room: &mut Room, signer: Name, timestamp: u64) -> Self::Result {
+        room.messages.push(Message{author: signer, timestamp, body: self.0});
+        room.messages.len()
     }
 }
 
@@ -83,26 +78,23 @@ impl<'surface> Renderer<'surface> for DemoRenderer<'surface> {
     }
 }
 
-pub struct DemoApplication(Id);
+pub struct DemoApplication(Instance<Room>);
 impl Application for DemoApplication {
     type Renderer<'surface> = DemoRenderer<'surface>;
 
-    fn new(ctx: &Context) -> Self {
-        let id = ctx.air.create(ChatRoom).unwrap();
-        ctx.air.send(id, "/name", ChangeName("The Room".to_string())).unwrap();
-        DemoApplication(id)
+    fn new(ctx: &mut Context) -> Self {
+        let room = ctx.air.create::<Room>("The Room".to_string());
+        DemoApplication(room)
     }
-    fn on_input(&mut self, ctx: &Context, input: Input) {
+    fn on_input(&mut self, ctx: &mut Context, input: Input) {
         if let Input::Keyboard{event: KeyEvent{text: Some(text), ..}, ..} = input {
-            ctx.air.send(self.0, "/name", ChangeName(text.to_string())).unwrap();
+            self.0.apply(SendMessage(text.to_string()));
         }
-        if let Some(r) = ctx.air.get::<ChatRoom>(&self.0).and_then(|t| t.query("/").ok()) {
-            log::info!("Room: {:?}", r)
-        }
+        log::info!("\n\n\n\n\n\n\n\n\n\n\n\n\nRoom: {:#?}", self.0.pending());
+        //log::info!("CRoom: {:#?}", self.0.confirmed());
     }
     
-    fn contracts() -> Contracts {Contracts::new().add::<ChatRoom>()}
-    fn services() -> Services {vec![Box::new(ChatBot)]}
+    //fn services() -> Services {vec![Box::new(ChatBot)]}
 }
 
 start!(DemoApplication);

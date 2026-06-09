@@ -1,6 +1,5 @@
-#![allow(non_snake_case, non_upper_case_globals)]
-use std::{cell::RefCell};
-use std::{slice::from_raw_parts, sync::{Mutex}};
+use std::slice::from_raw_parts;
+use std::cell::RefCell;
 use image::RgbaImage;
 use image::Rgba;
 
@@ -15,19 +14,20 @@ use objc2_foundation::{NSArray, NSDictionary, NSNumber, NSString};
 use dispatch2::DispatchQueue;
 use objc2::runtime::ProtocolObject;
 
-thread_local! {
-    static CURRENT_CAMERA: RefCell<Option<StandardOsCamera>> = const { RefCell::new(None) };
+impl StandardProcessor {
+    pub fn new() -> Retained<Self> {
+        let this = Self::alloc();
+        let this = this.set_ivars(Frame::default());
+        unsafe { objc2::msg_send![super(this), init] }
+    }
 }
 
-
-#[derive(Debug)]
-pub struct ProcessorClass {
-    pub last_frame: Mutex<Option<RgbaImage>>,
-}
+#[derive(Debug, Default)]
+pub struct Frame(RefCell<Option<RgbaImage>>);
 
 define_class!(
     #[unsafe(super = NSObject)]
-    #[ivars = ProcessorClass]
+    #[ivars = Frame]
     #[derive(Debug)]
     pub struct StandardProcessor;
 
@@ -45,9 +45,9 @@ define_class!(
             if pixel_buffer.is_none() { return; }
 
             let pixel_buffer = pixel_buffer.unwrap();
-            let height = CVPixelBufferGetHeight(&pixel_buffer);
-            let width = CVPixelBufferGetWidth(&pixel_buffer);
-            let bytes_per_row = CVPixelBufferGetBytesPerRow(&pixel_buffer);
+            let height = unsafe{CVPixelBufferGetHeight(&pixel_buffer)};
+            let width = unsafe{CVPixelBufferGetWidth(&pixel_buffer)};
+            let bytes_per_row = unsafe{CVPixelBufferGetBytesPerRow(&pixel_buffer)};
             let size = bytes_per_row * height;
 
             use objc2_core_video::{CVPixelBufferLockBaseAddress, CVPixelBufferUnlockBaseAddress};
@@ -56,7 +56,7 @@ define_class!(
             if lock_result != 0 { return; }
 
 
-            let base_address = CVPixelBufferGetBaseAddress(&pixel_buffer) as *const u8;
+            let base_address = unsafe{CVPixelBufferGetBaseAddress(&pixel_buffer) as *const u8};
             if base_address.is_null() || size > isize::MAX as usize {
                 unsafe { CVPixelBufferUnlockBaseAddress(&pixel_buffer, CVPixelBufferLockFlags(0)); }
                 return;
@@ -82,68 +82,32 @@ define_class!(
                     image.put_pixel(dest_x as u32, dest_y as u32, Rgba([r, g, b, a]));
                 }
             }
-            *self.ivars().last_frame.lock().unwrap() = Some(image);
+            self.ivars().0.replace(Some(image));
 
             unsafe { CVPixelBufferUnlockBaseAddress(&pixel_buffer, CVPixelBufferLockFlags(0)); }
         }
     }
 );
 
-impl StandardProcessor {
-    pub fn new() -> Retained<Self> {
-        let this = Self::alloc();
-        let this = this.set_ivars(ProcessorClass {
-            last_frame: Mutex::new(None),
-        });
-        unsafe { objc2::msg_send![super(this), init] }
-    }
-}
-
 #[derive(Debug, Clone)]
 pub struct StandardOsCamera {
-    pub session: Retained<AVCaptureSession>,
+    session: Retained<AVCaptureSession>,
     processor: Retained<StandardProcessor>,
 }
 
 impl StandardOsCamera {
-    pub fn new() -> Result<Self, String> {
-        if let Some(camera) = CURRENT_CAMERA.with(|c| c.borrow().clone()) {
-            unsafe {
-                if camera.session.isRunning() {
-                    return Ok(camera);
-                }
-            }
-        }
-
-        let camera = unsafe {
+    pub fn new() -> Self {
+        unsafe {
             StandardOsCamera {
                 session: AVCaptureSession::new(),
                 processor: StandardProcessor::new(),
             }
-        };
-
-        camera.start()?;
-        CURRENT_CAMERA.with(|c| *c.borrow_mut() = Some(camera.clone()));
-        Ok(camera)
-    }
-
-    pub fn existing() -> Option<Self> {
-        if let Some(camera) = CURRENT_CAMERA.with(|c| c.borrow().clone()) {
-            unsafe {
-                if camera.session.isRunning() {
-                    return Some(camera);
-                }
-            }
         }
-
-        None
     }
 
-    pub fn start(&self) -> Result<(), String> {
+    pub fn start(&self) {
         unsafe {
-            if self.session.isRunning() {
-                return Ok(());
-            }
+            if self.session.isRunning() {return;}
 
             let device_types = NSArray::from_slice(&[
                 AVCaptureDeviceTypeBuiltInTripleCamera,
@@ -159,7 +123,7 @@ impl StandardOsCamera {
             );
 
             let devices = discovery_session.devices();
-            let device = devices.into_iter().next().ok_or("No camera device found")?;
+            let device = devices.into_iter().next().expect("No camera device found");
 
 
             let _ = device.lockForConfiguration();
@@ -172,19 +136,15 @@ impl StandardOsCamera {
             }
 
             if device.isFocusModeSupported(AVCaptureFocusMode::ContinuousAutoFocus) {
-                println!("Setting focus mode to continouus");
                 device.setFocusMode(AVCaptureFocusMode::ContinuousAutoFocus);
             } else if device.isFocusModeSupported(AVCaptureFocusMode::AutoFocus) {
-                println!("Setting focus mode to auto");
                 device.setFocusMode(AVCaptureFocusMode::AutoFocus);
-            } else {
-                println!("COULD NOT SET FOCUS MODE");
             }
 
             device.unlockForConfiguration();
 
             let input = AVCaptureDeviceInput::deviceInputWithDevice_error(&device)
-                .map_err(|e| format!("Failed to create AVCaptureDeviceInput: {:?}", e))?;
+                .map_err(|e| format!("Failed to create AVCaptureDeviceInput: {:?}", e)).unwrap();
 
             self.session.beginConfiguration();
             self.session.setSessionPreset(AVCaptureSessionPresetMedium);
@@ -221,24 +181,14 @@ impl StandardOsCamera {
             self.session.commitConfiguration();
             self.session.startRunning();
         }
-
-        CURRENT_CAMERA.with(|c| *c.borrow_mut() = Some(self.clone()));
-        Ok(())
     }
 
     pub fn stop(&self) {
         unsafe { self.session.stopRunning(); }
-        CURRENT_CAMERA.with(|c| *c.borrow_mut() = None);
     }
 
     pub fn frame(&self) -> Option<RgbaImage> {
-        self.processor.ivars().last_frame.lock().unwrap().clone()
+        self.processor.ivars().0.take()
     }
 
-}
-
-impl Default for StandardOsCamera {
-    fn default() -> Self {
-        StandardOsCamera::new().expect("Failed to initialize camera")
-    }
 }

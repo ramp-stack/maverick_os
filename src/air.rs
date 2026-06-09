@@ -18,7 +18,6 @@ use rusqlite::{OptionalExtension, Connection};
 
 use crate::hardware;
 
-
 #[derive(Debug, Clone)]
 pub struct Context {
     builder: RequestBuilder,
@@ -42,7 +41,7 @@ impl Context {
 
     pub fn list(&self, c_id: &Id) -> Vec<Id> {
         match self.value.load().get(c_id) {
-            Some(instances) => instances.keys().map(|k| *k).collect(),
+            Some(instances) => instances.keys().copied().collect(),
             None => vec![]
         }
     }
@@ -74,7 +73,7 @@ pub(crate) struct Air {
 }
 
 impl Air {
-    pub fn start(_hardware: &hardware::Context, contracts: Contracts) -> Result<(Context, Self), rusqlite::Error> {
+    pub fn start(_hardware: &hardware::Context, contracts: Contracts) -> Result<(Self, Context), rusqlite::Error> {
       //let secret = hardware.cloud().get("secret").and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_else(|| {
       //    let secret = Secret::new();
       //    hardware.cloud().save("secret", &serde_json::to_string(&secret).unwrap());
@@ -91,12 +90,12 @@ impl Air {
 
         let (tx, rx) = bounded_blocking(100);
 
-        Ok((Context{builder, value: value.clone(), tx}, Air{
+        Ok((Air{
             cache,
             manager,
-            value,
+            value: value.clone(),
             rx,
-        }))
+        }, Context{builder, value, tx}))
     }
 
     pub async fn run(mut self) {
@@ -109,7 +108,6 @@ impl Air {
         }
     }
 }
-
 
 fn init(connection: &Connection) -> Result<(), rusqlite::Error> {
     connection.execute("CREATE TABLE if not exists Cache(

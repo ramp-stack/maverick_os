@@ -3,10 +3,10 @@
 //! This module provides cross-platform functionality to access application support
 //! directories on iOS, macOS, Linux, Windows, and Android.
 
-//  #[cfg(any(target_os = "ios", target_os = "macos"))]
-//  use objc2_foundation::{NSString, NSURL};
-//  #[cfg(any(target_os = "ios", target_os = "macos"))]
-//  use objc2::msg_send;
+ #[cfg(target_os = "ios")]
+ use objc2_foundation::{NSString, NSURL};
+ #[cfg(target_os = "ios")]
+ use objc2::msg_send;
 
 use std::path::PathBuf;
 

@@ -1,31 +1,28 @@
 pub mod hardware;
 
-pub mod runtime;
-use runtime::Services;
-use runtime::Runtime;
-
 pub mod window;
-use window::{WindowManager, Renderer, Surface, Input};
+use window::{Window, Renderer, Surface, Input};
+
+pub use air;
 
 #[cfg(target_os = "android")]
 use winit::platform::android::activity::AndroidApp;
 
-pub mod air;
-use air::{Contracts, Air};
+use air::{Air, Secret, Services};
 
 mod config;
 pub use config::{IS_MOBILE, IS_WEB};
 
+use rusqlite::OptionalExtension;
+
 pub trait Application: 'static {
     type Renderer<'surface>: Renderer<'surface, Application=Self>;
 
-    fn new(context: &Context) -> Self;
-    fn on_input(&mut self, context: &Context, input: Input);
-    //fn draw<'surface>(&self, context: &Context, renderer: &mut Self::Renderer<'surface>);
+    fn new(context: &mut Context) -> Self;
+    fn on_input(&mut self, context: &mut Context, input: Input);
 
-    fn contracts() -> Contracts {Contracts::default()}
-    fn background_services() -> Services {Vec::new()}
-    fn services() -> Services {Vec::new()}
+    fn background_services() -> Services {Services::default()}
+    fn services() -> Services {Services::default()}
 }
 
 pub struct Context {
@@ -35,29 +32,49 @@ pub struct Context {
 }
 
 pub struct MaverickOS<A: Application> {
-    runtime: Runtime,
     context: Context,
     surface: Surface<A>,
+    runtime: Air,
     app: A,
 }
 
 impl<A: Application> MaverickOS<A> {
-    pub fn start(#[cfg(target_os = "android")] app: AndroidApp) {WindowManager::<A>::start()}
+    pub fn start(#[cfg(target_os = "android")] app: AndroidApp) {Window::<A>::start()}
     fn new(window: window::Context, surface: Surface<A>) -> Self {
         let hardware = hardware::Context::new();
-        let (air, service) = Air::start(&hardware, A::contracts()).unwrap();
-        let runtime = Runtime::start(&air, service, A::services(), A::background_services());
+        let conn = rusqlite::Connection::open("./SECRET.db").unwrap();
+        conn.execute("CREATE TABLE if not exists Cache(
+            key TEXT NOT NULL PRIMARY KEY,
+            value BLOB NOT NULL
+        );", []).unwrap();
+        let secret = match conn.query_row(
+            "SELECT value FROM Cache WHERE key='secret'",
+            [], |r| Ok(serde_json::from_slice(&r.get::<_, Vec<u8>>(0)?).ok()),
+        ).optional().unwrap().flatten() {
+            Some(secret) => secret,
+            None => {
+                let secret = Secret::new();
+                conn.execute(
+                    "INSERT INTO Cache(key, value) VALUES ('secret', ?1) ON CONFLICT DO UPDATE SET value=excluded.value;",
+                    [serde_json::to_vec(&secret).unwrap()],
+                ).unwrap();
+                secret
+            }
+        };
+        let (air, runtime) = Air::start(secret);
+        runtime.start_services(A::services());
+        runtime.start_services(A::background_services());
         
-        let context = Context{
+        let mut context = Context{
             hardware,
             window,
-            air,
+            air
         };
-        let app = A::new(&context);
+        let app = A::new(&mut context);
         MaverickOS{
-            runtime,
             context,
             surface,
+            runtime,
             app
         }
     }
@@ -139,29 +156,27 @@ pub mod __private {
 #[macro_export]
 macro_rules! start {
     ($app:ty) => {
-        use $crate::__private::*;
-
         #[cfg(target_arch = "wasm32")]
         #[cfg_attr(target_arch = "wasm32", wasm_bindgen(start))]
         pub fn maverick_main() {
-            MaverickOS::<$app>::start()
+            $crate::__private::MaverickOS::<$app>::start()
         }
 
         #[cfg(target_os = "ios")]
         #[unsafe(no_mangle)]
         pub extern "C" fn maverick_main() {
-            MaverickOS::<$app>::start()
+            $crate::__private::MaverickOS::<$app>::start()
         }
 
         #[cfg(target_os = "android")]
         #[unsafe(no_mangle)]
-        pub fn android_main(app: AndroidApp) {
-            MaverickOS::<$app>::start(app)
+        pub fn android_main(app: $crate::__private::AndroidApp) {
+            $crate::__private::MaverickOS::<$app>::start(app)
         }
 
         #[cfg(not(any(target_os = "android", target_os="ios", target_arch = "wasm32")))]
         pub fn maverick_main() {
-            MaverickOS::<$app>::start()
+            $crate::__private::MaverickOS::<$app>::start()
         }
     };
 }
