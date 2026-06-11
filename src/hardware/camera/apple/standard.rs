@@ -45,9 +45,9 @@ define_class!(
             if pixel_buffer.is_none() { return; }
 
             let pixel_buffer = pixel_buffer.unwrap();
-            let height = unsafe{CVPixelBufferGetHeight(&pixel_buffer)};
-            let width = unsafe{CVPixelBufferGetWidth(&pixel_buffer)};
-            let bytes_per_row = unsafe{CVPixelBufferGetBytesPerRow(&pixel_buffer)};
+            let height = CVPixelBufferGetHeight(&pixel_buffer);
+            let width = CVPixelBufferGetWidth(&pixel_buffer);
+            let bytes_per_row = CVPixelBufferGetBytesPerRow(&pixel_buffer);
             let size = bytes_per_row * height;
 
             use objc2_core_video::{CVPixelBufferLockBaseAddress, CVPixelBufferUnlockBaseAddress};
@@ -56,7 +56,7 @@ define_class!(
             if lock_result != 0 { return; }
 
 
-            let base_address = unsafe{CVPixelBufferGetBaseAddress(&pixel_buffer) as *const u8};
+            let base_address = CVPixelBufferGetBaseAddress(&pixel_buffer) as *const u8;
             if base_address.is_null() || size > isize::MAX as usize {
                 unsafe { CVPixelBufferUnlockBaseAddress(&pixel_buffer, CVPixelBufferLockFlags(0)); }
                 return;
