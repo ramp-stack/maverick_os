@@ -5,8 +5,6 @@ edition = "2024"
 
 [dependencies]
 bitcode = "0.6.9"
-futures-util = "0.3.32"
 log = "0.4.29"
 maverick_os = {path = "../"}
 serde = "1.0.228"
-tokio = "1.52.3"

@@ -901,11 +901,9 @@ name = "demo"
 version = "0.1.0"
 dependencies = [
  "bitcode",
- "futures-util",
  "log",
  "maverick_os",
  "serde",
- "tokio",
 ]
 
 [[package]]
