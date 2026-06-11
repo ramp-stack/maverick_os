@@ -1,27 +1,57 @@
 use maverick_os::{Application, Context, start};
-use maverick_os::air::{self, Contract, Reactants, Reactant, Instance, Name, Service};
+use maverick_os::air::{self, Contract, Reactants, Reactant, Instance, Name, Service, Services, Update};
 use maverick_os::air::names::Id;
 use maverick_os::window::{self, Input, KeyEvent, Renderer, Handle};
 //use maverick_os::runtime::{Services, Service, async_trait};
 
 use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
-use std::convert::Infallible;
 use std::time::Duration;
 
 use serde::{Serialize, Deserialize};
+use tokio::select;
+use futures_util::stream::FuturesUnordered;
+use futures_util::StreamExt;
+
+
+pub struct Listner<C: Contract>(BTreeMap<Id, Instance<C>>);
+impl<C: Contract> Listner<C> {
+    pub async fn listen(&mut self, ctx: &mut air::Context) -> (&mut Instance<C>, Option<Update>) {
+        if self.0.is_empty() && let Some(room) = ctx.listen().await.as_contract::<C>() {
+            (self.0.entry(room.id()).or_insert(room), None)
+        } else { loop {
+            let mut pending = self.0.values_mut().map(|instance| async {
+                (instance.listen_confirmed().await, instance.id())
+            }).collect::<FuturesUnordered<_>>();
+
+            select! { biased;
+                instance = ctx.listen() => {
+                    drop(pending);
+                    if let Some(room) = instance.as_contract::<C>() {
+                        break (self.0.entry(room.id()).or_insert(room), None)
+                    }
+                },
+                Some((update, id)) = pending.next() => {
+                    drop(pending);
+                    break (self.0.get_mut(&id).unwrap(), Some(update));
+                },
+            }
+        }}
+    }
+}
+impl<C: Contract> Default for Listner<C> {fn default() -> Self {Self(BTreeMap::default())}}
 
 #[derive(Default)]
-pub struct ChatBot(u32, BTreeMap<Id, Instance<Room>>);
+pub struct ChatBot(Listner<Room>);
 impl Service for ChatBot {
     async fn run(&mut self, ctx: &mut air::Context) -> Option<Duration> {
-      //match ctx.listen::<Room>() {
-      //    Update::Instance(room) => self.1
-      //}
-      //ctx.list(&ChatRoom::id()).into_iter().for_each(|id| {
-      //    ctx.send(id, "/messages", SendMessage("This is an automated message: 'Keep It Quiet!'".to_string())).unwrap();
-      //});
-        Some(Duration::from_secs(5))
+        if let (room, Some(update)) = self.0.listen(ctx).await
+        && let Some(msg_idx) = update.as_reactant::<_, SendMessage>() {
+            let message = room.confirmed().unwrap().messages.get(msg_idx).unwrap().clone();
+            if !message.body.contains("ChatBot Quoting") {
+                room.apply(SendMessage(format!("ChatBot Quoting {} Saying: \"{}\"", message.author, message.body)));
+            }
+        }
+        Some(Duration::from_secs(0))
     }
 }
 
@@ -64,7 +94,7 @@ impl Reactant<Room> for SendMessage {
 
     fn apply(self, room: &mut Room, signer: Name, timestamp: u64) -> Self::Result {
         room.messages.push(Message{author: signer, timestamp, body: self.0});
-        room.messages.len()
+        room.messages.len()-1
     }
 }
 
@@ -83,18 +113,20 @@ impl Application for DemoApplication {
     type Renderer<'surface> = DemoRenderer<'surface>;
 
     fn new(ctx: &mut Context) -> Self {
+      //ctx.air.register::<Room>();
+      //std::thread::sleep(Duration::from_secs(1));
+      //let room = ctx.air.list::<Room>().pop().unwrap();
         let room = ctx.air.create::<Room>("The Room".to_string());
         DemoApplication(room)
     }
-    fn on_input(&mut self, ctx: &mut Context, input: Input) {
+    fn on_input(&mut self, _ctx: &mut Context, input: Input) {
         if let Input::Keyboard{event: KeyEvent{text: Some(text), ..}, ..} = input {
             self.0.apply(SendMessage(text.to_string()));
+            log::info!("\n\n\n\n\n\n\n\n\n\n\n\n\nRoom: {:#?}", self.0.pending());
         }
-        log::info!("\n\n\n\n\n\n\n\n\n\n\n\n\nRoom: {:#?}", self.0.pending());
-        //log::info!("CRoom: {:#?}", self.0.confirmed());
     }
     
-    //fn services() -> Services {vec![Box::new(ChatBot)]}
+    fn services() -> Services {Services::default().add(ChatBot::default())}
 }
 
 start!(DemoApplication);
