@@ -1,26 +1,30 @@
 use maverick_os::{Application, Context, start};
-use maverick_os::air::{self, Contract, Reactants, Reactant, Instance, Name, Service, Services, Listner};
+use maverick_os::air::{self, Contract, Reactants, Reactant, Instance, Name, Service, Services, Listner, Metadata, Secret};
 use maverick_os::air::names::Id;
 use maverick_os::window::{self, Input, KeyEvent, Renderer, Handle};
-
-use std::time::Duration;
 
 use serde::{Serialize, Deserialize};
 
 #[derive(Default)]
-pub struct ChatBot(Listner<Room>);
-impl Service for ChatBot {
-    async fn run(&mut self, ctx: &mut air::Context) -> Option<Duration> {
-        if let (room, Some(update)) = self.0.listen(ctx).await
-        && let Some(msg_idx) = update.as_reactant::<_, SendMessage>() {
-            let message = room.confirmed().unwrap().messages.get(msg_idx).unwrap().clone();
-            if !message.body.contains("ChatBot Quoting") {
-                room.apply(SendMessage(format!("ChatBot Quoting {} Saying: \"{}\"", message.author, message.body)));
+    pub struct ChatBot(Listner<Room>);
+    impl Service for ChatBot {
+        fn id() -> Id {Id::hash("CHATBOT")}
+        async fn new(_ctx: &mut air::Context, _secret: Secret) -> Self {ChatBot(Listner::default())}
+        async fn run(&mut self, ctx: &mut air::Context) {
+            if let (room, Some(index)) = self.0.listen::<SendMessage>(ctx).await {
+                let message = room.confirmed().unwrap().messages.get(index).unwrap().clone();
+                if message.author == ctx.me() && !message.body.contains("ChatBot") {
+                    room.apply(SendMessage(format!("ChatBot Replying to \"{:.10}...\": I totally agree", message.body)));
+                }
             }
         }
-        Some(Duration::from_secs(0))
+        async fn shutdown(self, ctx: &mut air::Context) {
+            for mut room in ctx.list::<Room>() {
+                room.apply(SendMessage("ChatBot Shutting Down".to_string())).wait_confirmed().await;
+            }
+            println!("CHATBOT SHUTDOWN");
+        }
     }
-}
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct Message {
@@ -39,9 +43,9 @@ impl Contract for Room {
     type Init = String;
     fn id() -> Id {Id::hash("Room")}
 
-    fn init(init: Self::Init, signer: Name, _timestamp: u64) -> Self {
+    fn init(init: Self::Init, metadata: Metadata) -> Self {
         Room {
-            author: signer,
+            author: metadata.signer,
             name: init, 
             messages: Vec::new()
         }
@@ -59,8 +63,8 @@ impl Reactant<Room> for SendMessage {
 
     fn id() -> Id {Id::hash("SendMessage")}
 
-    fn apply(self, room: &mut Room, signer: Name, timestamp: u64) -> Self::Result {
-        room.messages.push(Message{author: signer, timestamp, body: self.0});
+    fn apply(self, room: &mut Room, metadata: Metadata) -> Self::Result {
+        room.messages.push(Message{author: metadata.signer, timestamp: metadata.timestamp, body: self.0});
         room.messages.len()-1
     }
 }
@@ -93,7 +97,7 @@ impl Application for DemoApplication {
         }
     }
     
-    fn services() -> Services {Services::default().add(ChatBot::default())}
+    fn services() -> Services {Services::default().add::<ChatBot>()}
 }
 
 start!(DemoApplication);
