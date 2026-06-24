@@ -61,9 +61,7 @@ impl<A: Application> MaverickOS<A> {
                 secret
             }
         };
-        let (runtime, mut air) = Air::start(secret);
-        runtime.start_services(A::services(), &mut air);
-        runtime.start_services(A::background_services(), &mut air);
+        let (runtime, air) = Air::start(secret, A::services());
         
         let mut context = Context{
             hardware,

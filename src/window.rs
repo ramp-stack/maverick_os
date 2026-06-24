@@ -119,7 +119,7 @@ impl<A: Application> ApplicationHandler for Window<A> {
 
     fn suspended(&mut self, _event_loop: &ActiveEventLoop) {
         if let Some(maverick) = self.0.as_mut() {
-            maverick.runtime.pause();
+            //maverick.runtime.pause();
             maverick.surface.suspend();
         }
     }
@@ -132,7 +132,7 @@ impl<A: Application> ApplicationHandler for Window<A> {
 
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {match &mut self.0 {
         Some(maverick) => {
-            maverick.runtime.resume();
+            //maverick.runtime.resume();
             maverick.surface.resurface(&maverick.context.window);
         },
         none => {
@@ -169,8 +169,8 @@ impl<A: Application> ApplicationHandler for Window<A> {
                     return;
                 },
                 WindowEvent::Occluded(true) => {
-                    #[cfg(target_os = "ios")]
-                    maverick.runtime.pause();
+                    //#[cfg(target_os = "ios")]
+                    //maverick.runtime.pause();
                     return;
                 },
                 WindowEvent::Resized(size) => {
