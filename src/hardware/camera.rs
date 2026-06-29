@@ -24,11 +24,12 @@ use std::sync::Arc;
 #[derive(Clone, Default, Debug)]
 pub struct Handle(Arc<bool>);
 
-pub struct Camera(OsCamera, Handle);
+#[derive(Clone)]
+pub struct Camera(OsCamera, Arc<Handle>);
 impl Camera {
-    pub fn new() -> Self {Camera(OsCamera::new(), Handle::default())}
+    pub fn new() -> Self {Camera(OsCamera::new(), Arc::new(Handle::default()))}
 
-    pub fn start(&mut self) -> Handle {self.1.clone()}
+    pub fn start(&self) -> Handle {(*self.1).clone()}
 
     pub(crate) fn tick(&mut self) -> Option<RgbaImage> {
         let count = Arc::strong_count(&self.1.0);

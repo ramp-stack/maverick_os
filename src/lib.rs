@@ -18,13 +18,14 @@ use rusqlite::OptionalExtension;
 pub trait Application: 'static {
     type Renderer<'surface>: Renderer<'surface, Application=Self>;
 
-    fn new(context: &mut Context) -> Self;
-    fn on_input(&mut self, context: &mut Context, input: Input);
+    fn new(context: &Context) -> Self;
+    fn on_input(&mut self, context: &Context, input: Input);
 
     fn background_services() -> Services {Services::default()}
     fn services() -> Services {Services::default()}
 }
 
+#[derive(Clone)]
 pub struct Context {
     pub hardware: hardware::Context,
     pub window: window::Context,
@@ -63,12 +64,12 @@ impl<A: Application> MaverickOS<A> {
         };
         let (runtime, air) = Air::start(secret, A::services());
         
-        let mut context = Context{
+        let context = Context{
             hardware,
             window,
             air
         };
-        let app = A::new(&mut context);
+        let app = A::new(&context);
         MaverickOS{
             context,
             surface,

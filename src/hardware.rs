@@ -21,6 +21,7 @@ pub use logger::Logger;
 
 use crate::window::Input;
 
+#[derive(Clone)]
 pub struct Context {
     pub camera: Camera,
     pub clipboard: Clipboard,
@@ -66,7 +67,7 @@ impl Context {
             events.push(Input::CameraFrame(frame));
         }
         if let Some(photo) = self.photo_picker.tick() {
-            events.push(Input::Photo(photo));
+            events.push(Input::SelectedPhoto(photo));
         }
         events
     }

@@ -21,6 +21,7 @@ use windows::OsPhotoPicker;
 use std::sync::{Arc, Mutex};
 use image::RgbaImage;
 
+#[derive(Clone)]
 pub struct PhotoPicker {
     pub photo: Arc<Mutex<Option<RgbaImage>>>,
 }

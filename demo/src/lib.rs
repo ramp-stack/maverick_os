@@ -1,7 +1,7 @@
 use maverick_os::{Application, Context, start};
-use maverick_os::air::{self, Contract, Reactants, Reactant, Instance, Name, Service, Services, Listner, Metadata, Secret};
+use maverick_os::air::{self, Contract, Reactants, Reactant, Instance, Name, Service, Services, Listner, Metadata, Secret, Lock};
 use maverick_os::air::names::Id;
-use maverick_os::window::{self, Input, KeyEvent, Renderer, Handle};
+use maverick_os::window::{self, Input, Key, Renderer, Handle, DeviceInput, KeyboardState};
 
 use serde::{Serialize, Deserialize};
 
@@ -20,7 +20,7 @@ use serde::{Serialize, Deserialize};
         }
         async fn shutdown(self, ctx: &mut air::Context) {
             for mut room in ctx.list::<Room>() {
-                room.apply(SendMessage("ChatBot Shutting Down".to_string())).wait_confirmed().await;
+                room.apply(SendMessage("ChatBot Shutting Down".to_string())).await;
             }
             println!("CHATBOT SHUTDOWN");
         }
@@ -83,21 +83,18 @@ pub struct DemoApplication(Instance<Room>);
 impl Application for DemoApplication {
     type Renderer<'surface> = DemoRenderer<'surface>;
 
-    fn new(ctx: &mut Context) -> Self {
-      //ctx.air.register::<Room>();
-      //std::thread::sleep(Duration::from_secs(1));
-      //let room = ctx.air.list::<Room>().pop().unwrap();
+    fn new(ctx: &Context) -> Self {
         let room = ctx.air.create::<Room>("The Room".to_string());
         DemoApplication(room)
     }
-    fn on_input(&mut self, _ctx: &mut Context, input: Input) {
-        if let Input::Keyboard{event: KeyEvent{text: Some(text), ..}, ..} = input {
+    fn on_input(&mut self, _ctx: &Context, input: Input) {
+        if let Input::Device(_, DeviceInput::Keyboard(Key::Character(text), KeyboardState::Pressed, _)) = input {
             self.0.apply(SendMessage(text.to_string()));
-            log::info!("\n\n\n\n\n\n\n\n\n\n\n\n\nRoom: {:#?}", self.0.pending());
+            log::info!("\n\n\n\n\n\n\n\n\n\n\n\n\nRoom: {:?}, {:#?}", self.0.id(), self.0.pending().messages.iter().map(|m| m.body.clone()).collect::<Vec<_>>());
         }
     }
     
-    fn services() -> Services {Services::default().add::<ChatBot>()}
+    fn services() -> Services {Services::default().add::<Lock<ChatBot>>()}
 }
 
 start!(DemoApplication);

@@ -4,7 +4,11 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+bdk_esplora = "0.22.2"
+bdk_wallet = "3.1.0"
 bitcode = "0.6.9"
+bitcoin = {version="0.32.100", features=["serde"]}
 log = "0.4.29"
 maverick_os = {path = "../"}
 serde = "1.0.228"
+tokio = "1.52.3"
