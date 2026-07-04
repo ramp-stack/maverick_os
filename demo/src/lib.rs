@@ -1,54 +1,88 @@
 use maverick_os::{Application, Context, start};
-use maverick_os::air::{self, Contract, Reactants, Reactant, Instance, Name, Service, Services, Metadata, Secret, Lock, Instances};
+use maverick_os::air::{self, Contract, Reactants, Reactant, Instance, Name, Service, Services, Metadata, Secret, Lock, Instances, Update};
 use maverick_os::air::names::Id;
 use maverick_os::window::{self, Input, Key, Renderer, Handle, DeviceInput, KeyboardState};
 
 use serde::{Serialize, Deserialize};
 
-pub struct ChatBot(Instances);
+pub struct ChatBot(Instances<Room>);
 impl Service for ChatBot {
     fn id() -> Id {Id::hash("CHATBOT")}
-    async fn new(ctx: &mut air::Context, _secret: Secret) -> Self {ChatBot(ctx.instances())}
-    async fn run(&mut self, ctx: &mut air::Context) {
-        let mut join_set = tokio::task::JoinSet::new();
-        for mut room in self.0.list::<Room>() {
-            join_set.spawn(async {loop {
-                if let Some(message) = room.listen_confirmed().await.downcast::<SendMessage>() {
-                    break (message, room);
-                }
-            }});
+    async fn new(ctx: &mut air::Context, _secret: Secret) -> Self {
+        let mut instances = ctx.instances();
+        for room in instances.values_mut() {
+            room.apply(SendMessage("ChatBot has Joined".to_string()));
         }
-
-        loop { tokio::select!{
-            instance = self.0.listen() => {
-                if let Some(mut room) = instance.downcast::<Room>() {
-                    join_set.spawn(async {loop {
-                        if let Some(message) = room.listen_confirmed().await.downcast::<SendMessage>() {
-                            break (message, room);
-                        }
-                    }});
+        ChatBot(instances)
+    }
+    async fn run(&mut self, ctx: &mut air::Context) {
+        match self.0.listen().await {
+            (instance, Update::New) => {
+                instance.apply(SendMessage("ChatBot has Joined".to_string()));
+            },
+            (instance, Update::Confirmed(output)) => {
+                if let Some(index) = output.downcast::<SendMessage>()
+                && let Some(message) = instance.load_confirmed().messages.get(index)
+                && message.author == ctx.me()
+                && !message.body.contains("ChatBot") {
+                    instance.apply(SendMessage(format!("ChatBot Replying to \"{:.10}...\": I totally agree", message.body)));
                 }
             },
-            Some(Ok((index, mut room))) = join_set.join_next() => {
-                let message = room.confirmed().messages.get(index).unwrap().clone();
-                if message.author == ctx.me() && !message.body.contains("ChatBot") {
-                    room.apply(SendMessage(format!("ChatBot Replying to \"{:.10}...\": I totally agree", message.body)));
-                }
-                join_set.spawn(async {loop {
-                    if let Some(message) = room.listen_confirmed().await.downcast::<SendMessage>() {
-                        break (message, room);
-                    }
-                }});
-            }
-        }}
+            _ => {}
+        }
     }
-    async fn shutdown(self, ctx: &mut air::Context) {
-        for mut room in ctx.list::<Room>() {
+
+    async fn shutdown(mut self, ctx: &mut air::Context) {
+        for room in self.0.values_mut() {
             room.apply(SendMessage("ChatBot Shutting Down".to_string())).confirmed().await;
         }
-        println!("CHATBOT SHUTDOWN");
     }
 }
+
+//  pub struct ChatBot(Instances);
+//  impl Service for ChatBot {
+//      fn id() -> Id {Id::hash("CHATBOT")}
+//      async fn new(ctx: &mut air::Context, _secret: Secret) -> Self {ChatBot(ctx.instances())}
+//      async fn run(&mut self, ctx: &mut air::Context) {
+//          let mut join_set = tokio::task::JoinSet::new();
+//          for mut room in self.0.list::<Room>() {
+//              join_set.spawn(async {loop {
+//                  if let Some(message) = room.listen_confirmed().await.downcast::<SendMessage>() {
+//                      break (message, room);
+//                  }
+//              }});
+//          }
+
+//          loop { tokio::select!{
+//              instance = self.0.listen() => {
+//                  if let Some(mut room) = instance.downcast::<Room>() {
+//                      join_set.spawn(async {loop {
+//                          if let Some(message) = room.listen_confirmed().await.downcast::<SendMessage>() {
+//                              break (message, room);
+//                          }
+//                      }});
+//                  }
+//              },
+//              Some(Ok((index, mut room))) = join_set.join_next() => {
+//                  let message = room.confirmed().messages.get(index).unwrap().clone();
+//                  if message.author == ctx.me() && !message.body.contains("ChatBot") {
+//                      room.apply(SendMessage(format!("ChatBot Replying to \"{:.10}...\": I totally agree", message.body)));
+//                  }
+//                  join_set.spawn(async {loop {
+//                      if let Some(message) = room.listen_confirmed().await.downcast::<SendMessage>() {
+//                          break (message, room);
+//                      }
+//                  }});
+//              }
+//          }}
+//      }
+//      async fn shutdown(self, ctx: &mut air::Context) {
+//          for mut room in ctx.list::<Room>() {
+//              room.apply(SendMessage("ChatBot Shutting Down".to_string())).confirmed().await;
+//          }
+//          println!("CHATBOT SHUTDOWN");
+//      }
+//  }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct Message {
@@ -116,7 +150,7 @@ impl Application for DemoApplication {
     fn on_input(&mut self, _ctx: &Context, input: Input) {
         if let Input::Device(_, DeviceInput::Keyboard(Key::Character(text), KeyboardState::Pressed, _)) = input {
             self.0.apply(SendMessage(text.to_string()));
-            let vec = self.0.pending().messages.iter().map(|m| m.body.clone()).collect::<Vec<_>>();
+            let vec = self.0.load_pending().messages.iter().map(|m| m.body.clone()).collect::<Vec<_>>();
             log::info!(
                 "\n\n\nRoom: {:?}, {:#?}",
                 self.0.id(),
