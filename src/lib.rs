@@ -40,7 +40,12 @@ pub struct MaverickOS<A: Application> {
 }
 
 impl<A: Application> MaverickOS<A> {
-    pub fn start(#[cfg(target_os = "android")] app: AndroidApp) {Window::<A>::start()}
+    #[cfg(target_os = "android")] 
+    pub fn start(app: AndroidApp) {Window::<A>::start(app)}
+
+    #[cfg(not(target_os = "android"))] 
+    pub fn start() {Window::<A>::start()}
+
     fn new(window: window::Context, surface: Surface<A>) -> Self {
         let hardware = hardware::Context::new();
         let conn = rusqlite::Connection::open("./SECRET.db").unwrap();

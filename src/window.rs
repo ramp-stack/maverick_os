@@ -106,7 +106,7 @@ pub struct Modifiers {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Key {
-    Escape, Enter, Tab, Space,
+    Escape, Enter, Tab,
     Up, Down, Left, Right,
     Delete, Backspace, Home, End,
     Shift, Control, Alt, SuperMeta,
@@ -234,7 +234,7 @@ impl<A: Application> ApplicationHandler for Window<A> {
                 WinitKey::Named(named) => match named {
                     WinitNamedKey::Enter => Some(Key::Enter),
                     WinitNamedKey::Tab => Some(Key::Tab),
-                    WinitNamedKey::Space => Some(Key::Space),
+                    WinitNamedKey::Space => Some(Key::Character(' ')),
                     WinitNamedKey::Escape => Some(Key::Escape),
                     WinitNamedKey::ArrowUp => Some(Key::Up),
                     WinitNamedKey::ArrowDown => Some(Key::Down),

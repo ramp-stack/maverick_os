@@ -1,30 +1,54 @@
 use maverick_os::{Application, Context, start};
-use maverick_os::air::{self, Contract, Reactants, Reactant, Instance, Name, Service, Services, Listner, Metadata, Secret, Lock};
+use maverick_os::air::{self, Contract, Reactants, Reactant, Instance, Name, Service, Services, Metadata, Secret, Lock, Instances};
 use maverick_os::air::names::Id;
 use maverick_os::window::{self, Input, Key, Renderer, Handle, DeviceInput, KeyboardState};
 
 use serde::{Serialize, Deserialize};
 
-#[derive(Default)]
-    pub struct ChatBot(Listner<Room>);
-    impl Service for ChatBot {
-        fn id() -> Id {Id::hash("CHATBOT")}
-        async fn new(_ctx: &mut air::Context, _secret: Secret) -> Self {ChatBot(Listner::default())}
-        async fn run(&mut self, ctx: &mut air::Context) {
-            if let (room, Some(index)) = self.0.listen::<SendMessage>(ctx).await {
-                let message = room.confirmed().unwrap().messages.get(index).unwrap().clone();
+pub struct ChatBot(Instances);
+impl Service for ChatBot {
+    fn id() -> Id {Id::hash("CHATBOT")}
+    async fn new(ctx: &mut air::Context, _secret: Secret) -> Self {ChatBot(ctx.instances())}
+    async fn run(&mut self, ctx: &mut air::Context) {
+        let mut join_set = tokio::task::JoinSet::new();
+        for mut room in self.0.list::<Room>() {
+            join_set.spawn(async {loop {
+                if let Some(message) = room.listen_confirmed().await.downcast::<SendMessage>() {
+                    break (message, room);
+                }
+            }});
+        }
+
+        loop { tokio::select!{
+            instance = self.0.listen() => {
+                if let Some(mut room) = instance.downcast::<Room>() {
+                    join_set.spawn(async {loop {
+                        if let Some(message) = room.listen_confirmed().await.downcast::<SendMessage>() {
+                            break (message, room);
+                        }
+                    }});
+                }
+            },
+            Some(Ok((index, mut room))) = join_set.join_next() => {
+                let message = room.confirmed().messages.get(index).unwrap().clone();
                 if message.author == ctx.me() && !message.body.contains("ChatBot") {
                     room.apply(SendMessage(format!("ChatBot Replying to \"{:.10}...\": I totally agree", message.body)));
                 }
+                join_set.spawn(async {loop {
+                    if let Some(message) = room.listen_confirmed().await.downcast::<SendMessage>() {
+                        break (message, room);
+                    }
+                }});
             }
-        }
-        async fn shutdown(self, ctx: &mut air::Context) {
-            for mut room in ctx.list::<Room>() {
-                room.apply(SendMessage("ChatBot Shutting Down".to_string())).await;
-            }
-            println!("CHATBOT SHUTDOWN");
-        }
+        }}
     }
+    async fn shutdown(self, ctx: &mut air::Context) {
+        for mut room in ctx.list::<Room>() {
+            room.apply(SendMessage("ChatBot Shutting Down".to_string())).confirmed().await;
+        }
+        println!("CHATBOT SHUTDOWN");
+    }
+}
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct Message {
@@ -59,11 +83,11 @@ impl Contract for Room {
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct SendMessage(String);
 impl Reactant<Room> for SendMessage {
-    type Result = usize;
+    type Output = usize;
 
     fn id() -> Id {Id::hash("SendMessage")}
 
-    fn apply(self, room: &mut Room, metadata: Metadata) -> Self::Result {
+    fn apply(self, room: &mut Room, metadata: Metadata) -> Self::Output {
         room.messages.push(Message{author: metadata.signer, timestamp: metadata.timestamp, body: self.0});
         room.messages.len()-1
     }
@@ -84,13 +108,20 @@ impl Application for DemoApplication {
     type Renderer<'surface> = DemoRenderer<'surface>;
 
     fn new(ctx: &Context) -> Self {
+        println!("Room CID: {:?}", Room::id());
+        println!("SendMessage RID: {:?}", SendMessage::id());
         let room = ctx.air.create::<Room>("The Room".to_string());
         DemoApplication(room)
     }
     fn on_input(&mut self, _ctx: &Context, input: Input) {
         if let Input::Device(_, DeviceInput::Keyboard(Key::Character(text), KeyboardState::Pressed, _)) = input {
             self.0.apply(SendMessage(text.to_string()));
-            log::info!("\n\n\n\n\n\n\n\n\n\n\n\n\nRoom: {:?}, {:#?}", self.0.id(), self.0.pending().messages.iter().map(|m| m.body.clone()).collect::<Vec<_>>());
+            let vec = self.0.pending().messages.iter().map(|m| m.body.clone()).collect::<Vec<_>>();
+            log::info!(
+                "\n\n\nRoom: {:?}, {:#?}",
+                self.0.id(),
+                &vec[vec.len().saturating_sub(20)..]
+            );
         }
     }
     
