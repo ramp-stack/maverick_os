@@ -20,17 +20,9 @@ pub struct Clipboard(
 );
 
 impl Clipboard {
-    pub(crate) fn new(
-        #[cfg(target_os = "android")]
-        vm: &jni::JavaVM
-    ) -> Self {
+    pub(crate) fn new() -> Self {
         Self(
-            #[cfg(target_os = "ios")]
-            OsClipboard::new(),
-            #[cfg(target_os = "macos")]
-            OsClipboard::new(),
-            #[cfg(target_os = "android")]
-            OsClipboard::new(vm)
+            OsClipboard::new()
         )
     }
 

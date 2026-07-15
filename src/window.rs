@@ -97,7 +97,13 @@ pub(crate) struct Window<A: Application>(Option<MaverickOS<A>>);
 impl<A: Application> Window<A> {
     #[cfg(target_os = "android")]
     pub fn start(app: AndroidApp) {
-        EventLoop::builder().with_android_app(app).build().unwrap().run_app(&mut Self(None)).unwrap();
+        let event_loop = EventLoop::builder()
+            .with_android_app(app)
+            .build()
+            .expect("Failed to create winit EventLoop on Android");
+
+        event_loop.run_app(&mut Self(None)).expect("Event loop run failed");
+        // EventLoop::builder().with_android_app(app).build().unwrap().run_app(&mut Self(None)).unwrap();
     }
 
     #[cfg(target_arch = "wasm32")]

@@ -1,3 +1,8 @@
+#[cfg(target_os = "android")]
+mod android;
+#[cfg(target_os = "android")]
+use android::OsPhotoPicker;
+
 #[cfg(target_os = "ios")]
 mod ios;
 #[cfg(target_os = "ios")]
@@ -21,11 +26,15 @@ use windows::OsPhotoPicker;
 use std::sync::{Arc, Mutex};
 use image::RgbaImage;
 
+#[cfg(target_os = "android")]
+use jni::objects::GlobalRef;
+
 pub struct PhotoPicker {
     pub photo: Arc<Mutex<Option<RgbaImage>>>,
 }
 
 impl PhotoPicker {
+    //TODO i think this method is deprecated and not used anywhere
     pub fn new() -> Self {
         Self {
             photo: Arc::new(Mutex::new(None)),
@@ -34,7 +43,8 @@ impl PhotoPicker {
 
     pub fn open(&self) {
         let photo_ref = self.photo.clone();
-        OsPhotoPicker::open(move |rgba| {
+        let picker = OsPhotoPicker::new();
+        picker.open(move |rgba| {
             *photo_ref.lock().unwrap() = rgba;
         });
     }

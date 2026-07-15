@@ -37,6 +37,8 @@ use jni::{
     JavaVM,
 };
 #[cfg(target_os = "android")]
+use std::sync::Arc;
+#[cfg(target_os = "android")]
 use std::sync::OnceLock;
 
 #[cfg(target_os = "ios")]
@@ -105,6 +107,7 @@ impl ApplicationSupport {
         }
         #[cfg(target_os = "android")]
         {
+            println!("getting app support dir for android");
             Self::get_android()
         }
         #[cfg(not(any(target_os = "ios", target_os = "macos", target_os = "linux", target_os = "windows", target_os = "android")))]
@@ -225,6 +228,7 @@ impl ApplicationSupport {
     /// 2. `$HOME/.local/share/org.ramp.orange`
     #[cfg(target_os = "linux")]
     fn get_linux() -> Option<PathBuf> {
+        //TODO make dynamic?
         let app_name = "org.ramp.orange";
 
         if let Ok(xdg_data_home) = env::var("XDG_DATA_HOME") {
@@ -255,6 +259,7 @@ impl ApplicationSupport {
     /// 2. `%USERPROFILE%\AppData\Roaming\org.ramp.orange`
     #[cfg(target_os = "windows")]
     fn get_windows() -> Option<PathBuf> {
+        //TODO make dynamic?
         let app_name = "org.ramp.orange";
 
         if let Ok(appdata) = env::var("APPDATA") {
@@ -286,10 +291,21 @@ impl ApplicationSupport {
     /// The path returned is typically `/data/data/<package_name>/files`
     #[cfg(target_os = "android")]
     fn get_android() -> Option<PathBuf> {
-        let vm = JAVA_VM.get()?;
+        println!("getting java vm");
+        let vm = match unsafe {
+            JavaVM::from_raw(ndk_context::android_context().vm().cast())
+        } {
+            Ok(vm) => Arc::new(vm),
+            Err(e) => {
+                log::error!("Failed to get JavaVM: {}", e);
+                panic!("Critical: JavaVM unavailable for AppSupport");
+            }
+        };
+        println!("getting env");
         let mut env = vm.attach_current_thread().ok()?;
-        
-        Self::get_android_files_dir(&mut env, "org.ramp.orange")
+        println!("get android files: {:?}", Self::get_android_files_dir(&mut env, "com.demo.ramp"));
+        //TODO make dynamic, obtain through context?
+        Self::get_android_files_dir(&mut env, "com.demo.ramp")
     }
 
     /// Helper function to get Android files directory via JNI

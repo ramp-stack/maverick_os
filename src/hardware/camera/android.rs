@@ -1,596 +1,361 @@
-use image::{Rgba, RgbaImage};
-use jni::objects::JClass;
-use jni::sys::jobject;
-use jni::{
-    objects::{GlobalRef, JByteBuffer, JObject, JObjectArray, JString, JValue},
-    JNIEnv, JavaVM,
-};
+use image::RgbaImage;
+use jni::objects::{GlobalRef, JByteBuffer, JClass, JObject, JObjectArray, JString, JValue};
+use jni::{JNIEnv, JavaVM};
+use jni::sys::{jint, jlong, jobject};
 use ndk_context;
-
-use crate::hardware::{CameraError, CameraSettings};
+use crate::hardware::android_util::JNIUtil;
 
 use std::error::Error;
-use std::thread;
-use std::time::Duration;
-use std::fs;
-use std::path::Path;
 use std::sync::{Arc, Mutex};
 
-#[derive(Clone, Debug)]
 pub struct OsCamera {
     java_vm: Arc<JavaVM>,
-    app_context: GlobalRef,
-    camera_manager: GlobalRef,
-    camera_helper_class_loader: Option<GlobalRef>,
-    camera_helper_instance: Option<GlobalRef>,
-    settings: Option<Arc<Mutex<CameraSettings>>>,
+    app_context: Option<GlobalRef>,
+    camera_helper: Option<GlobalRef>,
+    latest_frame: Arc<Mutex<Option<RgbaImage>>>,
+    permission_requested: bool,
+    camera_opened: bool,
 }
 
 impl OsCamera {
-    pub fn new_standard() -> Result<Self, CameraError> {
-        Self::new_internal(false)
-    }
+pub fn new() -> Self {
+    println!("constructing new OsCamera");
+    // Try to get JavaVM
+    let java_vm = match unsafe {
+        JavaVM::from_raw(ndk_context::android_context().vm().cast())
+    } {
+        Ok(vm) => std::sync::Arc::new(vm),
+        Err(e) => {
+            log::error!("Failed to get JavaVM: {}", e);
+            // Return a non-functional camera object
+            return Self {
+                java_vm: std::sync::Arc::new(unsafe {
+                    JavaVM::from_raw(ndk_context::android_context().vm().cast())
+                        .expect("Critical: JavaVM unavailable for AndroidCamera")
+                }),
+                app_context: None,
+                camera_helper: None,
+                latest_frame: Arc::new(Mutex::new(None)),
+                permission_requested: false,
+                camera_opened: false,
+            };
+        }
+    };
 
-    pub fn new_custom() -> Result<Self, CameraError> {
-        Self::new_internal(true)
-    }
-
-    fn new_internal(custom: bool) -> Result<Self, CameraError> {
-        let jvm = Arc::new(unsafe { 
-            JavaVM::from_raw(ndk_context::android_context().vm().cast())
-                .map_err(|_| CameraError::InitializationFailed)?
-        });
-
-        let (global_context, global_camera_manager) = {
-            let mut env = jvm.attach_current_thread()
-                .map_err(|_| CameraError::InitializationFailed)?;
-
-            let ctx_ptr = ndk_context::android_context().context();
-            if ctx_ptr.is_null() {
-                return Err(CameraError::InitializationFailed);
+    // Try to get Context
+    println!("getting app context");
+    let app_context = {
+        let mut env = match java_vm.attach_current_thread() {
+            Ok(env) => env,
+            Err(e) => {
+                log::error!("Failed to attach to JVM: {}", e);
+                return Self {
+                    java_vm: java_vm.clone(),
+                    app_context: None,
+                    camera_helper: None,
+                    latest_frame: Arc::new(Mutex::new(None)),
+                    permission_requested: false,
+                    camera_opened: false,
+                };
             }
-
-            let context_obj = unsafe { JObject::from_raw(ctx_ptr as jobject) };
-            let global_context = env.new_global_ref(context_obj)
-                .map_err(|_| CameraError::InitializationFailed)?;
-            let global_camera_manager = Self::initialize_camera_manager_static(&mut env, &global_context)
-                .map_err(|_| CameraError::InitializationFailed)?;
-
-            (global_context, global_camera_manager)
         };
 
-        let settings = if custom {
-            Some(Arc::new(Mutex::new(CameraSettings::default())))
-        } else {
-            None
-        };
+        let ctx_ptr = ndk_context::android_context().context();
+        if ctx_ptr.is_null() {
+            log::error!("Android context is null");
+            return Self {
+                java_vm: java_vm.clone(),
+                app_context: None,
+                camera_helper: None,
+                latest_frame: Arc::new(Mutex::new(None)),
+                permission_requested: false,
+                camera_opened: false,
+            };
+        }
 
-        let mut camera = Self {
-            java_vm: jvm.clone(),
-            app_context: global_context,
-            camera_manager: global_camera_manager,
-            camera_helper_class_loader: None,
-            camera_helper_instance: None,
-            settings,
-        };
-        
-        camera.start().map_err(|_| CameraError::InitializationFailed)?;
-        
-        Ok(camera)
-    }
-
-    pub fn new() -> Result<Self, Box<dyn Error>> {
-        let jvm = Arc::new(unsafe { JavaVM::from_raw(ndk_context::android_context().vm().cast())? });
-
-        let (global_context, global_camera_manager) = {
-            let mut env = jvm.attach_current_thread()?;
-
-            let ctx_ptr = ndk_context::android_context().context();
-            if ctx_ptr.is_null() {
-                return Err("Failed to get Android context".into());
+        let context = unsafe { JObject::from_raw(ctx_ptr as jobject) };
+        match env.new_global_ref(context) {
+            Ok(global) => Some(global),
+            Err(e) => {
+                log::error!("Failed to create global ref to Context: {}", e);
+                None
             }
+        }
+    };
 
-            let context_obj = unsafe { JObject::from_raw(ctx_ptr as jobject) };
-            let global_context = env.new_global_ref(context_obj)?;
-            let global_camera_manager =
-                Self::initialize_camera_manager_static(&mut env, &global_context)?;
+    let mut camera = Self {
+        java_vm: java_vm.clone(),
+        app_context,
+        camera_helper: None,
+        latest_frame: Arc::new(Mutex::new(None)),
+        permission_requested: false,
+        camera_opened: false,
+    };
 
-            (global_context, global_camera_manager)
-        };
+    camera.start();
+    camera
+}
 
-        let mut camera = Self {
-            java_vm: jvm.clone(),
-            app_context: global_context,
-            camera_manager: global_camera_manager,
-            camera_helper_class_loader: None,
-            camera_helper_instance: None,
-            settings: None,
-        };
-        
-        camera.start().expect("Failed to start camera");
-        
-        Ok(camera)
-    }
-
-    // Add settings method
-    pub fn settings(&mut self) -> Option<Arc<Mutex<CameraSettings>>> {
-        self.settings.clone()
-    }
-
-    fn initialize_camera_manager_static(
-        env: &mut JNIEnv,
-        context: &GlobalRef,
-    ) -> Result<GlobalRef, Box<dyn Error>> {
-        let camera_service = env
-            .get_static_field("android/content/Context", "CAMERA_SERVICE", "Ljava/lang/String;")?
-            .l()?;
-
-        let manager = env
-            .call_method(
-                context.as_obj(),
-                "getSystemService",
-                "(Ljava/lang/String;)Ljava/lang/Object;",
-                &[JValue::Object(&camera_service)],
-            )?
-            .l()?;
-
-        Ok(env.new_global_ref(manager)?)
-    }
-
-    fn get_embedded_dex_bytes(&self) -> &'static [u8] {
-        static DEX_BYTES: &[u8] = include_bytes!(".././camera/android/classes.dex");
-        println!("Using embedded dex bytes: {} bytes", DEX_BYTES.len());
-        DEX_BYTES
-    }
-
-    // Alternative: Load from runtime file path (if you still need this option)
-    fn load_dex_from_file(&self, dex_file_path: &str) -> Result<Vec<u8>, Box<dyn Error>> {
-        println!("Loading dex file from: {}", dex_file_path);
-
-        if !Path::new(dex_file_path).exists() {
-            return Err(format!("Dex file not found: {}", dex_file_path).into());
+    // Public API
+    pub fn start(&mut self) {
+        if self.camera_opened {
+            return;
         }
 
-        let dex_bytes = fs::read(dex_file_path)?;
-        println!("Successfully loaded {} bytes from dex file", dex_bytes.len());
-
-        Ok(dex_bytes)
-    }
-
-    unsafe fn dex_loader_from_bytes(&mut self, dex_bytes: &[u8]) -> Result<(), Box<dyn Error>> {
-        let mut env = self.java_vm.attach_current_thread()?;
-        println!("Starting dex_loader_from_bytes with {} bytes", dex_bytes.len());
-
-        let byte_buffer = env.new_direct_byte_buffer(dex_bytes.as_ptr() as *mut u8, dex_bytes.len())?;
-        println!("Created direct ByteBuffer: {:?}", byte_buffer);
-
-        let context_class = env.get_object_class(&self.app_context)?;
-        let get_class_loader_method = env.get_method_id(context_class, "getClassLoader", "()Ljava/lang/ClassLoader;")?;
-        let parent_class_loader = env.call_method_unchecked(
-            &self.app_context,
-            get_class_loader_method,
-            jni::signature::ReturnType::Object,
-            &[],
-        )?.l()?;
-        println!("Parent class loader obtained: {:?}", parent_class_loader);
-
-        let in_memory_dex_class_loader_class = env.find_class("dalvik/system/InMemoryDexClassLoader")?;
-        println!("InMemoryDexClassLoader class found: {:?}", in_memory_dex_class_loader_class);
-
-        let constructor_id = env.get_method_id(
-            &in_memory_dex_class_loader_class,
-            "<init>",
-            "(Ljava/nio/ByteBuffer;Ljava/lang/ClassLoader;)V",
-        )?;
-        println!("InMemoryDexClassLoader constructor ID retrieved: {:?}", constructor_id);
-
-        let dex_class_loader_obj = env.new_object_unchecked(
-            in_memory_dex_class_loader_class,
-            constructor_id,
-            &[
-                JValue::Object(&byte_buffer).as_jni(),
-                JValue::Object(&parent_class_loader).as_jni(),
-            ],
-        )?;
-        println!("InMemoryDexClassLoader instantiated: {:?}", dex_class_loader_obj);
-
-        self.camera_helper_class_loader = Some(env.new_global_ref(dex_class_loader_obj)?);
-
-        let thread = env.call_static_method("java/lang/Thread", "currentThread", "()Ljava/lang/Thread;", &[])?.l()?;
-        env.call_method(
-            thread,
-            "setContextClassLoader",
-            "(Ljava/lang/ClassLoader;)V",
-            &[JValue::Object(self.camera_helper_class_loader.as_ref().unwrap().as_obj())],
-        )?;
-        println!("Context class loader set.");
-
-        let class_name = env.new_string("com.orangeme.camera.CameraHelper")?;
-        let camera_helper_class = env.call_method(
-            self.camera_helper_class_loader.as_ref().unwrap().as_obj(),
-            "loadClass",
-            "(Ljava/lang/String;)Ljava/lang/Class;",
-            &[JValue::Object(&class_name)],
-        )?.l()?;
-        println!("CameraHelper class loaded: {:?}", camera_helper_class);
-
-        let camera_helper_class_jclass = JClass::from(camera_helper_class);
-        let camera_helper_constructor = env.get_method_id(
-            &camera_helper_class_jclass,
-            "<init>",
-            "(Landroid/content/Context;)V",
-        )?;
-
-        let camera_helper_obj = env.new_object_unchecked(
-            camera_helper_class_jclass,
-            camera_helper_constructor,
-            &[JValue::Object(&self.app_context).as_jni()],
-        )?;
-        println!("CameraHelper instance created: {:?}", camera_helper_obj);
-
-        self.camera_helper_instance = Some(env.new_global_ref(camera_helper_obj)?);
-
-        Ok(())
-    }
-
-    unsafe fn load_embedded_dex(&mut self) -> Result<(), Box<dyn Error>> {
-        println!("Loading embedded dex bytes");
-        let dex_bytes = self.get_embedded_dex_bytes();
-        self.dex_loader_from_bytes(dex_bytes)
-    }
-
-    fn has_camera_permission(&self) -> Result<bool, Box<dyn Error>> {
-        let mut env = self.java_vm.attach_current_thread()?;
-        let camera_helper = self.camera_helper_instance.as_ref().ok_or("CameraHelper not initialized")?;
-
-        let has_permission = env.call_method(
-            camera_helper.as_obj(),
-            "hasCameraPermission",
-            "()Z",
-            &[],
-        )?.z()?;
-
-        Ok(has_permission)
-    }
-
-    fn request_camera_permission(&self) -> Result<(), Box<dyn Error>> {
-        let mut env = self.java_vm.attach_current_thread()?;
-        let camera_helper = self.camera_helper_instance.as_ref().ok_or("CameraHelper not initialized")?;
-
-        env.call_method(
-            camera_helper.as_obj(),
-            "requestCameraPermission",
-            "()V",
-            &[],
-        )?;
-
-        Ok(())
-    }
-
-    fn is_waiting_for_permission(&self) -> Result<bool, Box<dyn Error>> {
-        let mut env = self.java_vm.attach_current_thread()?;
-        let camera_helper = self.camera_helper_instance.as_ref().ok_or("CameraHelper not initialized")?;
-
-        let waiting = env.call_method(
-            camera_helper.as_obj(),
-            "isWaitingForPermission",
-            "()Z",
-            &[],
-        )?.z()?;
-
-        Ok(waiting)
-    }
-
-    fn wait_for_permission(&self, timeout_seconds: u64) -> Result<bool, Box<dyn Error>> {
-        println!("Waiting for camera permission (timeout: {}s)", timeout_seconds);
-
-        let start_time = std::time::Instant::now();
-        let timeout = Duration::from_secs(timeout_seconds);
-
-        // First check if we already have permission
-        if self.has_camera_permission()? {
-            println!("Camera permission already granted");
-            return Ok(true);
+        if self.app_context.is_none() {
+            log::error!("Cannot start camera: app_context is None");
+            return;
         }
 
-        // Request permission if we don't have it
-        self.request_camera_permission()?;
-
-        // Wait for permission to be granted or denied
-        while start_time.elapsed() < timeout {
-            if self.has_camera_permission()? {
-                println!("Camera permission granted!");
-                return Ok(true);
-            }
-
-            if !self.is_waiting_for_permission()? {
-                println!("No longer waiting for permission - likely denied");
-                return Ok(false);
-            }
-
-            println!("Still waiting for camera permission...");
-            thread::sleep(Duration::from_millis(500));
-        }
-
-        println!("Timeout waiting for camera permission");
-        Ok(false)
-    }
-
-    fn open_camera_with_dex_file(&mut self, dex_file_path: &str) -> Result<(), Box<dyn Error>> {
-        println!("Opening camera with dex file: {}", dex_file_path);
-
-        let dex_bytes = self.load_dex_from_file(dex_file_path)?;
-        unsafe {
-            self.dex_loader_from_bytes(&dex_bytes)?;
-        }
-
-        self.open_camera_internal()
-    }
-
-    pub fn start(&mut self) -> Result<(), Box<dyn Error>> {
-        println!("Opening camera with embedded dex");
-
-        unsafe {
-            self.load_embedded_dex()?;
-        }
-
-        self.open_camera_internal()
-    }
-
-    fn open_camera_internal(&mut self) -> Result<(), Box<dyn Error>> {
-        println!("Checking camera permission before opening camera");
-
-        if !self.has_camera_permission()? {
-            println!("Camera permission not granted, requesting...");
-            if !self.wait_for_permission(30)? {
-                return Err("Camera permission not granted within timeout".into());
+        if self.camera_helper.is_none() {
+            if let Err(e) = unsafe { self.load_embedded_dex() } {
+                log::error!("Failed to load CameraHelper from embedded Dex: {}", e);
+                return;
             }
         }
 
-        let mut env = self.java_vm.attach_current_thread()?;
-        let camera_helper = self.camera_helper_instance.as_ref().ok_or("CameraHelper not initialized")?;
+        let granted = {
+            let mut env = match self.java_vm.attach_current_thread() {
+                Ok(env) => env,
+                Err(e) => {
+                    log::error!("Failed to attach to JVM: {}", e);
+                    return;
+                }
+            };
 
-        let camera_id_list_obj = env.call_method(
-            camera_helper.as_obj(),
+            let granted = self.has_permission(&mut env).unwrap_or(false);
+            if !granted && !self.permission_requested {
+                if let Err(e) = self.request_permission(&mut env) {
+                    log::error!("Failed to request camera permission: {}", e);
+                }
+                self.permission_requested = true;
+            }
+            granted
+        }; // env dropped here, releasing its borrow before open_camera() needs &mut self
+
+        if !granted {
+            // Permission dialog is async and user-paced - check again next tick
+            // rather than blocking the render loop.
+            return;
+        }
+
+        match self.open_camera() {
+            Ok(_) => self.camera_opened = true,
+            Err(e) => log::error!("Failed to open camera: {}", e),
+        }
+    }
+
+    pub fn stop(&mut self) {
+        if !self.camera_opened {
+            return;
+        }
+        println!("stopping camera");
+        if let Some(helper) = &self.camera_helper {
+            if let Ok(mut env) = self.java_vm.attach_current_thread() {
+                let _ = env.call_method(
+                    helper.as_obj(),
+                    "closeCamera",
+                    "()V",
+                    &[],
+                );
+            }
+        }
+        self.camera_opened = false;
+    }
+
+    pub fn frame(&self) -> Option<RgbaImage> {
+        self.latest_frame.lock().unwrap().take()
+    }
+
+    fn open_camera(&mut self) -> Result<(), Box<dyn Error>> {
+        println!("open_camera function");
+        let helper = self.camera_helper.as_ref().ok_or("camera helper is None")?;
+
+        let mut env = self.java_vm.attach_current_thread()?;
+
+        let camera_ids = env.call_method(
+            helper.as_obj(),
             "getCameraIdList",
             "()[Ljava/lang/String;",
             &[],
         )?.l()?;
 
-        let camera_id_array = JObjectArray::from(camera_id_list_obj);
-        let length = env.get_array_length(&camera_id_array)?;
-        if length == 0 {
-            return Err("No cameras available".into());
+        let id_array = JObjectArray::from(camera_ids);
+        if env.get_array_length(&id_array)? == 0 {
+            return Err("No cameras found".into());
         }
 
-        let first_camera_id = env.get_object_array_element(&camera_id_array, 0)?;
-        let camera_id_str: String = env.get_string(&JString::from(first_camera_id))?.into();
-        let camera_id_jstr = env.new_string(&camera_id_str)?;
+        let first_id = env.get_object_array_element(&id_array, 0)?;
+        let camera_id: String = env.get_string(&JString::from(first_id))?.into();
+        let camera_id_jstr = env.new_string(&camera_id)?;
 
-        println!("Opening camera with ID: {}", camera_id_str);
+        // Passed through to Java and back on every ImageAvailableListener callback so the
+        // native side can write completed frames straight into this Arc's Mutex without any
+        // per-instance JNI object lookup. Safe as long as `self.latest_frame` (owned by this
+        // OsCamera, which lives for the app's lifetime) outlives the callback, since
+        // CameraHelper.closeCamera() tears down the ImageReader/session before that could race.
+        let frame_ptr = Arc::as_ptr(&self.latest_frame) as jlong;
 
         env.call_method(
-            camera_helper.as_obj(),
+            helper.as_obj(),
             "openCamera",
-            "(Ljava/lang/String;)V",
-            &[JValue::Object(&camera_id_jstr)],
+            "(Ljava/lang/String;J)V",
+            &[JValue::Object(&camera_id_jstr), JValue::Long(frame_ptr)],
         )?;
 
-        println!("Camera open request sent successfully");
         Ok(())
     }
 
-    fn wait_for_camera_ready(&self, timeout_seconds: u64) -> Result<bool, Box<dyn Error>> {
-        println!("Waiting for camera session to be ready (timeout: {}s)", timeout_seconds);
+unsafe fn load_embedded_dex(&mut self) -> Result<(), Box<dyn Error>> {
+    println!("loading embedded dex");
+    let dex_bytes: &[u8] = include_bytes!("../camera/android/classes.dex");
 
-        let start_time = std::time::Instant::now();
-        let timeout = Duration::from_secs(timeout_seconds);
+    let class_name = "com.maverick.camera.CameraHelper";
 
-        while start_time.elapsed() < timeout {
-            match self.is_camera_ready() {
-                Ok(true) => {
-                    println!("Camera session is ready!");
-                    return Ok(true);
-                }
-                Ok(false) => {
-                    println!("Camera session not ready yet, waiting...");
-                    thread::sleep(Duration::from_millis(100));
-                }
-                Err(e) => {
-                    println!("Error checking camera ready status: {}", e);
-                    return Err(e);
-                }
-            }
-        }
+    let helper = JNIUtil::instantiate_class_from_embedded_dex(
+        &self.java_vm,
+        self.app_context.as_ref().ok_or("App context is None")?,
+        dex_bytes,
+        class_name,
+    )?;
 
-        println!("Timeout waiting for camera session to be ready");
-        Ok(false)
-    }
+    let mut env = self.java_vm.attach_current_thread()?;
+    JNIUtil::register_native_methods(&mut env, &helper, vec![
+        jni::NativeMethod {
+            name: "nativeOnFrameAvailable".into(),
+            sig: "(JLandroid/media/Image;I)V".into(),
+            fn_ptr: Java_com_maverick_camera_CameraHelper_nativeOnFrameAvailable as *mut std::ffi::c_void,
+        },
+    ])?;
 
-    fn get_image_dimensions(&self, image: &JObject) -> Result<(i32, i32), Box<dyn Error>> {
-        let mut env_guard = self.java_vm.attach_current_thread()?;
-        let env = &mut *env_guard;
+    self.camera_helper = Some(helper);
+    Ok(())
+}
 
-        let width = env.call_method(image, "getWidth", "()I", &[])?.i()?;
-        let height = env.call_method(image, "getHeight", "()I", &[])?.i()?;
+    // Permission Helpers
+    fn has_permission(&self, env: &mut JNIEnv) -> Result<bool, Box<dyn Error>> {
+        println!("checking permissions");
+        let helper = self.camera_helper.as_ref().ok_or("camera helper is None")?;
 
-        println!("Image dimensions - Width: {}, Height: {}", width, height);
-        Ok((width, height))
-    }
-
-    fn convert_yuv_to_rgba(
-        &self,
-        image: &JObject,
-        width: i32,
-        height: i32,
-    ) -> Result<Vec<u8>, Box<dyn Error>> {
-        println!("Starting convert_yuv_to_rgba");
-        let mut env = self.java_vm.attach_current_thread()?;
-
-        let planes: JObjectArray = env
-            .call_method(image, "getPlanes", "()[Landroid/media/Image$Plane;", &[])?
-            .l()?
-            .into();
-
-        let plane_count = env.get_array_length(&planes)?;
-        println!("Number of planes: {}", plane_count);
-
-        if plane_count < 3 {
-            return Err("Image does not have the expected YUV planes".into());
-        }
-
-        let mut extract = |idx| -> Result<(Vec<u8>, i32, i32), Box<dyn Error>> {
-            println!("Extracting plane index: {}", idx);
-            let plane = env.get_object_array_element(&planes, idx)?;
-            let buffer = env.call_method(&plane, "getBuffer", "()Ljava/nio/ByteBuffer;", &[])?.l()?;
-            let byte_buffer = JByteBuffer::from(buffer);
-
-            let len = env.get_direct_buffer_capacity(&byte_buffer)?;
-            let ptr = env.get_direct_buffer_address(&byte_buffer)?;
-            let data = unsafe { std::slice::from_raw_parts(ptr, len).to_vec() };
-
-            let row_stride = env.call_method(&plane, "getRowStride", "()I", &[])?.i()?;
-            let pixel_stride = env.call_method(&plane, "getPixelStride", "()I", &[])?.i()?;
-
-            println!(
-                "Plane {}: len = {}, row_stride = {}, pixel_stride = {}",
-                idx, len, row_stride, pixel_stride
-            );
-
-            Ok((data, row_stride, pixel_stride))
-        };
-
-        let (y, y_rs, y_ps) = extract(0)?;
-        let (u, u_rs, u_ps) = extract(1)?;
-        let (v, v_rs, v_ps) = extract(2)?;
-
-        let mut rgba = Vec::with_capacity((width * height * 4) as usize);
-
-        for row in 0..height {
-            for col in 0..width {
-                let yi = (row * y_rs + col * y_ps) as usize;
-                let ui = ((row / 2) * u_rs + (col / 2) * u_ps) as usize;
-                let vi = ((row / 2) * v_rs + (col / 2) * v_ps) as usize;
-
-                let y_val = y.get(yi).copied().unwrap_or(0) as i32;
-                let u_val = u.get(ui).copied().unwrap_or(128) as i32;
-                let v_val = v.get(vi).copied().unwrap_or(128) as i32;
-
-                let c = y_val - 16;
-                let d = u_val - 128;
-                let e = v_val - 128;
-
-                let r = ((298 * c + 409 * e + 128) >> 8).clamp(0, 255) as u8;
-                let g = ((298 * c - 100 * d - 208 * e + 128) >> 8).clamp(0, 255) as u8;
-                let b = ((298 * c + 516 * d + 128) >> 8).clamp(0, 255) as u8;
-
-                rgba.extend_from_slice(&[r, g, b, 255]);
-            }
-        }
-
-        println!("Finished convert_yuv_to_rgba");
-        Ok(rgba)
-    }
-
-    pub fn frame(&self) -> Result<RgbaImage, CameraError> {
-        println!("Starting get_latest_frame");
-
-        // Ensure we have permission before trying to get frame
-        if !self.has_camera_permission().map_err(|_| CameraError::PermissionDenied)? {
-            return Err(CameraError::PermissionDenied);
-        }
-
-        if !self.wait_for_camera_ready(10).map_err(|_| CameraError::PermissionDenied)? {
-            return Err(CameraError::PermissionDenied);
-        }
-
-
-        let mut env = self.java_vm.attach_current_thread().map_err(|_| CameraError::PermissionDenied)?;
-        println!("Attached to Java thread.");
-
-        let camera_helper = self.camera_helper_instance.as_ref().ok_or(CameraError::PermissionDenied)?;
-        println!("CameraHelper instance retrieved: {:?}", camera_helper);
-
-        let session_ready = env.call_method(
-            camera_helper.as_obj(),
-            "isSessionReady",
+        let result = env.call_method(
+            helper.as_obj(),
+            "hasCameraPermission",
             "()Z",
             &[],
-        ).map_err(|_| CameraError::PermissionDenied)?
-        .z()
-        .map_err(|_| CameraError::PermissionDenied)?;
-        println!("Session ready status: {}", session_ready);
-
-        if !session_ready {
-            return Err(CameraError::PermissionDenied);
-        }
-
-        let image_obj = env.call_method(
-            camera_helper.as_obj(),
-            "acquireLatestImage",
-            "()Landroid/media/Image;",
-            &[],
-        ).map_err(|_| CameraError::PermissionDenied)?
-        .l()
-        .map_err(|_| CameraError::PermissionDenied)?;
-        println!("Acquired image object: {:?}", image_obj);
-
-        if image_obj.is_null() {
-            println!("No image available.");
-            return Err(CameraError::PermissionDenied);
-        }
-
-        println!("Image acquired successfully: {:?}", image_obj);
-
-        let (w, h) = self.get_image_dimensions(&image_obj).map_err(|_| CameraError::PermissionDenied)?;;
-        println!("Image dimensions retrieved: Width = {}, Height = {}", w, h);
-
-        let data = self.convert_yuv_to_rgba(&image_obj, w, h).map_err(|_| CameraError::PermissionDenied)?;;
-        println!("YUV to RGBA conversion completed. Data length: {}", data.len());
-
-        let mut img = RgbaImage::new(w as u32, h as u32);
-        println!("Created new RgbaImage with dimensions: {}x{}", w, h);
-
-        for (i, px) in data.chunks_exact(4).enumerate() {
-            let x = (i % w as usize) as u32;
-            let y = (i / w as usize) as u32;
-            img.put_pixel(x, y, Rgba([px[0], px[1], px[2], px[3]]));
-        }
-        println!("Populated RgbaImage with pixel data.");
-
-        env.call_method(&image_obj, "close", "()V", &[]).map_err(|_| CameraError::PermissionDenied)?;;
-        println!("Closed image to free resources.");
-
-        println!("Successfully converted image to RGBA");
-        Ok(img)
+        )?.z()?;
+        Ok(result)
     }
 
-    pub fn is_camera_ready(&self) -> Result<bool, Box<dyn Error>> {
-        if let Some(camera_helper) = &self.camera_helper_instance {
-            let mut env = self.java_vm.attach_current_thread()?;
-            let ready = env.call_method(
-                camera_helper.as_obj(),
-                "isSessionReady",
-                "()Z",
-                &[],
-            )?.z()?;
-            Ok(ready)
-        } else {
-            Ok(false)
-        }
-    }
-
-    pub fn close_camera(&self) -> Result<(), Box<dyn Error>> {
-        if let Some(camera_helper) = &self.camera_helper_instance {
-            let mut env = self.java_vm.attach_current_thread()?;
-            env.call_method(
-                camera_helper.as_obj(),
-                "closeCamera",
-                "()V",
-                &[],
-            )?;
-            println!("Camera closed successfully");
-        }
+    fn request_permission(&self, env: &mut JNIEnv) -> Result<(), Box<dyn Error>> {
+        println!("requesting camera permission");
+        let helper = self.camera_helper.as_ref().ok_or("camera helper is None")?;
+        env.call_method(helper.as_obj(), "requestCameraPermission", "()V", &[])?;
         Ok(())
     }
+}
+
+// Called directly by CameraHelper.ImageAvailableListener, which Camera2 always invokes on
+// the ImageReader's backgroundHandler thread - so this conversion work runs off the app's
+// main/render thread by construction, never blocking rendering or input dispatch.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_maverick_camera_CameraHelper_nativeOnFrameAvailable(
+    mut env: JNIEnv,
+    _class: JClass,
+    frame_ptr: jlong,
+    image: JObject,
+    rotation_degrees: jint,
+) {
+    if frame_ptr == 0 {
+        return;
+    }
+    let latest_frame = unsafe { &*(frame_ptr as *const Mutex<Option<RgbaImage>>) };
+
+    match process_image(&mut env, &image, rotation_degrees) {
+        Ok(img) => *latest_frame.lock().unwrap() = Some(img),
+        Err(e) => log::error!("Failed to process camera image: {}", e),
+    }
+}
+
+// Converts the YUV_420_888 image straight into a rotated RgbaImage in a single pass -
+// SENSOR_ORIENTATION is the clockwise rotation (0/90/180/270) Camera2 says the raw sensor
+// image needs to match the device's upright orientation, applied here as a change of
+// destination index rather than a separate post-processing rotation pass.
+fn process_image(env: &mut JNIEnv, image: &JObject, rotation_degrees: i32) -> Result<RgbaImage, Box<dyn Error>> {
+    let width = env.call_method(image, "getWidth", "()I", &[])?.i()?;
+    let height = env.call_method(image, "getHeight", "()I", &[])?.i()?;
+
+    let planes: JObjectArray = env
+        .call_method(image, "getPlanes", "()[Landroid/media/Image$Plane;", &[])?
+        .l()?
+        .into();
+
+    let plane_count = env.get_array_length(&planes)?;
+    if plane_count < 3 {
+        return Err("Image does not have the expected YUV planes".into());
+    }
+
+    let mut extract = |idx| -> Result<(Vec<u8>, i32, i32), Box<dyn Error>> {
+        let plane = env.get_object_array_element(&planes, idx)?;
+        let buffer = env.call_method(&plane, "getBuffer", "()Ljava/nio/ByteBuffer;", &[])?.l()?;
+        let byte_buffer = JByteBuffer::from(buffer);
+
+        let len = env.get_direct_buffer_capacity(&byte_buffer)?;
+        let ptr = env.get_direct_buffer_address(&byte_buffer)?;
+        let data = unsafe { std::slice::from_raw_parts(ptr, len).to_vec() };
+
+        let row_stride = env.call_method(&plane, "getRowStride", "()I", &[])?.i()?;
+        let pixel_stride = env.call_method(&plane, "getPixelStride", "()I", &[])?.i()?;
+
+        Ok((data, row_stride, pixel_stride))
+    };
+
+    let (y, y_rs, y_ps) = extract(0)?;
+    let (u, u_rs, u_ps) = extract(1)?;
+    let (v, v_rs, v_ps) = extract(2)?;
+
+    let rotation = ((rotation_degrees % 360) + 360) % 360;
+    let (out_w, out_h) = if rotation == 90 || rotation == 270 {
+        (height as u32, width as u32)
+    } else {
+        (width as u32, height as u32)
+    };
+
+    let mut buffer = vec![0u8; (out_w * out_h * 4) as usize];
+
+    for row in 0..height {
+        for col in 0..width {
+            let yi = (row * y_rs + col * y_ps) as usize;
+            let ui = ((row / 2) * u_rs + (col / 2) * u_ps) as usize;
+            let vi = ((row / 2) * v_rs + (col / 2) * v_ps) as usize;
+
+            let y_val = y.get(yi).copied().unwrap_or(0) as i32;
+            let u_val = u.get(ui).copied().unwrap_or(128) as i32;
+            let v_val = v.get(vi).copied().unwrap_or(128) as i32;
+
+            let c = y_val - 16;
+            let d = u_val - 128;
+            let e = v_val - 128;
+
+            let r = ((298 * c + 409 * e + 128) >> 8).clamp(0, 255) as u8;
+            let g = ((298 * c - 100 * d - 208 * e + 128) >> 8).clamp(0, 255) as u8;
+            let b = ((298 * c + 516 * d + 128) >> 8).clamp(0, 255) as u8;
+
+            // Destination index for a `rotation`-degree clockwise rotation of the source.
+            let (dst_x, dst_y) = match rotation {
+                90 => (height - 1 - row, col),
+                180 => (width - 1 - col, height - 1 - row),
+                270 => (row, width - 1 - col),
+                _ => (col, row),
+            };
+
+            let idx = ((dst_y as u32 * out_w + dst_x as u32) * 4) as usize;
+            buffer[idx] = r;
+            buffer[idx + 1] = g;
+            buffer[idx + 2] = b;
+            buffer[idx + 3] = 255;
+        }
+    }
+
+    RgbaImage::from_raw(out_w, out_h, buffer)
+        .ok_or_else(|| "Failed to construct RgbaImage from raw buffer".into())
 }

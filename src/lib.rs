@@ -15,6 +15,9 @@ pub use config::{IS_MOBILE, IS_WEB};
 
 use rusqlite::OptionalExtension;
 
+
+
+
 pub trait Application: 'static {
     type Renderer<'surface>: Renderer<'surface, Application=Self>;
 
@@ -39,7 +42,18 @@ pub struct MaverickOS<A: Application> {
 }
 
 impl<A: Application> MaverickOS<A> {
-    pub fn start(#[cfg(target_os = "android")] app: AndroidApp) {Window::<A>::start()}
+
+    pub fn start(#[cfg(target_os = "android")] app: AndroidApp) {
+        #[cfg(target_os = "android")]
+        {
+            Window::<A>::start(app)
+        }
+
+        #[cfg(not(target_os = "android"))]
+        {
+            Window::<A>::start()
+        }
+    }
     fn new(window: window::Context, surface: Surface<A>) -> Self {
         let hardware = hardware::Context::new();
         let conn = rusqlite::Connection::open("./SECRET.db").unwrap();

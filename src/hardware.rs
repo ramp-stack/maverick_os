@@ -8,6 +8,7 @@ mod photo_picker;
 mod safe_area;
 mod notifications;
 mod app_support;
+mod android_util;
 
 pub use clipboard::Clipboard;
 pub use camera::Camera;
@@ -29,18 +30,12 @@ pub struct Context {
     pub notifications: Notifications,
     pub photo_picker: PhotoPicker,
 
-    #[allow(dead_code)]
     pub(crate) cloud: CloudStorage
 }
 impl Context {
     pub fn new() -> Self {
         std::env::set_current_dir(app_support::ApplicationSupport::get().expect("Could not get app support dir")).unwrap();
         Logger::start(None);
-        #[cfg(target_os = "android")]
-        let vm = {
-            let vm_ptr = ndk_context::android_context().vm().cast();
-            unsafe { jni::JavaVM::from_raw(vm_ptr).unwrap() }
-        };
         let cloud = CloudStorage::new(
             #[cfg(target_os = "android")]
             &vm
@@ -48,10 +43,7 @@ impl Context {
 
         Context {
             camera: Camera::new(),
-            clipboard: Clipboard::new(
-                #[cfg(target_os = "android")]
-                &vm
-            ),
+            clipboard: Clipboard::new(),
             share: Share::new(),
             haptics: Haptics::new(),
             notifications: Notifications::new(),
