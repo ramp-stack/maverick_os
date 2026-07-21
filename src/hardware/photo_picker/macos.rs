@@ -1,9 +1,12 @@
-use objc2::{class, msg_send, runtime::{AnyClass, AnyObject}};
-use objc2_foundation::{NSArray, NSString};
-use objc2::rc::{Retained, autoreleasepool};
-use std::path::PathBuf;
-use std::fs;
 use image::RgbaImage;
+use objc2::rc::{Retained, autoreleasepool};
+use objc2::{
+    class, msg_send,
+    runtime::{AnyClass, AnyObject},
+};
+use objc2_foundation::{NSArray, NSString};
+use std::fs;
+use std::path::PathBuf;
 
 #[derive(Clone)]
 pub struct OsPhotoPicker;
@@ -33,11 +36,8 @@ impl OsPhotoPicker {
                 let png_str: Retained<NSString> = NSString::from_str("png");
                 let jpg_str: Retained<NSString> = NSString::from_str("jpg");
                 let jpeg_str: Retained<NSString> = NSString::from_str("jpeg");
-                let file_types: Retained<NSArray<NSString>> = NSArray::from_slice(&[
-                    png_str.as_ref(),
-                    jpg_str.as_ref(),
-                    jpeg_str.as_ref(),
-                ]);
+                let file_types: Retained<NSArray<NSString>> =
+                    NSArray::from_slice(&[png_str.as_ref(), jpg_str.as_ref(), jpeg_str.as_ref()]);
                 let () = msg_send![panel, setAllowedFileTypes: &*file_types];
 
                 const NS_MODAL_RESPONSE_OK: i64 = 1;

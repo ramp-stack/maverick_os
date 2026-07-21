@@ -1,8 +1,8 @@
 use image::RgbaImage;
+use objc2::rc::Retained;
 use objc2::rc::autoreleasepool;
 use objc2::{class, msg_send};
-use objc2_foundation::{NSArray, NSObject, NSString, NSRect, NSPoint, NSSize};
-use objc2::rc::Retained;
+use objc2_foundation::{NSArray, NSObject, NSPoint, NSRect, NSSize, NSString};
 
 #[derive(Clone)]
 pub struct OsShare;
@@ -19,9 +19,7 @@ impl OsShare {
 
             let cls = class!(NSSharingServicePicker);
             let picker: *mut NSObject = unsafe { msg_send![cls, alloc] };
-            let picker: *mut NSObject = unsafe {
-                msg_send![picker, initWithItems: &*items]
-            };
+            let picker: *mut NSObject = unsafe { msg_send![picker, initWithItems: &*items] };
 
             let app: *mut NSObject = unsafe { msg_send![class!(NSApplication), sharedApplication] };
             let key_window: *mut NSObject = unsafe { msg_send![app, keyWindow] };
@@ -43,10 +41,7 @@ impl OsShare {
     pub fn share_image(&self, rgba_image: RgbaImage) {
         autoreleasepool(|_| {
             use objc2_core_graphics::{
-                CGImageAlphaInfo,
-                CGBitmapContextCreate,
-                CGBitmapContextCreateImage,
-                CGImage,
+                CGBitmapContextCreate, CGBitmapContextCreateImage, CGImage, CGImageAlphaInfo,
             };
 
             let width = rgba_image.width();
@@ -56,7 +51,7 @@ impl OsShare {
             let bits_per_component = 8usize;
 
             let buffer = rgba_image.as_raw();
-            let color_space = unsafe{objc2_core_graphics::CGColorSpace::new_device_rgb()};
+            let color_space = unsafe { objc2_core_graphics::CGColorSpace::new_device_rgb() };
 
             let context = unsafe {
                 CGBitmapContextCreate(
@@ -71,9 +66,11 @@ impl OsShare {
             }
             .expect("Failed to create bitmap context");
 
-            let cg_image: Retained<CGImage> = unsafe{CGBitmapContextCreateImage(Some(&context))
-                .expect("Could not create image from context")
-                .into()};
+            let cg_image: Retained<CGImage> = unsafe {
+                CGBitmapContextCreateImage(Some(&context))
+                    .expect("Could not create image from context")
+                    .into()
+            };
 
             let ns_image_cls = class!(NSImage);
             let ns_image: *mut NSObject = unsafe { msg_send![ns_image_cls, alloc] };
@@ -87,9 +84,7 @@ impl OsShare {
 
             let cls = class!(NSSharingServicePicker);
             let picker: *mut NSObject = unsafe { msg_send![cls, alloc] };
-            let picker: *mut NSObject = unsafe {
-                msg_send![picker, initWithItems: &*items]
-            };
+            let picker: *mut NSObject = unsafe { msg_send![picker, initWithItems: &*items] };
 
             let app: *mut NSObject = unsafe { msg_send![class!(NSApplication), sharedApplication] };
             let key_window: *mut NSObject = unsafe { msg_send![app, keyWindow] };

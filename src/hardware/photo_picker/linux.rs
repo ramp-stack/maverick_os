@@ -1,6 +1,6 @@
-use std::process::Command;
-use std::path::Path;
 use std::fs;
+use std::path::Path;
+use std::process::Command;
 use std::thread;
 
 #[derive(Clone)]
@@ -9,8 +9,7 @@ pub struct OsPhotoPicker;
 impl OsPhotoPicker {
     pub fn open(callback: impl FnOnce(Vec<u8>) + Send + 'static) {
         thread::spawn(move || {
-            let result = Self::try_zenity()
-                .or_else(|| Self::try_kdialog());
+            let result = Self::try_zenity().or_else(|| Self::try_kdialog());
 
             match result {
                 Some(file_path) => {
@@ -33,7 +32,8 @@ impl OsPhotoPicker {
                 "--file-filter=All files | *",
                 "--title=Select an Image",
             ])
-            .output().ok()?;
+            .output()
+            .ok()?;
 
         if output.status.success() {
             let file_path = String::from_utf8_lossy(&output.stdout).trim().to_string();
@@ -53,7 +53,8 @@ impl OsPhotoPicker {
                 "--title",
                 "Select an Image",
             ])
-            .output().ok()?;
+            .output()
+            .ok()?;
 
         if output.status.success() {
             let file_path = String::from_utf8_lossy(&output.stdout).trim().to_string();

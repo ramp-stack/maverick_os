@@ -12,7 +12,10 @@ impl OsClipboard {
     pub fn get_content(&self) -> String {
         unsafe {
             let pasteboard = UIPasteboard::generalPasteboard();
-            pasteboard.string().map(|s| s.to_string()).unwrap_or_default()
+            pasteboard
+                .string()
+                .map(|s| s.to_string())
+                .unwrap_or_default()
         }
     }
 

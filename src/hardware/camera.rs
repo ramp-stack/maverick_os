@@ -26,9 +26,13 @@ pub struct Handle(Arc<bool>);
 
 pub struct Camera(OsCamera, Handle);
 impl Camera {
-    pub fn new() -> Self {Camera(OsCamera::new(), Handle::default())}
+    pub fn new() -> Self {
+        Camera(OsCamera::new(), Handle::default())
+    }
 
-    pub fn start(&mut self) -> Handle {self.1.clone()}
+    pub fn start(&mut self) -> Handle {
+        self.1.clone()
+    }
 
     pub(crate) fn tick(&mut self) -> Option<RgbaImage> {
         let count = Arc::strong_count(&self.1.0);
@@ -38,10 +42,16 @@ impl Camera {
         } else if count == 1 {
             self.0.stop();
             None
-        } else {None}
+        } else {
+            None
+        }
     }
 }
-impl Default for Camera {fn default() -> Self {Self::new()}}
+impl Default for Camera {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 //  #[derive(Debug, Clone)]
 //  pub struct CameraSettings {

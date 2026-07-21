@@ -1,12 +1,13 @@
- use image::RgbaImage;
+
+use image::RgbaImage;
 use objc2::rc::autoreleasepool;
+use objc2::rc::{Allocated, Retained};
 use objc2::{class, msg_send};
-use objc2_foundation::{NSArray, NSObject, NSString, NSPoint, NSRect, NSSize};
-use objc2::rc::{Retained, Allocated};
+use objc2_foundation::{NSArray, NSObject, NSPoint, NSRect, NSSize, NSString};
 
 use objc2_ui_kit::{
-    UIImage, UIUserInterfaceIdiom, UIPopoverPresentationController, UIView,
-    UIImageOrientation, UIDevice, UIScreen
+    UIDevice, UIImage, UIImageOrientation, UIPopoverPresentationController, UIScreen,
+    UIUserInterfaceIdiom, UIView,
 };
 
 use objc2::AnyThread;
@@ -66,10 +67,7 @@ impl OsShare {
     pub fn share_image(&self, rgba_image: RgbaImage) {
         autoreleasepool(|_| {
             use objc2_core_graphics::{
-                CGImageAlphaInfo,
-                CGBitmapContextCreate,
-                CGBitmapContextCreateImage,
-                CGImage,
+                CGBitmapContextCreate, CGBitmapContextCreateImage, CGImage, CGImageAlphaInfo,
             };
 
             let width = rgba_image.width();
@@ -97,7 +95,8 @@ impl OsShare {
             // Create CGImage from context
             let cg_image: Retained<CGImage> = unsafe {
                 CGBitmapContextCreateImage(Some(&context))
-                    .expect("Could not create image from context.").into()
+                    .expect("Could not create image from context.")
+                    .into()
             };
 
             // Convert CGImage to UIImage
@@ -105,7 +104,12 @@ impl OsShare {
             let scale: f64 = unsafe { msg_send![scale, scale] };
             let ui_image: Allocated<UIImage> = UIImage::alloc();
             let ui_image = unsafe {
-                UIImage::initWithCGImage_scale_orientation(ui_image, &cg_image, scale, UIImageOrientation::Up)
+                UIImage::initWithCGImage_scale_orientation(
+                    ui_image,
+                    &cg_image,
+                    scale,
+                    UIImageOrientation::Up,
+                )
             };
 
             // Create an array of items to share
@@ -119,11 +123,10 @@ impl OsShare {
             };
 
             // For iPad, configure popover presentation
-            let device: *mut UIDevice = unsafe {msg_send![class!(UIDevice), currentDevice]};
-            if UIUserInterfaceIdiom::Pad == unsafe { msg_send![device, userInterfaceIdiom] }{
-                let popover: Retained<UIPopoverPresentationController> = unsafe {
-                    msg_send![activity_controller, popoverPresentationController]
-                };
+            let device: *mut UIDevice = unsafe { msg_send![class!(UIDevice), currentDevice] };
+            if UIUserInterfaceIdiom::Pad == unsafe { msg_send![device, userInterfaceIdiom] } {
+                let popover: Retained<UIPopoverPresentationController> =
+                    unsafe { msg_send![activity_controller, popoverPresentationController] };
                 // Get the root view controller's view
                 let ui_app = class!(UIApplication);
                 let shared_app: *mut NSObject = unsafe { msg_send![ui_app, sharedApplication] };

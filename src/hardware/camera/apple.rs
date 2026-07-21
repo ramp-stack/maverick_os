@@ -54,7 +54,7 @@ pub use standard::StandardOsCamera as OsCamera;
 //      pub fn stop(self) {
 //          match self {
 //              OsCamera::Standard(s) => s.stop(),
-//              OsCamera::Custom(c) => c.stop() 
+//              OsCamera::Custom(c) => c.stop()
 //          }
 //      }
 //  }

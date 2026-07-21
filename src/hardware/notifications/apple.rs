@@ -1,25 +1,25 @@
 #[cfg(target_os = "ios")]
-use objc2::runtime::Bool;
-#[cfg(target_os = "ios")]
 use objc2::MainThreadMarker;
+#[cfg(target_os = "ios")]
+use objc2::runtime::Bool;
 #[cfg(target_os = "ios")]
 use objc2_ui_kit::UIApplication;
 #[cfg(target_os = "ios")]
 use std::cell::Cell;
 
 #[cfg(target_os = "macos")]
+use objc2::rc::autoreleasepool;
+#[cfg(target_os = "macos")]
 use objc2::runtime::Bool;
 #[cfg(target_os = "macos")]
 use objc2_foundation::NSBundle;
-#[cfg(target_os = "macos")]
-use objc2::rc::autoreleasepool;
 
-use objc2_user_notifications::{
-    UNAuthorizationOptions, UNUserNotificationCenter, UNNotificationRequest,
-    UNMutableNotificationContent, UNTimeIntervalNotificationTrigger,
-};
 use block2::StackBlock;
-use objc2_foundation::{NSString, NSError};
+use objc2_foundation::{NSError, NSString};
+use objc2_user_notifications::{
+    UNAuthorizationOptions, UNMutableNotificationContent, UNNotificationRequest,
+    UNTimeIntervalNotificationTrigger, UNUserNotificationCenter,
+};
 
 #[derive(Clone)]
 pub struct OsNotifications;
@@ -43,21 +43,20 @@ impl OsNotifications {
 
             if MainThreadMarker::new().is_some() {
                 let granted_cell_closure = granted_cell.clone();
-                let block = StackBlock::new(
-                    move |granted: Bool, error: *mut NSError| {
-                        granted_cell_closure.set(granted.as_bool());
+                let block = StackBlock::new(move |granted: Bool, error: *mut NSError| {
+                    granted_cell_closure.set(granted.as_bool());
 
-                        if granted.as_bool() {
-                            println!("Push permission granted.");
-                        } else {
-                            println!("Push permission denied.");
-                        }
+                    if granted.as_bool() {
+                        println!("Push permission granted.");
+                    } else {
+                        println!("Push permission denied.");
+                    }
 
-                        if !error.is_null() {
-                            println!("Authorization error occurred.");
-                        }
-                    },
-                ).copy();
+                    if !error.is_null() {
+                        println!("Authorization error occurred.");
+                    }
+                })
+                .copy();
 
                 center.requestAuthorizationWithOptions_completionHandler(options, &block);
 
@@ -93,22 +92,21 @@ impl OsNotifications {
 
             let center = UNUserNotificationCenter::currentNotificationCenter();
 
-            let options = UNAuthorizationOptions::Alert 
-                | UNAuthorizationOptions::Sound 
+            let options = UNAuthorizationOptions::Alert
+                | UNAuthorizationOptions::Sound
                 | UNAuthorizationOptions::Badge;
-            
-            let block = StackBlock::new(
-                move |granted: Bool, error: *mut NSError| {
-                    if granted.as_bool() {
-                        println!("Push permission granted on macOS.");
-                    } else {
-                        println!("Push permission denied on macOS.");
-                    }
-                    if !error.is_null() {
-                        println!("Authorization error on macOS.");
-                    }
-                },
-            ).copy();
+
+            let block = StackBlock::new(move |granted: Bool, error: *mut NSError| {
+                if granted.as_bool() {
+                    println!("Push permission granted on macOS.");
+                } else {
+                    println!("Push permission denied on macOS.");
+                }
+                if !error.is_null() {
+                    println!("Authorization error on macOS.");
+                }
+            })
+            .copy();
 
             center.requestAuthorizationWithOptions_completionHandler(options, &block);
         }
@@ -120,9 +118,12 @@ impl OsNotifications {
             let content = UNMutableNotificationContent::new();
             content.setTitle(&NSString::from_str(title));
             content.setBody(&NSString::from_str(body));
-            content.setSound(Some(&objc2_user_notifications::UNNotificationSound::defaultSound()));
+            content.setSound(Some(
+                &objc2_user_notifications::UNNotificationSound::defaultSound(),
+            ));
 
-            let trigger = UNTimeIntervalNotificationTrigger::triggerWithTimeInterval_repeats(1.0, false);
+            let trigger =
+                UNTimeIntervalNotificationTrigger::triggerWithTimeInterval_repeats(1.0, false);
             let identifier = NSString::from_str("demo-id");
 
             let request = UNNotificationRequest::requestWithIdentifier_content_trigger(
@@ -156,9 +157,12 @@ impl OsNotifications {
             let content = UNMutableNotificationContent::new();
             content.setTitle(&NSString::from_str(title));
             content.setBody(&NSString::from_str(body));
-            content.setSound(Some(&objc2_user_notifications::UNNotificationSound::defaultSound()));
+            content.setSound(Some(
+                &objc2_user_notifications::UNNotificationSound::defaultSound(),
+            ));
 
-            let trigger = UNTimeIntervalNotificationTrigger::triggerWithTimeInterval_repeats(1.0, false);
+            let trigger =
+                UNTimeIntervalNotificationTrigger::triggerWithTimeInterval_repeats(1.0, false);
             let identifier = NSString::from_str("demo-id");
 
             let request = UNNotificationRequest::requestWithIdentifier_content_trigger(

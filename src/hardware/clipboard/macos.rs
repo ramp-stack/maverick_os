@@ -14,6 +14,8 @@ impl OsClipboard {
     }
 
     pub fn set_content(&self, text: String) {
-        let _ = Clipboard::new().as_mut().map(|clipboard| clipboard.set_text(text.to_string()));
+        let _ = Clipboard::new()
+            .as_mut()
+            .map(|clipboard| clipboard.set_text(text.to_string()));
     }
 }

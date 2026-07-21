@@ -1,7 +1,7 @@
-use objc2_foundation::{NSString, NSAutoreleasePool};
+use objc2::rc::Retained;
 use objc2::runtime::AnyObject;
 use objc2::{class, msg_send};
-use objc2::rc::Retained;
+use objc2_foundation::{NSAutoreleasePool, NSString};
 
 #[derive(Debug, Clone)]
 pub struct OsCloudStorage;

@@ -1,9 +1,9 @@
 #[cfg(target_os = "ios")]
 use objc2::MainThreadMarker;
 #[cfg(target_os = "ios")]
-use objc2_ui_kit::UIApplication;
-#[cfg(target_os = "ios")]
 use objc2::rc::Retained;
+#[cfg(target_os = "ios")]
+use objc2_ui_kit::UIApplication;
 
 pub struct SafeAreaInsets;
 
@@ -18,9 +18,14 @@ impl SafeAreaInsets {
             if let Some(key_window) = window.keyWindow() {
                 let insets = key_window.safeAreaInsets();
 
-                return (insets.top as f32, insets.left as f32, insets.bottom as f32, insets.right as f32);
+                return (
+                    insets.top as f32,
+                    insets.left as f32,
+                    insets.bottom as f32,
+                    insets.right as f32,
+                );
             }
-        } 
+        }
 
         (0.0, 0.0, 0.0, 0.0)
     }

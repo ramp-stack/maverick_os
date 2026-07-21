@@ -1,7 +1,7 @@
 pub mod hardware;
 
 pub mod window;
-use window::{Window, Renderer, Surface, Input};
+use window::{Input, Renderer, Surface, Window};
 
 pub use air;
 
@@ -15,23 +15,24 @@ pub use config::{IS_MOBILE, IS_WEB};
 
 use rusqlite::OptionalExtension;
 
-
-
-
 pub trait Application: 'static {
-    type Renderer<'surface>: Renderer<'surface, Application=Self>;
+    type Renderer<'surface>: Renderer<'surface, Application = Self>;
 
     fn new(context: &mut Context) -> Self;
     fn on_input(&mut self, context: &mut Context, input: Input);
 
-    fn background_services() -> Services {Services::default()}
-    fn services() -> Services {Services::default()}
+    fn background_services() -> Services {
+        Services::default()
+    }
+    fn services() -> Services {
+        Services::default()
+    }
 }
 
 pub struct Context {
     pub hardware: hardware::Context,
     pub window: window::Context,
-    pub air: air::Context
+    pub air: air::Context,
 }
 
 pub struct MaverickOS<A: Application> {
@@ -42,7 +43,6 @@ pub struct MaverickOS<A: Application> {
 }
 
 impl<A: Application> MaverickOS<A> {
-
     pub fn start(#[cfg(target_os = "android")] app: AndroidApp) {
         #[cfg(target_os = "android")]
         {
@@ -57,14 +57,22 @@ impl<A: Application> MaverickOS<A> {
     fn new(window: window::Context, surface: Surface<A>) -> Self {
         let hardware = hardware::Context::new();
         let conn = rusqlite::Connection::open("./SECRET.db").unwrap();
-        conn.execute("CREATE TABLE if not exists Cache(
+        conn.execute(
+            "CREATE TABLE if not exists Cache(
             key TEXT NOT NULL PRIMARY KEY,
             value BLOB NOT NULL
-        );", []).unwrap();
-        let secret = match conn.query_row(
-            "SELECT value FROM Cache WHERE key='secret'",
-            [], |r| Ok(serde_json::from_slice(&r.get::<_, Vec<u8>>(0)?).ok()),
-        ).optional().unwrap().flatten() {
+        );",
+            [],
+        )
+        .unwrap();
+        let secret = match conn
+            .query_row("SELECT value FROM Cache WHERE key='secret'", [], |r| {
+                Ok(serde_json::from_slice(&r.get::<_, Vec<u8>>(0)?).ok())
+            })
+            .optional()
+            .unwrap()
+            .flatten()
+        {
             Some(secret) => secret,
             None => {
                 let secret = Secret::new();
@@ -78,18 +86,18 @@ impl<A: Application> MaverickOS<A> {
         let (air, runtime) = Air::start(secret);
         runtime.start_services(A::services());
         runtime.start_services(A::background_services());
-        
-        let mut context = Context{
+
+        let mut context = Context {
             hardware,
             window,
-            air
+            air,
         };
         let app = A::new(&mut context);
-        MaverickOS{
+        MaverickOS {
             context,
             surface,
             runtime,
-            app
+            app,
         }
     }
 }
@@ -142,7 +150,8 @@ unsafe extern "C" {}
 #[link(name = "AVFoundation", kind = "framework")]
 unsafe extern "C" {}
 
-#[cfg(any(target_os = "ios", target_os = "macos"))]#[link(name = "Security", kind = "framework")]
+#[cfg(any(target_os = "ios", target_os = "macos"))]
+#[link(name = "Security", kind = "framework")]
 unsafe extern "C" {}
 
 #[cfg(any(target_os = "ios", target_os = "macos"))]
@@ -162,9 +171,9 @@ unsafe extern "C" {}
 unsafe extern "C" {}
 
 pub mod __private {
+    pub use crate::MaverickOS;
     #[cfg(target_os = "android")]
     pub use winit::platform::android::activity::AndroidApp;
-    pub use crate::MaverickOS;
 }
 
 #[macro_export]
@@ -188,7 +197,7 @@ macro_rules! start {
             $crate::__private::MaverickOS::<$app>::start(app)
         }
 
-        #[cfg(not(any(target_os = "android", target_os="ios", target_arch = "wasm32")))]
+        #[cfg(not(any(target_os = "android", target_os = "ios", target_arch = "wasm32")))]
         pub fn maverick_main() {
             $crate::__private::MaverickOS::<$app>::start()
         }

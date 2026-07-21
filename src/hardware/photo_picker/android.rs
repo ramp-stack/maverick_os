@@ -1,7 +1,7 @@
 use image::RgbaImage;
 use jni::objects::{GlobalRef, JByteArray, JClass, JObject, JValue};
-use jni::{JNIEnv, JavaVM};
 use jni::sys::jlong;
+use jni::{JNIEnv, JavaVM};
 use ndk_context;
 use std::sync::Arc;
 
@@ -27,9 +27,7 @@ impl CallbackHolder {
 impl OsPhotoPicker {
     pub fn new() -> Self {
         println!("constructing new OsPhotoPicker");
-        let vm = match unsafe {
-            JavaVM::from_raw(ndk_context::android_context().vm().cast())
-        } {
+        let vm = match unsafe { JavaVM::from_raw(ndk_context::android_context().vm().cast()) } {
             Ok(vm) => Arc::new(vm),
             Err(e) => {
                 log::error!("Failed to get JavaVM: {}", e);
@@ -50,7 +48,7 @@ impl OsPhotoPicker {
             }
         };
         let context = {
-            let mut env = vm.attach_current_thread().expect("Failed to attach thread");
+            let env = vm.attach_current_thread().expect("Failed to attach thread");
             let ctx_ptr = ndk_context::android_context().context().cast();
             let context_obj = unsafe { JObject::from_raw(ctx_ptr) };
             env.new_global_ref(context_obj)
@@ -58,15 +56,22 @@ impl OsPhotoPicker {
         };
         {
             let mut env = vm.attach_current_thread().expect("Failed to attach thread");
-            match JNIUtil::load_app_class(&mut env, &context, "com.maverick.photo.PhotoPickerActivity") {
+            match JNIUtil::load_app_class(
+                &mut env,
+                &context,
+                "com.maverick.photo.PhotoPickerActivity",
+            ) {
                 Ok(activity_class) => {
-                    if let Err(e) = JNIUtil::register_native_methods_on_class(&mut env, &activity_class, vec![
-                        jni::NativeMethod {
+                    if let Err(e) = JNIUtil::register_native_methods_on_class(
+                        &mut env,
+                        &activity_class,
+                        vec![jni::NativeMethod {
                             name: "nativeOnPhotoPicked".into(),
                             sig: "(J[BII)V".into(),
-                            fn_ptr: Java_com_maverick_photo_PhotoPickerActivity_nativeOnPhotoPicked as *mut std::ffi::c_void,
-                        },
-                    ]) {
+                            fn_ptr: Java_com_maverick_photo_PhotoPickerActivity_nativeOnPhotoPicked
+                                as *mut std::ffi::c_void,
+                        }],
+                    ) {
                         log::error!("Failed to register PhotoPickerActivity natives: {}", e);
                     }
                 }
@@ -99,7 +104,11 @@ impl OsPhotoPicker {
             }
         };
 
-        Self { vm, context, photo_helper }
+        Self {
+            vm,
+            context,
+            photo_helper,
+        }
     }
 
     pub fn open(&self, callback: impl FnOnce(Option<RgbaImage>) + Send + 'static) {
@@ -134,7 +143,10 @@ impl OsPhotoPicker {
         env: &mut JNIEnv,
         callback_ptr: jlong,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let helper_class_ref = self.photo_helper.as_ref().ok_or("PhotoPickerHelper not loaded")?;
+        let helper_class_ref = self
+            .photo_helper
+            .as_ref()
+            .ok_or("PhotoPickerHelper not loaded")?;
         let helper_class = <&jni::objects::JClass>::from(helper_class_ref.as_obj());
         env.call_static_method(
             helper_class,
@@ -154,7 +166,7 @@ impl OsPhotoPicker {
 // since that's the class that actually receives onActivityResult and calls back into native code.
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_com_maverick_photo_PhotoPickerActivity_nativeOnPhotoPicked(
-    mut env: JNIEnv,
+    env: JNIEnv,
     _class: JClass,
     callback_ptr: jlong,
     image_data: JByteArray,
@@ -182,7 +194,11 @@ pub extern "system" fn Java_com_maverick_photo_PhotoPickerActivity_nativeOnPhoto
 
         let expected_len = (width as usize) * (height as usize) * 4;
         if bytes.len() != expected_len {
-            log::error!("nativeOnPhotoPicked: length mismatch, got {} expected {}", bytes.len(), expected_len);
+            log::error!(
+                "nativeOnPhotoPicked: length mismatch, got {} expected {}",
+                bytes.len(),
+                expected_len
+            );
             callback(None);
             return;
         }

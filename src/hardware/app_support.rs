@@ -3,19 +3,19 @@
 //! This module provides cross-platform functionality to access application support
 //! directories on iOS, macOS, Linux, Windows, and Android.
 
- #[cfg(target_os = "ios")]
- use objc2_foundation::{NSString, NSURL};
- #[cfg(target_os = "ios")]
- use objc2::msg_send;
+#[cfg(target_os = "ios")]
+use objc2::msg_send;
+#[cfg(target_os = "ios")]
+use objc2_foundation::{NSString, NSURL};
 
 use std::path::PathBuf;
 
 #[cfg(target_os = "ios")]
 use objc2::__framework_prelude::AnyObject;
 #[cfg(target_os = "ios")]
-use std::ffi::CStr;
-#[cfg(target_os = "ios")]
 use objc2::runtime::AnyClass;
+#[cfg(target_os = "ios")]
+use std::ffi::CStr;
 
 //  #[cfg(target_os = "macos")]
 //  use objc2_foundation::{NSError, NSDictionary, NSAutoreleasePool, NSFileManager, NSSearchPathDirectory, NSSearchPathDomainMask};
@@ -31,11 +31,7 @@ use std::env;
 use std::fs;
 
 #[cfg(target_os = "android")]
-use jni::{
-    JNIEnv,
-    objects::{JObject, JString},
-    JavaVM,
-};
+use jni::{JNIEnv, JavaVM, objects::JString};
 #[cfg(target_os = "android")]
 use std::sync::Arc;
 #[cfg(target_os = "android")]
@@ -46,8 +42,8 @@ const NS_APPLICATION_SUPPORT_DIRECTORY: usize = 14;
 #[cfg(target_os = "ios")]
 const NS_USER_DOMAIN_MASK: usize = 1;
 
-#[cfg(target_os = "android")]
-static JAVA_VM: OnceLock<JavaVM> = OnceLock::new();
+// #[cfg(target_os = "android")]
+// static JAVA_VM: OnceLock<JavaVM> = OnceLock::new();
 
 /// Access the application support directory.
 ///
@@ -57,14 +53,14 @@ static JAVA_VM: OnceLock<JavaVM> = OnceLock::new();
 pub struct ApplicationSupport;
 
 impl ApplicationSupport {
-    #[cfg(target_os = "android")]
-    pub fn init_android(vm: &JavaVM) {
-        if let Ok(env) = vm.attach_current_thread() {
-            if let Ok(new_vm) = env.get_java_vm() {
-                JAVA_VM.set(new_vm).expect("JavaVM already initialized");
-            }
-        }
-    }
+    //     #[cfg(target_os = "android")]
+    //     pub fn init_android(vm: &JavaVM) {
+    //         if let Ok(env) = vm.attach_current_thread() {
+    //             if let Ok(new_vm) = env.get_java_vm() {
+    //                 JAVA_VM.set(new_vm).expect("JavaVM already initialized");
+    //             }
+    //         }
+    //     }
 
     /// Get the general application support directory path.
     ///
@@ -110,65 +106,71 @@ impl ApplicationSupport {
             println!("getting app support dir for android");
             Self::get_android()
         }
-        #[cfg(not(any(target_os = "ios", target_os = "macos", target_os = "linux", target_os = "windows", target_os = "android")))]
+        #[cfg(not(any(
+            target_os = "ios",
+            target_os = "macos",
+            target_os = "linux",
+            target_os = "windows",
+            target_os = "android"
+        )))]
         {
             // Fallback for unsupported platforms
             Some(PathBuf::from("./app_data"))
         }
     }
 
-  ///// Get application support directory for a specific app name.
-  /////
-  ///// Returns a subdirectory within the application support directory
-  ///// specifically for the given application name.
-  /////
-  ///// # Arguments
-  /////
-  ///// * `app_name` - The name/identifier of the application
-  /////
-  ///// # Returns
-  /////
-  ///// `Some(PathBuf)` with the app-specific directory path, or `None` if unavailable.
-  /////
-  ///// # Examples
-  /////
-  ///// ```
-  ///// use application_support::ApplicationSupport;
-  /////
-  ///// if let Some(path) = ApplicationSupport::get_app_name("MyApp") {
-  /////     println!("MyApp data directory: {:?}", path);
-  ///// }
-  ///// ```
-  //pub fn get_app_name(app_name: &str) -> Option<PathBuf> {
-  //    #[cfg(target_os = "macos")]
-  //    {
-  //        Self::get_app_name_macos(app_name)
-  //    }
-  //    #[cfg(target_os = "linux")]
-  //    {
-  //        Self::get_app_name_linux(app_name)
-  //    }
-  //    #[cfg(target_os = "windows")]
-  //    {
-  //        Self::get_app_name_windows(app_name)
-  //    }
-  //    #[cfg(target_os = "ios")]
-  //    {
-  //        // For iOS, append the app name to the base path
-  //        Self::get_ios().map(|base| base.join(app_name))
-  //    }
-  //    #[cfg(target_os = "android")]
-  //    {
-  //        Self::get_app_name_android(app_name)
-  //    }
-  //    #[cfg(not(any(target_os = "ios", target_os = "macos", target_os = "linux", target_os = "windows", target_os = "android")))]
-  //    {
-  //        // Fallback for unsupported platforms
-  //        let path = PathBuf::from("./app_data").join(app_name);
-  //        std::fs::create_dir_all(&path).ok()?;
-  //        Some(path)
-  //    }
-  //}
+    ///// Get application support directory for a specific app name.
+    /////
+    ///// Returns a subdirectory within the application support directory
+    ///// specifically for the given application name.
+    /////
+    ///// # Arguments
+    /////
+    ///// * `app_name` - The name/identifier of the application
+    /////
+    ///// # Returns
+    /////
+    ///// `Some(PathBuf)` with the app-specific directory path, or `None` if unavailable.
+    /////
+    ///// # Examples
+    /////
+    ///// ```
+    ///// use application_support::ApplicationSupport;
+    /////
+    ///// if let Some(path) = ApplicationSupport::get_app_name("MyApp") {
+    /////     println!("MyApp data directory: {:?}", path);
+    ///// }
+    ///// ```
+    //pub fn get_app_name(app_name: &str) -> Option<PathBuf> {
+    //    #[cfg(target_os = "macos")]
+    //    {
+    //        Self::get_app_name_macos(app_name)
+    //    }
+    //    #[cfg(target_os = "linux")]
+    //    {
+    //        Self::get_app_name_linux(app_name)
+    //    }
+    //    #[cfg(target_os = "windows")]
+    //    {
+    //        Self::get_app_name_windows(app_name)
+    //    }
+    //    #[cfg(target_os = "ios")]
+    //    {
+    //        // For iOS, append the app name to the base path
+    //        Self::get_ios().map(|base| base.join(app_name))
+    //    }
+    //    #[cfg(target_os = "android")]
+    //    {
+    //        Self::get_app_name_android(app_name)
+    //    }
+    //    #[cfg(not(any(target_os = "ios", target_os = "macos", target_os = "linux", target_os = "windows", target_os = "android")))]
+    //    {
+    //        // Fallback for unsupported platforms
+    //        let path = PathBuf::from("./app_data").join(app_name);
+    //        std::fs::create_dir_all(&path).ok()?;
+    //        Some(path)
+    //    }
+    //}
 
     /// Get the application support directory on iOS.
     ///
@@ -193,7 +195,7 @@ impl ApplicationSupport {
 
             if url.is_null() {
                 return None;
-            } 
+            }
 
             let path_nsstring: *mut NSString = msg_send![url, path];
             if path_nsstring.is_null() {
@@ -292,9 +294,7 @@ impl ApplicationSupport {
     #[cfg(target_os = "android")]
     fn get_android() -> Option<PathBuf> {
         println!("getting java vm");
-        let vm = match unsafe {
-            JavaVM::from_raw(ndk_context::android_context().vm().cast())
-        } {
+        let vm = match unsafe { JavaVM::from_raw(ndk_context::android_context().vm().cast()) } {
             Ok(vm) => Arc::new(vm),
             Err(e) => {
                 log::error!("Failed to get JavaVM: {}", e);
@@ -303,7 +303,10 @@ impl ApplicationSupport {
         };
         println!("getting env");
         let mut env = vm.attach_current_thread().ok()?;
-        println!("get android files: {:?}", Self::get_android_files_dir(&mut env, "com.demo.ramp"));
+        println!(
+            "get android files: {:?}",
+            Self::get_android_files_dir(&mut env, "com.demo.ramp")
+        );
         //TODO make dynamic, obtain through context?
         Self::get_android_files_dir(&mut env, "com.demo.ramp")
     }
@@ -314,10 +317,10 @@ impl ApplicationSupport {
         // Get the application context
         // This assumes you have a way to get the context - typically stored globally
         // or passed through JNI. You may need to adjust this based on your app structure.
-        
+
         // Try to get the activity class
         let activity_thread_class = env.find_class("android/app/ActivityThread").ok()?;
-        
+
         // Get the current activity thread
         let current_activity_thread = env
             .call_static_method(
@@ -329,7 +332,7 @@ impl ApplicationSupport {
             .ok()?
             .l()
             .ok()?;
-        
+
         // Get the application context
         let context = env
             .call_method(
@@ -341,142 +344,138 @@ impl ApplicationSupport {
             .ok()?
             .l()
             .ok()?;
-        
+
         // Call getFilesDir() on the context
         let files_dir = env
             .call_method(&context, "getFilesDir", "()Ljava/io/File;", &[])
             .ok()?
             .l()
             .ok()?;
-        
+
         // Get the absolute path
         let path_jstring = env
             .call_method(&files_dir, "getAbsolutePath", "()Ljava/lang/String;", &[])
             .ok()?
             .l()
             .ok()?;
-        
+
         // Convert JString to Rust String
-        let path_string: String = env
-            .get_string(&JString::from(path_jstring))
-            .ok()?
-            .into();
-        
+        let path_string: String = env.get_string(&JString::from(path_jstring)).ok()?.into();
+
         let mut path = PathBuf::from(path_string);
-        
+
         // Append subdirectory if specified
         if !subdir.is_empty() {
             path.push(subdir);
             std::fs::create_dir_all(&path).ok()?;
         }
-        
+
         Some(path)
     }
 
-  ///// Get app-specific support directory on macOS.
-  /////
-  ///// Creates a subdirectory within the macOS Application Support directory
-  ///// for the specified application name.
-  //#[cfg(target_os = "macos")]
-  //fn get_app_name_macos(app_name: &str) -> Option<PathBuf> {
-  //    unsafe {
-  //        let _pool = NSAutoreleasePool::new();
+    ///// Get app-specific support directory on macOS.
+    /////
+    ///// Creates a subdirectory within the macOS Application Support directory
+    ///// for the specified application name.
+    //#[cfg(target_os = "macos")]
+    //fn get_app_name_macos(app_name: &str) -> Option<PathBuf> {
+    //    unsafe {
+    //        let _pool = NSAutoreleasePool::new();
 
-  //        let file_manager = NSFileManager::defaultManager();
+    //        let file_manager = NSFileManager::defaultManager();
 
-  //        let url: Result<Retained<NSURL>, Retained<NSError>> = file_manager.URLForDirectory_inDomain_appropriateForURL_create_error(
-  //            NSSearchPathDirectory::ApplicationSupportDirectory,
-  //            NSSearchPathDomainMask::UserDomainMask,
-  //            None,
-  //            true
-  //        );
+    //        let url: Result<Retained<NSURL>, Retained<NSError>> = file_manager.URLForDirectory_inDomain_appropriateForURL_create_error(
+    //            NSSearchPathDirectory::ApplicationSupportDirectory,
+    //            NSSearchPathDomainMask::UserDomainMask,
+    //            None,
+    //            true
+    //        );
 
-  //        if let Ok(mut url) = url {
-  //            let identifier = NSString::from_str(app_name);
-  //            let subpath: Retained<NSURL> = msg_send![&*url, URLByAppendingPathComponent: Retained::<NSString>::as_ptr(&identifier)];
-  //            url = subpath;
+    //        if let Ok(mut url) = url {
+    //            let identifier = NSString::from_str(app_name);
+    //            let subpath: Retained<NSURL> = msg_send![&*url, URLByAppendingPathComponent: Retained::<NSString>::as_ptr(&identifier)];
+    //            url = subpath;
 
-  //            let _: Bool = msg_send![&*file_manager,
-  //                createDirectoryAtURL: &*url,
-  //                withIntermediateDirectories: true,
-  //                attributes: std::ptr::null::<NSDictionary>(),
-  //                error: std::ptr::null_mut::<*mut NSError>()
-  //            ];
+    //            let _: Bool = msg_send![&*file_manager,
+    //                createDirectoryAtURL: &*url,
+    //                withIntermediateDirectories: true,
+    //                attributes: std::ptr::null::<NSDictionary>(),
+    //                error: std::ptr::null_mut::<*mut NSError>()
+    //            ];
 
-  //            let path: *mut NSString = msg_send![&*url, path];
-  //            if !path.is_null() {
-  //                let str_path = (*path).to_string();
-  //                return Some(PathBuf::from(str_path));
-  //            }
-  //        }
+    //            let path: *mut NSString = msg_send![&*url, path];
+    //            if !path.is_null() {
+    //                let str_path = (*path).to_string();
+    //                return Some(PathBuf::from(str_path));
+    //            }
+    //        }
 
-  //        None
-  //    }
-  //}
+    //        None
+    //    }
+    //}
 
-  ///// Get app-specific support directory on Linux.
-  /////
-  ///// Creates a subdirectory within the XDG data directory
-  ///// for the specified application name.
-  //#[cfg(target_os = "linux")]
-  //fn get_app_name_linux(app_name: &str) -> Option<PathBuf> {
-  //    if let Ok(xdg_data_home) = env::var("XDG_DATA_HOME") {
-  //        let path = PathBuf::from(xdg_data_home).join(app_name);
-  //        if fs::create_dir_all(&path).is_ok() {
-  //            return Some(path);
-  //        }
-  //    }
+    ///// Get app-specific support directory on Linux.
+    /////
+    ///// Creates a subdirectory within the XDG data directory
+    ///// for the specified application name.
+    //#[cfg(target_os = "linux")]
+    //fn get_app_name_linux(app_name: &str) -> Option<PathBuf> {
+    //    if let Ok(xdg_data_home) = env::var("XDG_DATA_HOME") {
+    //        let path = PathBuf::from(xdg_data_home).join(app_name);
+    //        if fs::create_dir_all(&path).is_ok() {
+    //            return Some(path);
+    //        }
+    //    }
 
-  //    if let Ok(home) = env::var("HOME") {
-  //        let path = PathBuf::from(home)
-  //            .join(".local")
-  //            .join("share")
-  //            .join(app_name);
+    //    if let Ok(home) = env::var("HOME") {
+    //        let path = PathBuf::from(home)
+    //            .join(".local")
+    //            .join("share")
+    //            .join(app_name);
 
-  //        if fs::create_dir_all(&path).is_ok() {
-  //            return Some(path);
-  //        }
-  //    }
+    //        if fs::create_dir_all(&path).is_ok() {
+    //            return Some(path);
+    //        }
+    //    }
 
-  //    None
-  //}
+    //    None
+    //}
 
-  ///// Get app-specific support directory on Windows.
-  /////
-  ///// Creates a subdirectory within the Windows AppData directory
-  ///// for the specified application name.
-  //#[cfg(target_os = "windows")]
-  //fn get_app_name_windows(app_name: &str) -> Option<PathBuf> {
-  //    if let Ok(appdata) = env::var("APPDATA") {
-  //        let path = PathBuf::from(appdata).join(app_name);
-  //        if fs::create_dir_all(&path).is_ok() {
-  //            return Some(path);
-  //        }
-  //    }
+    ///// Get app-specific support directory on Windows.
+    /////
+    ///// Creates a subdirectory within the Windows AppData directory
+    ///// for the specified application name.
+    //#[cfg(target_os = "windows")]
+    //fn get_app_name_windows(app_name: &str) -> Option<PathBuf> {
+    //    if let Ok(appdata) = env::var("APPDATA") {
+    //        let path = PathBuf::from(appdata).join(app_name);
+    //        if fs::create_dir_all(&path).is_ok() {
+    //            return Some(path);
+    //        }
+    //    }
 
-  //    if let Ok(userprofile) = env::var("USERPROFILE") {
-  //        let path = PathBuf::from(userprofile)
-  //            .join("AppData")
-  //            .join("Roaming")
-  //            .join(app_name);
+    //    if let Ok(userprofile) = env::var("USERPROFILE") {
+    //        let path = PathBuf::from(userprofile)
+    //            .join("AppData")
+    //            .join("Roaming")
+    //            .join(app_name);
 
-  //        if fs::create_dir_all(&path).is_ok() {
-  //            return Some(path);
-  //        }
-  //    } 
+    //        if fs::create_dir_all(&path).is_ok() {
+    //            return Some(path);
+    //        }
+    //    }
 
-  //    None
-  //}
+    //    None
+    //}
 
-
-  //#[cfg(target_os = "android")]
-  //fn get_app_name_android(app_name: &str) -> Option<PathBuf> {
-  //    let vm = JAVA_VM.get().or_else(|| {
-  //        eprintln!("ERROR: Android JavaVM not initialized! Call ApplicationSupport::init_android() first or ensure JNI_OnLoad is properly set up.");
-  //        None
-  //    })?;
-  //    
-  //    let mut env = vm.attach_current_thread().ok()?;
-  //    Self::get_android_files_dir(&mut env, app_name)
-  //}
+    //#[cfg(target_os = "android")]
+    //fn get_app_name_android(app_name: &str) -> Option<PathBuf> {
+    //    let vm = JAVA_VM.get().or_else(|| {
+    //        eprintln!("ERROR: Android JavaVM not initialized! Call ApplicationSupport::init_android() first or ensure JNI_OnLoad is properly set up.");
+    //        None
+    //    })?;
+    //
+    //    let mut env = vm.attach_current_thread().ok()?;
+    //    Self::get_android_files_dir(&mut env, app_name)
+    //}
 }

@@ -1,13 +1,13 @@
-use std::ffi::c_void;
-use std::ffi::CString;
-use std::sync::OnceLock;
 use block2::RcBlock;
-use objc2::{class, msg_send, sel};
+use image::RgbaImage;
 use objc2::declare::ClassBuilder;
 use objc2::rc::autoreleasepool;
 use objc2::runtime::{AnyClass, AnyObject, Sel};
+use objc2::{class, msg_send, sel};
 use objc2_foundation::{NSArray, NSObject};
-use image::RgbaImage;
+use std::ffi::CString;
+use std::ffi::c_void;
+use std::sync::OnceLock;
 
 #[derive(Debug, Clone)]
 pub enum ImageOrientation {

@@ -1,9 +1,9 @@
+use crate::hardware::android_util::JNIUtil;
 use image::RgbaImage;
 use jni::objects::{GlobalRef, JByteBuffer, JClass, JObject, JObjectArray, JString, JValue};
-use jni::{JNIEnv, JavaVM};
 use jni::sys::{jint, jlong, jobject};
+use jni::{JNIEnv, JavaVM};
 use ndk_context;
-use crate::hardware::android_util::JNIUtil;
 
 use std::error::Error;
 use std::sync::{Arc, Mutex};
@@ -18,39 +18,20 @@ pub struct OsCamera {
 }
 
 impl OsCamera {
-pub fn new() -> Self {
-    println!("constructing new OsCamera");
-    // Try to get JavaVM
-    let java_vm = match unsafe {
-        JavaVM::from_raw(ndk_context::android_context().vm().cast())
-    } {
-        Ok(vm) => std::sync::Arc::new(vm),
-        Err(e) => {
-            log::error!("Failed to get JavaVM: {}", e);
-            // Return a non-functional camera object
-            return Self {
-                java_vm: std::sync::Arc::new(unsafe {
-                    JavaVM::from_raw(ndk_context::android_context().vm().cast())
-                        .expect("Critical: JavaVM unavailable for AndroidCamera")
-                }),
-                app_context: None,
-                camera_helper: None,
-                latest_frame: Arc::new(Mutex::new(None)),
-                permission_requested: false,
-                camera_opened: false,
-            };
-        }
-    };
-
-    // Try to get Context
-    println!("getting app context");
-    let app_context = {
-        let mut env = match java_vm.attach_current_thread() {
-            Ok(env) => env,
+    pub fn new() -> Self {
+        println!("constructing new OsCamera");
+        // Try to get JavaVM
+        let java_vm = match unsafe { JavaVM::from_raw(ndk_context::android_context().vm().cast()) }
+        {
+            Ok(vm) => std::sync::Arc::new(vm),
             Err(e) => {
-                log::error!("Failed to attach to JVM: {}", e);
+                log::error!("Failed to get JavaVM: {}", e);
+                // Return a non-functional camera object
                 return Self {
-                    java_vm: java_vm.clone(),
+                    java_vm: std::sync::Arc::new(unsafe {
+                        JavaVM::from_raw(ndk_context::android_context().vm().cast())
+                            .expect("Critical: JavaVM unavailable for AndroidCamera")
+                    }),
                     app_context: None,
                     camera_helper: None,
                     latest_frame: Arc::new(Mutex::new(None)),
@@ -60,41 +41,59 @@ pub fn new() -> Self {
             }
         };
 
-        let ctx_ptr = ndk_context::android_context().context();
-        if ctx_ptr.is_null() {
-            log::error!("Android context is null");
-            return Self {
-                java_vm: java_vm.clone(),
-                app_context: None,
-                camera_helper: None,
-                latest_frame: Arc::new(Mutex::new(None)),
-                permission_requested: false,
-                camera_opened: false,
+        // Try to get Context
+        println!("getting app context");
+        let app_context = {
+            let env = match java_vm.attach_current_thread() {
+                Ok(env) => env,
+                Err(e) => {
+                    log::error!("Failed to attach to JVM: {}", e);
+                    return Self {
+                        java_vm: java_vm.clone(),
+                        app_context: None,
+                        camera_helper: None,
+                        latest_frame: Arc::new(Mutex::new(None)),
+                        permission_requested: false,
+                        camera_opened: false,
+                    };
+                }
             };
-        }
 
-        let context = unsafe { JObject::from_raw(ctx_ptr as jobject) };
-        match env.new_global_ref(context) {
-            Ok(global) => Some(global),
-            Err(e) => {
-                log::error!("Failed to create global ref to Context: {}", e);
-                None
+            let ctx_ptr = ndk_context::android_context().context();
+            if ctx_ptr.is_null() {
+                log::error!("Android context is null");
+                return Self {
+                    java_vm: java_vm.clone(),
+                    app_context: None,
+                    camera_helper: None,
+                    latest_frame: Arc::new(Mutex::new(None)),
+                    permission_requested: false,
+                    camera_opened: false,
+                };
             }
-        }
-    };
 
-    let mut camera = Self {
-        java_vm: java_vm.clone(),
-        app_context,
-        camera_helper: None,
-        latest_frame: Arc::new(Mutex::new(None)),
-        permission_requested: false,
-        camera_opened: false,
-    };
+            let context = unsafe { JObject::from_raw(ctx_ptr as jobject) };
+            match env.new_global_ref(context) {
+                Ok(global) => Some(global),
+                Err(e) => {
+                    log::error!("Failed to create global ref to Context: {}", e);
+                    None
+                }
+            }
+        };
 
-    camera.start();
-    camera
-}
+        let mut camera = Self {
+            java_vm: java_vm.clone(),
+            app_context,
+            camera_helper: None,
+            latest_frame: Arc::new(Mutex::new(None)),
+            permission_requested: false,
+            camera_opened: false,
+        };
+
+        camera.start();
+        camera
+    }
 
     // Public API
     pub fn start(&mut self) {
@@ -152,12 +151,7 @@ pub fn new() -> Self {
         println!("stopping camera");
         if let Some(helper) = &self.camera_helper {
             if let Ok(mut env) = self.java_vm.attach_current_thread() {
-                let _ = env.call_method(
-                    helper.as_obj(),
-                    "closeCamera",
-                    "()V",
-                    &[],
-                );
+                let _ = env.call_method(helper.as_obj(), "closeCamera", "()V", &[]);
             }
         }
         self.camera_opened = false;
@@ -173,12 +167,14 @@ pub fn new() -> Self {
 
         let mut env = self.java_vm.attach_current_thread()?;
 
-        let camera_ids = env.call_method(
-            helper.as_obj(),
-            "getCameraIdList",
-            "()[Ljava/lang/String;",
-            &[],
-        )?.l()?;
+        let camera_ids = env
+            .call_method(
+                helper.as_obj(),
+                "getCameraIdList",
+                "()[Ljava/lang/String;",
+                &[],
+            )?
+            .l()?;
 
         let id_array = JObjectArray::from(camera_ids);
         if env.get_array_length(&id_array)? == 0 {
@@ -206,43 +202,45 @@ pub fn new() -> Self {
         Ok(())
     }
 
-unsafe fn load_embedded_dex(&mut self) -> Result<(), Box<dyn Error>> {
-    println!("loading embedded dex");
-    let dex_bytes: &[u8] = include_bytes!("../camera/android/classes.dex");
+    unsafe fn load_embedded_dex(&mut self) -> Result<(), Box<dyn Error>> {
+        println!("loading embedded dex");
+        let dex_bytes: &[u8] = include_bytes!("../camera/android/classes.dex");
 
-    let class_name = "com.maverick.camera.CameraHelper";
+        let class_name = "com.maverick.camera.CameraHelper";
 
-    let helper = JNIUtil::instantiate_class_from_embedded_dex(
-        &self.java_vm,
-        self.app_context.as_ref().ok_or("App context is None")?,
-        dex_bytes,
-        class_name,
-    )?;
+        let helper = unsafe {
+            JNIUtil::instantiate_class_from_embedded_dex(
+                &self.java_vm,
+                self.app_context.as_ref().ok_or("App context is None")?,
+                dex_bytes,
+                class_name,
+            )
+        }?;
 
-    let mut env = self.java_vm.attach_current_thread()?;
-    JNIUtil::register_native_methods(&mut env, &helper, vec![
-        jni::NativeMethod {
-            name: "nativeOnFrameAvailable".into(),
-            sig: "(JLandroid/media/Image;I)V".into(),
-            fn_ptr: Java_com_maverick_camera_CameraHelper_nativeOnFrameAvailable as *mut std::ffi::c_void,
-        },
-    ])?;
+        let mut env = self.java_vm.attach_current_thread()?;
+        JNIUtil::register_native_methods(
+            &mut env,
+            &helper,
+            vec![jni::NativeMethod {
+                name: "nativeOnFrameAvailable".into(),
+                sig: "(JLandroid/media/Image;I)V".into(),
+                fn_ptr: Java_com_maverick_camera_CameraHelper_nativeOnFrameAvailable
+                    as *mut std::ffi::c_void,
+            }],
+        )?;
 
-    self.camera_helper = Some(helper);
-    Ok(())
-}
+        self.camera_helper = Some(helper);
+        Ok(())
+    }
 
     // Permission Helpers
     fn has_permission(&self, env: &mut JNIEnv) -> Result<bool, Box<dyn Error>> {
         println!("checking permissions");
         let helper = self.camera_helper.as_ref().ok_or("camera helper is None")?;
 
-        let result = env.call_method(
-            helper.as_obj(),
-            "hasCameraPermission",
-            "()Z",
-            &[],
-        )?.z()?;
+        let result = env
+            .call_method(helper.as_obj(), "hasCameraPermission", "()Z", &[])?
+            .z()?;
         Ok(result)
     }
 
@@ -280,7 +278,11 @@ pub extern "system" fn Java_com_maverick_camera_CameraHelper_nativeOnFrameAvaila
 // SENSOR_ORIENTATION is the clockwise rotation (0/90/180/270) Camera2 says the raw sensor
 // image needs to match the device's upright orientation, applied here as a change of
 // destination index rather than a separate post-processing rotation pass.
-fn process_image(env: &mut JNIEnv, image: &JObject, rotation_degrees: i32) -> Result<RgbaImage, Box<dyn Error>> {
+fn process_image(
+    env: &mut JNIEnv,
+    image: &JObject,
+    rotation_degrees: i32,
+) -> Result<RgbaImage, Box<dyn Error>> {
     let width = env.call_method(image, "getWidth", "()I", &[])?.i()?;
     let height = env.call_method(image, "getHeight", "()I", &[])?.i()?;
 
@@ -296,7 +298,9 @@ fn process_image(env: &mut JNIEnv, image: &JObject, rotation_degrees: i32) -> Re
 
     let mut extract = |idx| -> Result<(Vec<u8>, i32, i32), Box<dyn Error>> {
         let plane = env.get_object_array_element(&planes, idx)?;
-        let buffer = env.call_method(&plane, "getBuffer", "()Ljava/nio/ByteBuffer;", &[])?.l()?;
+        let buffer = env
+            .call_method(&plane, "getBuffer", "()Ljava/nio/ByteBuffer;", &[])?
+            .l()?;
         let byte_buffer = JByteBuffer::from(buffer);
 
         let len = env.get_direct_buffer_capacity(&byte_buffer)?;

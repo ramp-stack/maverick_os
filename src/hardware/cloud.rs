@@ -10,21 +10,17 @@ use android::OsCloudStorage;
 
 #[derive(Clone)]
 pub struct CloudStorage(
-    #[cfg(any(target_os = "macos", target_os = "ios", target_os = "android"))]
-    OsCloudStorage
+    #[cfg(any(target_os = "macos", target_os = "ios", target_os = "android"))] OsCloudStorage,
 );
 
 impl CloudStorage {
-    pub(crate) fn new(
-        #[cfg(target_os = "android")]
-        vm: &jni::JavaVM
-    ) -> Self {
+    pub(crate) fn new(#[cfg(target_os = "android")] vm: &jni::JavaVM) -> Self {
         #[cfg(target_os = "android")]
         OsCloudStorage::init_java_vm(vm);
-        
+
         Self(
             #[cfg(any(target_os = "macos", target_os = "ios", target_os = "android"))]
-            OsCloudStorage::new()
+            OsCloudStorage::new(),
         )
     }
 
@@ -38,7 +34,9 @@ impl CloudStorage {
 
     pub fn get(&self, key: &str) -> Option<String> {
         #[cfg(any(target_os = "macos", target_os = "ios", target_os = "android"))]
-        {self.0.get(key)}
+        {
+            self.0.get(key)
+        }
 
         #[cfg(not(any(target_os = "macos", target_os = "ios", target_os = "android")))]
         panic!("Not supported on this OS");
@@ -65,7 +63,9 @@ impl Default for CloudStorage {
     fn default() -> Self {
         Self::new(
             #[cfg(target_os = "android")]
-            panic!("CloudStorage::default() cannot be used on Android. Use CloudStorage::new(vm) instead.")
+            panic!(
+                "CloudStorage::default() cannot be used on Android. Use CloudStorage::new(vm) instead."
+            ),
         )
     }
 }

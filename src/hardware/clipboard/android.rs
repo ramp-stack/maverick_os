@@ -1,5 +1,5 @@
+use jni::JavaVM;
 use jni::objects::{GlobalRef, JObject};
-use jni::{JNIEnv, JavaVM};
 use std::sync::Arc;
 
 #[derive(Clone)]
@@ -11,9 +11,7 @@ pub struct OsClipboard {
 impl OsClipboard {
     pub fn new() -> Self {
         // Get JavaVM
-        let vm = match unsafe {
-            JavaVM::from_raw(ndk_context::android_context().vm().cast())
-        } {
+        let vm = match unsafe { JavaVM::from_raw(ndk_context::android_context().vm().cast()) } {
             Ok(vm) => Arc::new(vm),
             Err(e) => {
                 log::error!("Failed to get JavaVM: {}", e);
@@ -24,7 +22,7 @@ impl OsClipboard {
 
         // Get application/activity context as GlobalRef
         let context = {
-            let mut env = vm
+            let env = vm
                 .attach_current_thread()
                 .expect("Failed to attach thread to get context");
 
@@ -99,18 +97,13 @@ impl OsClipboard {
             return Ok(String::new());
         }
 
-        // Convert to Rust String
-        let java_string = env
-            .call_method(&text, "toString", "()Ljava/lang/String;", &[])?
-            .l()?;
-
         let java_string: jni::objects::JString = env
             .call_method(&text, "toString", "()Ljava/lang/String;", &[])?
             .l()?
             .into();
 
-        let rust_string: String = env.get_string(&java_string)?.into();        
-        
+        let rust_string: String = env.get_string(&java_string)?.into();
+
         Ok(rust_string)
     }
 

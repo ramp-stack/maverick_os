@@ -23,11 +23,8 @@ mod windows;
 #[cfg(target_os = "windows")]
 use windows::OsPhotoPicker;
 
-use std::sync::{Arc, Mutex};
 use image::RgbaImage;
-
-#[cfg(target_os = "android")]
-use jni::objects::GlobalRef;
+use std::sync::{Arc, Mutex};
 
 pub struct PhotoPicker {
     pub photo: Arc<Mutex<Option<RgbaImage>>>,

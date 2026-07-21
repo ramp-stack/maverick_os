@@ -1,10 +1,11 @@
- use jni::objects::{GlobalRef, JObject, JValue};
+
+use image::RgbaImage;
+use jni::objects::{GlobalRef, JObject, JValue};
 use jni::sys::jobject;
 use jni::{JNIEnv, JavaVM};
 use ndk_context;
 use std::error::Error;
 use std::sync::{Once, OnceLock};
-use image::RgbaImage;
 
 static JAVA_VM: OnceLock<JavaVM> = OnceLock::new();
 static APP_CONTEXT: OnceLock<GlobalRef> = OnceLock::new();
@@ -45,7 +46,11 @@ impl OsShare {
         Ok(())
     }
 
-    fn create_share_intent<'a>(&self, env: &mut JNIEnv<'a>, text: &str) -> Result<JObject<'a>, Box<dyn Error>> {
+    fn create_share_intent<'a>(
+        &self,
+        env: &mut JNIEnv<'a>,
+        text: &str,
+    ) -> Result<JObject<'a>, Box<dyn Error>> {
         let intent_class = env.find_class("android/content/Intent")?;
         let intent = env.new_object(intent_class, "()V", &[])?;
 
@@ -74,7 +79,8 @@ impl OsShare {
             &[JValue::Object(&extra_text), JValue::Object(&share_text)],
         )?;
 
-        let flags = env.get_static_field("android/content/Intent", "FLAG_ACTIVITY_NEW_TASK", "I")?;
+        let flags =
+            env.get_static_field("android/content/Intent", "FLAG_ACTIVITY_NEW_TASK", "I")?;
         let flag_value = flags.i()?;
         env.call_method(
             &intent,
@@ -103,7 +109,11 @@ impl OsShare {
         Ok(chooser_obj)
     }
 
-    fn start_share_activity<'a>(&self, env: &mut JNIEnv<'a>, chooser_intent: JObject<'a>) -> Result<(), Box<dyn Error>> {
+    fn start_share_activity<'a>(
+        &self,
+        env: &mut JNIEnv<'a>,
+        chooser_intent: JObject<'a>,
+    ) -> Result<(), Box<dyn Error>> {
         if let Some(global_context) = APP_CONTEXT.get() {
             let context = env.new_local_ref(global_context)?;
 
@@ -128,7 +138,7 @@ pub fn initialize() -> Result<(), Box<dyn Error>> {
     let jvm = unsafe { JavaVM::from_raw(ndk_context::android_context().vm().cast())? };
 
     let global_context = {
-        let mut env = jvm.attach_current_thread()?;
+        let env = jvm.attach_current_thread()?;
 
         let ctx_ptr = ndk_context::android_context().context();
         if ctx_ptr.is_null() {
@@ -140,7 +150,9 @@ pub fn initialize() -> Result<(), Box<dyn Error>> {
     };
 
     JAVA_VM.set(jvm).map_err(|_| "JavaVM already initialized")?;
-    APP_CONTEXT.set(global_context).map_err(|_| "App context already initialized")?;
+    APP_CONTEXT
+        .set(global_context)
+        .map_err(|_| "App context already initialized")?;
 
     Ok(())
 }

@@ -1,7 +1,7 @@
-use jni::objects::{ GlobalRef, JValue };
-use jni::{ JNIEnv, JavaVM, NativeMethod };
-use std::sync::Arc;
+use jni::objects::{GlobalRef, JValue};
+use jni::{JNIEnv, JavaVM, NativeMethod};
 use std::error::Error;
+use std::sync::Arc;
 
 pub struct JNIUtil {}
 
@@ -60,20 +60,23 @@ impl JNIUtil {
                 jni::signature::ReturnType::Object,
                 &[],
             )
-        }?.l()?;
+        }?
+        .l()?;
 
         let class_name_jstr = env.new_string(class_name)?;
-        let loaded_class = env.call_method(
-            loader,
-            "loadClass",
-            "(Ljava/lang/String;)Ljava/lang/Class;",
-            &[JValue::Object(&class_name_jstr)],
-        )?.l()?;
+        let loaded_class = env
+            .call_method(
+                loader,
+                "loadClass",
+                "(Ljava/lang/String;)Ljava/lang/Class;",
+                &[JValue::Object(&class_name_jstr)],
+            )?
+            .l()?;
 
         Ok(env.new_global_ref(loaded_class)?)
     }
 
-   /// Loads a class from an embedded .dex file and instantiates it.
+    /// Loads a class from an embedded .dex file and instantiates it.
     /// Returns a GlobalRef to the instantiated helper object.
     pub unsafe fn instantiate_class_from_embedded_dex(
         java_vm: &Arc<JavaVM>,
@@ -84,10 +87,8 @@ impl JNIUtil {
         let mut env = java_vm.attach_current_thread()?;
 
         // Create ByteBuffer from dex bytes
-        let byte_buffer = env.new_direct_byte_buffer(
-            dex_bytes.as_ptr() as *mut u8,
-            dex_bytes.len(),
-        )?;
+        let byte_buffer =
+            unsafe { env.new_direct_byte_buffer(dex_bytes.as_ptr() as *mut u8, dex_bytes.len()) }?;
 
         // Get the parent ClassLoader from Context
         let context_class = env.get_object_class(app_context.as_obj())?;
@@ -96,12 +97,15 @@ impl JNIUtil {
             "getClassLoader",
             "()Ljava/lang/ClassLoader;",
         )?;
-        let parent_loader = env.call_method_unchecked(
-            app_context.as_obj(),
-            get_class_loader,
-            jni::signature::ReturnType::Object,
-            &[],
-        )?.l()?;
+        let parent_loader = unsafe {
+            env.call_method_unchecked(
+                app_context.as_obj(),
+                get_class_loader,
+                jni::signature::ReturnType::Object,
+                &[],
+            )
+        }?
+        .l()?;
 
         // Create InMemoryDexClassLoader
         let loader_class = env.find_class("dalvik/system/InMemoryDexClassLoader")?;
@@ -111,14 +115,16 @@ impl JNIUtil {
             "(Ljava/nio/ByteBuffer;Ljava/lang/ClassLoader;)V",
         )?;
 
-        let loader_obj = env.new_object_unchecked(
-            loader_class,
-            constructor,
-            &[
-                JValue::Object(&byte_buffer).as_jni(),
-                JValue::Object(&parent_loader).as_jni(),
-            ],
-        )?;
+        let loader_obj = unsafe {
+            env.new_object_unchecked(
+                loader_class,
+                constructor,
+                &[
+                    JValue::Object(&byte_buffer).as_jni(),
+                    JValue::Object(&parent_loader).as_jni(),
+                ],
+            )
+        }?;
 
         let global_loader = env.new_global_ref(loader_obj)?;
 
@@ -127,27 +133,28 @@ impl JNIUtil {
 
         // Load the target class
         let class_name_jstr = env.new_string(class_name)?;
-        let loaded_class = env.call_method(
-            global_loader.as_obj(),
-            "loadClass",
-            "(Ljava/lang/String;)Ljava/lang/Class;",
-            &[JValue::Object(&class_name_jstr)],
-        )?.l()?;
+        let loaded_class = env
+            .call_method(
+                global_loader.as_obj(),
+                "loadClass",
+                "(Ljava/lang/String;)Ljava/lang/Class;",
+                &[JValue::Object(&class_name_jstr)],
+            )?
+            .l()?;
 
         let loaded_jclass = jni::objects::JClass::from(loaded_class);
 
         // Instantiate the class (assumes it has a (Context) constructor)
-        let constructor_id = env.get_method_id(
-            &loaded_jclass,
-            "<init>",
-            "(Landroid/content/Context;)V",
-        )?;
+        let constructor_id =
+            env.get_method_id(&loaded_jclass, "<init>", "(Landroid/content/Context;)V")?;
 
-        let helper_obj = env.new_object_unchecked(
-            loaded_jclass,
-            constructor_id,
-            &[JValue::Object(app_context.as_obj()).as_jni()],
-        )?;
+        let helper_obj = unsafe {
+            env.new_object_unchecked(
+                loaded_jclass,
+                constructor_id,
+                &[JValue::Object(app_context.as_obj()).as_jni()],
+            )
+        }?;
 
         Ok(env.new_global_ref(helper_obj)?)
     }
@@ -156,12 +163,14 @@ impl JNIUtil {
         env: &mut JNIEnv,
         loader: &GlobalRef,
     ) -> Result<(), Box<dyn Error>> {
-        let thread = env.call_static_method(
-            "java/lang/Thread",
-            "currentThread",
-            "()Ljava/lang/Thread;",
-            &[],
-        )?.l()?;
+        let thread = env
+            .call_static_method(
+                "java/lang/Thread",
+                "currentThread",
+                "()Ljava/lang/Thread;",
+                &[],
+            )?
+            .l()?;
 
         env.call_method(
             thread,
@@ -182,10 +191,8 @@ impl JNIUtil {
     ) -> Result<GlobalRef, Box<dyn Error>> {
         let mut env = java_vm.attach_current_thread()?;
 
-        let byte_buffer = env.new_direct_byte_buffer(
-            dex_bytes.as_ptr() as *mut u8,
-            dex_bytes.len(),
-        )?;
+        let byte_buffer =
+            unsafe { env.new_direct_byte_buffer(dex_bytes.as_ptr() as *mut u8, dex_bytes.len()) }?;
 
         let context_class = env.get_object_class(app_context.as_obj())?;
         let get_class_loader = env.get_method_id(
@@ -193,12 +200,15 @@ impl JNIUtil {
             "getClassLoader",
             "()Ljava/lang/ClassLoader;",
         )?;
-        let parent_loader = env.call_method_unchecked(
-            app_context.as_obj(),
-            get_class_loader,
-            jni::signature::ReturnType::Object,
-            &[],
-        )?.l()?;
+        let parent_loader = unsafe {
+            env.call_method_unchecked(
+                app_context.as_obj(),
+                get_class_loader,
+                jni::signature::ReturnType::Object,
+                &[],
+            )
+        }?
+        .l()?;
 
         let loader_class = env.find_class("dalvik/system/InMemoryDexClassLoader")?;
         let constructor = env.get_method_id(
@@ -207,14 +217,16 @@ impl JNIUtil {
             "(Ljava/nio/ByteBuffer;Ljava/lang/ClassLoader;)V",
         )?;
 
-        let loader_obj = env.new_object_unchecked(
-            loader_class,
-            constructor,
-            &[
-                JValue::Object(&byte_buffer).as_jni(),
-                JValue::Object(&parent_loader).as_jni(),
-            ],
-        )?;
+        let loader_obj = unsafe {
+            env.new_object_unchecked(
+                loader_class,
+                constructor,
+                &[
+                    JValue::Object(&byte_buffer).as_jni(),
+                    JValue::Object(&parent_loader).as_jni(),
+                ],
+            )
+        }?;
 
         let global_loader = env.new_global_ref(loader_obj)?;
         Self::set_context_class_loader(&mut env, &global_loader)?;
@@ -230,7 +242,7 @@ impl JNIUtil {
 
         // Better error reporting
         if result.is_err() && env.exception_check().unwrap_or(false) {
-            env.exception_describe(); // ← This prints the real Java exception to logcat
+            let _ = env.exception_describe(); // ← This prints the real Java exception to logcat
             let _ = env.exception_clear();
         }
 

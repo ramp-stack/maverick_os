@@ -15,15 +15,12 @@ use android::OsClipboard;
 
 #[derive(Clone)]
 pub struct Clipboard(
-    #[cfg(any(target_os = "ios", target_os = "macos", target_os = "android"))]
-    OsClipboard
+    #[cfg(any(target_os = "ios", target_os = "macos", target_os = "android"))] OsClipboard,
 );
 
 impl Clipboard {
     pub(crate) fn new() -> Self {
-        Self(
-            OsClipboard::new()
-        )
+        Self(OsClipboard::new())
     }
 
     pub fn get(&self) -> Option<String> {
