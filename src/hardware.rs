@@ -1,3 +1,4 @@
+#[cfg(target_os = "android")]
 mod android_util;
 mod app_support;
 mod camera;
