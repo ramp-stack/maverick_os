@@ -54,7 +54,11 @@ impl ImageOrientation {
 pub struct OsPhotoPicker;
 
 impl OsPhotoPicker {
-    pub fn open(callback: impl FnOnce(Option<RgbaImage>) + Send + 'static) {
+    pub fn new() -> Self {
+        Self
+    }
+
+    pub fn open(&self, callback: impl FnOnce(Option<RgbaImage>) + Send + 'static) {
         let callback_box: Box<Box<dyn FnOnce(Option<RgbaImage>) + Send + 'static>> =
             Box::new(Box::new(callback));
         let callback_ptr = Box::into_raw(callback_box) as usize;

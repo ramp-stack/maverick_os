@@ -193,7 +193,7 @@ impl<A: Application> ApplicationHandler for Window<A> {
 
     fn suspended(&mut self, _event_loop: &ActiveEventLoop) {
         if let Some(maverick) = self.0.as_mut() {
-            maverick.runtime.pause();
+            // maverick.runtime.pause(); // air not wired up yet
             maverick.surface.suspend();
         }
     }
@@ -214,7 +214,7 @@ impl<A: Application> ApplicationHandler for Window<A> {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         match &mut self.0 {
             Some(maverick) => {
-                maverick.runtime.resume();
+                // maverick.runtime.resume(); // air not wired up yet
                 maverick.surface.resurface(&maverick.context.window);
             }
             none => {

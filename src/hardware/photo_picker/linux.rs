@@ -7,7 +7,11 @@ use std::thread;
 pub struct OsPhotoPicker;
 
 impl OsPhotoPicker {
-    pub fn open(callback: impl FnOnce(Vec<u8>) + Send + 'static) {
+    pub fn new() -> Self {
+        Self
+    }
+
+    pub fn open(&self, callback: impl FnOnce(Vec<u8>) + Send + 'static) {
         thread::spawn(move || {
             let result = Self::try_zenity().or_else(|| Self::try_kdialog());
 

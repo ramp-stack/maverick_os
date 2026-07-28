@@ -79,14 +79,6 @@ impl OsPhotoPicker {
             }
         }
 
-        // let package_name = {
-        //     let mut env = vm.attach_current_thread().ok();
-        //     if let Some(env) = &mut env {
-        //         JNIUtil::get_package_name(env, context.as_obj())
-        //     } else {
-        //         None
-        //     }
-        // };
         let photo_helper = {
             println!("loading embedded dex for photo picker");
             let dex_bytes: &[u8] = include_bytes!("android/classes.dex");

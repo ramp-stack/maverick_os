@@ -83,9 +83,10 @@ impl<A: Application> MaverickOS<A> {
                 secret
             }
         };
-        let (air, runtime) = Air::start(secret);
-        runtime.start_services(A::services());
-        runtime.start_services(A::background_services());
+        let (runtime, air) = Air::start(secret, Services::default());
+        // TODO: air not wired up yet, services not started
+        // runtime.start_services(A::services());
+        // runtime.start_services(A::background_services());
 
         let mut context = Context {
             hardware,
