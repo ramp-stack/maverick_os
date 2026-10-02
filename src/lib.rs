@@ -3,16 +3,21 @@ pub mod hardware;
 pub mod window;
 use window::{Window, Renderer, Surface, Input};
 
-pub use air;
+pub mod runtime;
+use runtime::Runtime;
 
-#[cfg(target_os = "android")]
-use winit::platform::android::activity::AndroidApp;
+mod cache;
+use cache::Cache;
 
-use air::{Air, Secret, Services};
+mod shared;
+
+pub mod air;
 
 mod config;
 pub use config::{IS_MOBILE, IS_WEB};
 
+#[cfg(target_os = "android")]
+use winit::platform::android::activity::AndroidApp;
 use rusqlite::OptionalExtension;
 
 pub trait Application: 'static {
@@ -20,22 +25,19 @@ pub trait Application: 'static {
 
     fn new(context: &Context) -> Self;
     fn on_input(&mut self, context: &Context, input: Input);
-
-    fn background_services() -> Services {Services::default()}
-    fn services() -> Services {Services::default()}
 }
 
 #[derive(Clone)]
 pub struct Context {
     pub hardware: hardware::Context,
+    pub runtime: runtime::Runtime,
     pub window: window::Context,
-    pub air: air::Context
+    pub air: air::Context,
 }
 
 pub struct MaverickOS<A: Application> {
     context: Context,
     surface: Surface<A>,
-    runtime: Air,
     app: A,
 }
 
@@ -48,29 +50,16 @@ impl<A: Application> MaverickOS<A> {
 
     fn new(window: window::Context, surface: Surface<A>) -> Self {
         let hardware = hardware::Context::new();
-        let conn = rusqlite::Connection::open("./SECRET.db").unwrap();
-        conn.execute("CREATE TABLE if not exists Cache(
-            key TEXT NOT NULL PRIMARY KEY,
-            value BLOB NOT NULL
-        );", []).unwrap();
-        let secret = match conn.query_row(
-            "SELECT value FROM Cache WHERE key='secret'",
-            [], |r| Ok(serde_json::from_slice(&r.get::<_, Vec<u8>>(0)?).ok()),
-        ).optional().unwrap().flatten() {
-            Some(secret) => secret,
-            None => {
-                let secret = Secret::new();
-                conn.execute(
-                    "INSERT INTO Cache(key, value) VALUES ('secret', ?1) ON CONFLICT DO UPDATE SET value=excluded.value;",
-                    [serde_json::to_vec(&secret).unwrap()],
-                ).unwrap();
-                secret
-            }
-        };
-        let (runtime, air) = Air::start(secret, A::services());
+        let runtime = Runtime::new();
+
+        let mut s = Cache::new("secret").unwrap();
+        let secret = s.get("secret").unwrap().unwrap_or_else(air::Secret::new);
+        s.insert("secret", &secret).unwrap();
+        let air = air::Context::new(runtime.clone(), secret);
         
         let context = Context{
             hardware,
+            runtime,
             window,
             air
         };
@@ -78,7 +67,6 @@ impl<A: Application> MaverickOS<A> {
         MaverickOS{
             context,
             surface,
-            runtime,
             app
         }
     }

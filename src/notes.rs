@@ -158,3 +158,106 @@ shared_key/bob/device_id/0: 4857429957285
 shared_key/alice/0:
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+type Point = (u8, u8);
+
+let memory = [,,,,,];
+
+let (reader, writer) = memory.init_shared::<Point>((20, 30));
+assert_eq!(memory, [20, 30,,,,]);
+
+let ref1 = reader.get::<Point>();
+assert_eq!(ref1, (20, 30));
+
+writer.write(|&mut point| point.0 = 15);
+assert_eq!(memory, [20, 30, 15, 30,,,])
+
+assert_eq!(ref1, (20, 30));
+
+let ref2 = reader.get::<Point>();
+assert_eq!(ref2, (15, 30));
+
+writer.write(|&mut point| point.0 += 12; point.1 += 50);
+assert_eq!(memory, [20, 30, 15, 30, 27, 80])
+
+drop(ref1);
+drop(ref2);
+
+writer.write(|&mut point| point.1 = 70);
+assert_eq!(memory, [,,,, 70, 80])
+
+
+
+type Point = (u8, u8);
+
+let memory = [,,,,,];
+
+let (reader, writer) = memory.init_shared::<Point>((20, 30));
+assert_eq!(memory, [20, 30,,,,]);
+
+let ref1 = reader.get::<Point>(1);
+assert_eq!(ref1, 30);
+
+writer.write(|&mut point| point.0 = 15);
+assert_eq!(memory, [15, 30,,,,])
+
+assert_eq!(ref1, 30);
+
+let ref2 = reader.get::<Point>(0);
+assert_eq!(ref2, (15, 30));
+
+
+writer.write(|&mut point| point.0 += 12; point.1 += 50);
+assert_eq!(memory, [15, 30, 27, 80,,])
+
+drop(ref1);
+drop(ref2);
+
+writer.write(|&mut point| point.1 = 70);
+assert_eq!(memory, [,, 27, 70,,])

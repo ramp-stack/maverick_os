@@ -1,49 +1,61 @@
-use tokio::sync::watch::{channel, Sender, Receiver};
-use tokio::time::sleep;
+use tokio_util::sync::CancellationToken;
+use tokio_util::task::TaskTracker;
+use tokio::runtime::Handle;
 
-use std::time::Duration;
-
-use air::{Air, Secret};
-
-pub use async_trait::async_trait;
-
-pub type Services = Vec<Box<dyn Service>>;
-
-#[async_trait]
-pub trait Service: Send {
-    async fn run(&mut self, ctx: &mut air::Context) -> Option<Duration>;
+pub trait Task: Send + 'static {
+    fn run(&mut self) -> impl Future<Output = ()> + Send;
+    fn shutdown(self) -> impl Future<Output = ()> + Send;
 }
 
-struct Task(Box<dyn Service>);
-impl Task {
-    pub async fn run(mut self, mut ctx: air::Context, mut pause: Option<Receiver<bool>>) {
-        loop {
-            if let Some(rx) = pause.as_mut() {
-                while !*rx.borrow_and_update() {
-                    if rx.changed().await.is_err() {return;}
-                }
-            }
+impl<F: Future<Output = ()> + Unpin + Send + 'static> Task for F {
+    async fn run(&mut self) -> () {self.await}
+    async fn shutdown(self) -> () {}
+}
 
-            match self.0.run(&mut ctx).await {
-                Some(duration) => sleep(duration).await,
-                None => {return;}
+#[derive(Clone, Debug)]
+pub struct Runtime(CancellationToken, TaskTracker, Handle);
+impl Runtime {
+    pub(crate) fn new() -> Self {
+        let runtime = tokio::runtime::Builder::new_multi_thread().enable_time().enable_io().build().unwrap();
+        let handle = runtime.handle().clone();
+        let token = CancellationToken::new();
+        let tasks = TaskTracker::new();
+        let tk = token.clone();
+        let ts = tasks.clone();
+        std::thread::spawn(move || runtime.block_on(async move {
+            tk.cancelled().await;
+            ts.wait().await;
+        }));
+        Runtime(token, tasks, handle)
+    }
+
+
+    pub fn block_on<F: Future>(&self, future: F) -> F::Output {
+        match Handle::try_current() {
+            Ok(current) if current.id() == self.2.id() => {
+                tokio::task::block_in_place(|| self.2.block_on(future))
             }
+            _ => self.2.block_on(future),
         }
     }
-}
 
-pub(crate) struct Runtime(Option<tokio::runtime::Runtime>, Sender<bool>);
-impl Runtime {
-    pub fn start(secret: Secret, services: Services, background: Services) -> (Self, air::Context) {
-        let air = runtime.block_on(async {Air::start(secret)});
-        let (tx, rx) = channel(true);
-        background.into_iter().for_each(|s| {runtime.spawn(Task(s).run(air.clone(), None));});
-        services.into_iter().for_each(|s| {runtime.spawn(Task(s).run(air.clone(), Some(rx.clone())));});
-
-        (Runtime(Some(runtime), tx), air)
+    pub fn spawn<T: Task>(&self, mut task: T) {
+        let token = self.0.clone();
+        self.1.spawn_on(async move {loop{
+            tokio::select! {
+                biased;
+                _ = token.cancelled() => {
+                    task.shutdown().await;
+                    break;
+                }
+                _ = task.run() => {}
+            }
+        }}, &self.2);
     }
 
-    pub fn pause(&mut self) {let _ = self.1.send(false);}
-    pub fn resume(&mut self) {let _ = self.1.send(true);}
-    pub fn shutdown(&mut self) {if let Some(r) = self.0.take() {r.shutdown_background();}}
+    pub(crate) fn shutdown(self) {
+        self.0.cancel();
+        self.1.close();
+        self.block_on(self.1.wait());
+    }
 }
