@@ -8,6 +8,11 @@ mod android;
 #[cfg(target_os = "android")]
 use android::OsShare;
 
+#[cfg(target_os = "linux")]
+mod linux;
+#[cfg(target_os = "linux")]
+use linux::OsShare;
+
 use image::RgbaImage;
 
 #[derive(Clone)]

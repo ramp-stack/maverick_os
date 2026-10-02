@@ -7,8 +7,6 @@ use jni::{
 };
 use ndk_context;
 
-use crate::hardware::{CameraError, CameraSettings};
-
 use std::error::Error;
 use std::thread;
 use std::time::Duration;
@@ -27,34 +25,28 @@ pub struct OsCamera {
 }
 
 impl OsCamera {
-    pub fn new_standard() -> Result<Self, CameraError> {
+    pub fn new_standard() -> Self {
         Self::new_internal(false)
     }
 
-    pub fn new_custom() -> Result<Self, CameraError> {
+    pub fn new_custom() -> Self {
         Self::new_internal(true)
     }
 
-    fn new_internal(custom: bool) -> Result<Self, CameraError> {
+    fn new_internal(custom: bool) -> Self {
         let jvm = Arc::new(unsafe { 
-            JavaVM::from_raw(ndk_context::android_context().vm().cast())
-                .map_err(|_| CameraError::InitializationFailed)?
+            JavaVM::from_raw(ndk_context::android_context().vm().cast()).unwrap()
         });
 
         let (global_context, global_camera_manager) = {
-            let mut env = jvm.attach_current_thread()
-                .map_err(|_| CameraError::InitializationFailed)?;
+            let mut env = jvm.attach_current_thread().unwrap();
 
             let ctx_ptr = ndk_context::android_context().context();
-            if ctx_ptr.is_null() {
-                return Err(CameraError::InitializationFailed);
-            }
+            if ctx_ptr.is_null() {panic!("Could not get camera");}
 
             let context_obj = unsafe { JObject::from_raw(ctx_ptr as jobject) };
-            let global_context = env.new_global_ref(context_obj)
-                .map_err(|_| CameraError::InitializationFailed)?;
-            let global_camera_manager = Self::initialize_camera_manager_static(&mut env, &global_context)
-                .map_err(|_| CameraError::InitializationFailed)?;
+            let global_context = env.new_global_ref(context_obj).unwrap();
+            let global_camera_manager = Self::initialize_camera_manager_static(&mut env, &global_context).unwrap();
 
             (global_context, global_camera_manager)
         };
@@ -74,9 +66,9 @@ impl OsCamera {
             settings,
         };
         
-        camera.start().map_err(|_| CameraError::InitializationFailed)?;
+        camera.start().unwrap();
         
-        Ok(camera)
+        camera
     }
 
     pub fn new() -> Result<Self, Box<dyn Error>> {

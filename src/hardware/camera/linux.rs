@@ -1,4 +1,3 @@
-use super::{CameraError, CameraSettings};
 use image::RgbaImage;
 use std::sync::{Arc, Mutex};
 
@@ -6,21 +5,14 @@ use std::sync::{Arc, Mutex};
 pub struct OsCamera;
 
 impl OsCamera {
-    pub fn new_standard() -> Result<Self, CameraError> {
-        Err(CameraError::InitializationFailed)
+    pub fn new() -> Self {
+        todo!()
     }
 
-    pub fn new_custom() -> Result<Self, CameraError> {
-        Err(CameraError::InitializationFailed)
+    pub fn frame(&self) -> Option<RgbaImage> {
+        todo!()
     }
 
-    pub fn frame(&self) -> Result<RgbaImage, CameraError> {
-        Err(CameraError::FailedToGetFrame)
-    }
-
-    pub fn settings(&mut self) -> Option<Arc<Mutex<CameraSettings>>> {
-        None
-    }
-
-    pub fn stop(self) {}
+    pub fn start(&self) {todo!()}
+    pub fn stop(&self) {todo!()}
 }
