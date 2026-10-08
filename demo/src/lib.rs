@@ -65,6 +65,7 @@ impl Application for DemoApplication {
     fn on_input(&mut self, _ctx: &Context, input: Input) {
         let s = if let Input::Device(_, DeviceInput::Keyboard(Key::Character(text), KeyboardState::Pressed, _)) = input {
             self.0.send(text.to_string());
+            self.0.share(Name::orange_me());
             true
         } else {false};
         if input == Input::Tick && self.0.try_next().is_some() || s {
