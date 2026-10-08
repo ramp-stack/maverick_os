@@ -65,7 +65,7 @@ impl<A: Application> Surface<A> {
     pub fn as_mut(&mut self) -> Option<&mut A::Renderer<'static>> {self.2.as_mut()}
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Input {
     Tick,
     Resized,
@@ -79,7 +79,7 @@ pub enum Input {
     Device(DeviceId, DeviceInput),
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum DeviceInput {
     Keyboard(Key, KeyboardState, Modifiers),
     CursorEntered,

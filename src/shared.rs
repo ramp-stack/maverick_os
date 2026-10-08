@@ -7,7 +7,6 @@ use std::marker::PhantomData;
 use std::collections::HashSet;
 use std::sync::Mutex;
 use std::sync::OnceLock;
-use std::pin::Pin;
 
 use crate::{Runtime, RUNTIME};
 use crate::Cache;
@@ -18,8 +17,6 @@ use serde::{Deserialize, Serialize};
 use crossfire::{MTx, AsyncTx, AsyncRx, spsc, mpsc};
 use postage::broadcast::{channel, Sender, Receiver as PReceiver};
 use postage::prelude::{Stream, Sink};
-use futures::stream::FuturesUnordered;
-use futures::StreamExt;
 
 #[allow(clippy::type_complexity)]
 static SHARED: LazyLock<Arc<Mutex<HashMap<String, Arc<OnceLock<Arc<Box<dyn Fn() -> Box<dyn Any + Send + Sync> + Send + Sync>>>>>>>> = LazyLock::new(|| {
@@ -112,67 +109,23 @@ impl<R: Clone + Send + Sync + 'static> Pending<R> {
     pub async fn next(&self) -> bool {self.1.next().await}
 }
 
-type Bas = Box<dyn Any + Send>;
-type Pbf<'a, O> = Pin<Box<dyn Future<Output = O> + Send + 'a>>;
-
-pub trait Service<S: Sharable>: Send + 'static {
-    type Predicate: Send + 'static;
-
-    fn init(sharable: &mut S) -> impl Future<Output = Self> + Send;
-
-    fn predicate(&mut self) -> impl Future<Output = Self::Predicate> + Send;
-
-    fn run(&mut self, sharable: &mut S, predicate: Self::Predicate) -> impl Future<Output = Option<S::Response>> + Send;
-
-    fn update(&mut self, sharable: &mut S, update: Option<S::Response>) -> impl Future<Output = ()> + Send;
-}
-
-pub trait DynService<S: Sharable>: Send {
-    fn predicate(&mut self) -> Pbf<'_, Bas>;
-    fn run<'a>(&'a mut self, sharable: &'a mut S, predicate: Bas) -> Pbf<'a, Option<S::Response>>;
-    fn update<'a>(&'a mut self, sharable: &'a mut S, update: Option<S::Response>) -> Pbf<'a, ()>;
-}
-impl<S: Sharable, SS: Service<S>> DynService<S> for SS {
-    fn predicate(&mut self) -> Pbf<'_, Bas> {
-        Box::pin(async move {Box::new(Service::predicate(self).await) as Bas})
-    }
-    fn run<'a>(&'a mut self, sharable: &'a mut S, predicate: Bas) -> Pbf<'a, Option<S::Response>> {
-        let predicate = *predicate.downcast::<SS::Predicate>().unwrap();
-        Box::pin(Service::run(self, sharable, predicate))
-    }
-
-    fn update<'a>(&'a mut self, sharable: &'a mut S, update: Option<S::Response>) -> Pbf<'a, ()> {
-        Box::pin(Service::update(self, sharable, update))
-    }
-}
-
-type ServiceInit<S> = Box<dyn FnOnce(&mut S) -> Pbf<'_, Box<dyn DynService<S>>>>;
-pub struct Services<S: Sharable>(Vec<ServiceInit<S>>);
-impl<S: Sharable> Services<S> {
-    pub fn add<SS: Service<S>>(mut self) -> Self {
-        self.0.push(Box::new(|s: &mut S| Box::pin(async move { Box::new(SS::init(s).await) as Box<dyn DynService<S>> }))); self
-    }
-
-    async fn init(self, sharable: &mut S) -> Vec<Box<dyn DynService<S>>> {
-        let mut result = Vec::new();
-        for init in self.0 {
-            result.push((init)(sharable).await);
-        }
-        result
-    }
-}
-impl<S: Sharable> Default for Services<S> {fn default() -> Self {Self(Vec::new())}}
-
 pub trait Sharable: Serialize + for<'a> Deserialize<'a> + Debug + Clone + Send + Sync + 'static {
     type Init: Hash;
     type Request: Send + 'static;
     type Response: Debug + Clone + Send + 'static;
-
-    fn services() -> Services<Self>;
+    type Memory: Send + 'static;
+    type Predicate: Send + 'static;
 
     fn init(init: Self::Init) -> impl Future<Output = Self>;
+    fn init_memory(&mut self) -> impl Future<Output = Self::Memory>;
 
-    fn handle(&mut self, request: Self::Request) -> impl Future<Output = Self::Response> + Send;
+    fn predicate(&mut self, memory: &mut Self::Memory) -> impl Future<Output = Self::Predicate> + Send;
+
+    fn handle_predicate(&mut self, predicate: Self::Predicate) -> impl Future<Output = Option<Self::Response>> + Send;
+
+    fn handle_request(&mut self, request: Self::Request) -> impl Future<Output = Self::Response> + Send;
+
+    fn update(&mut self, _memory: &mut Self::Memory) -> impl Future<Output = ()> + Send {async {}}
 }
 
 #[derive(Debug, Clone)]
@@ -184,34 +137,34 @@ impl<S: Sharable> Shared<S> {
         let once: Arc<OnceLock<_>> = SHARED.lock().unwrap().entry(id.clone()).or_insert_with(|| Arc::new(OnceLock::new())).clone();
         *once.get_or_init(|| {
             let mut cache = Cache::new(id.clone()).unwrap();
-            let mut shared = cache.get::<S>("shared").unwrap().unwrap_or(runtime.block_on(S::init(init)));
-            let mut services = runtime.block_on(S::services().init(&mut shared));
+            let mut sharable = cache.get::<S>("sharable").unwrap().unwrap_or(runtime.block_on(S::init(init)));
+            let mut memory = runtime.block_on(sharable.init_memory());
 
-            let arc = Arc::new(ArcSwap::from(Arc::new(shared.clone())));
+            let arc = Arc::new(ArcSwap::from(Arc::new(sharable.clone())));
             let (rx, rr) = Requester::new(runtime.clone());
             let (mut bx, br) = Broadcaster::new();
             let a = arc.clone();
             runtime.spawn(Box::pin(async move { loop {
-                let mut poll = FuturesUnordered::from_iter(services.iter_mut().map(|s| async move { let p = s.predicate().await; (s, p)}));
-
                 let (responder, response) = tokio::select! {
-                    p = poll.next() => {
-                        let (service, predicate) = p.unwrap();
-                        (None, service.run(&mut shared, predicate).await)
-                    },
+                    biased; 
                     r = rx.recv() => {
                         let (request, responder): (_, AsyncTx<_>) = r.unwrap();
-                        let response = shared.handle(request).await;
+                        let response = sharable.handle_request(request).await;
                         (Some(responder), Some(response))
-                    }
+                    },
+                    predicate = sharable.predicate(&mut memory) => {
+                        let r = sharable.handle_predicate(predicate).await;
+                        (None, r)
+                    },
                 };
-                drop(poll);
-                for service in &mut services { service.update(&mut shared, response.clone()).await; }
-                cache.insert("shared", &shared).unwrap();
-                arc.store(Arc::new(shared.clone()));
+                sharable.update(&mut memory).await;
+                cache.insert("sharable", &sharable).unwrap();
+                arc.store(Arc::new(sharable.clone()));
                 if let Some(response) = response {
                     let id = Id::random();
-                    if let Some(responder) = responder { let _ = responder.send((id, Box::new(response.clone()))).await; }
+                    if let Some(responder) = responder { 
+                        let _ = responder.send((id, Box::new(response.clone()))).await; 
+                    }
                     bx.send((id, response.clone())).await.unwrap();
                 }
             }}));

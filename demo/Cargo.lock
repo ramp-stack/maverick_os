@@ -48,7 +48,9 @@ dependencies = [
 
 [[package]]
 name = "air"
-version = "2.0.0"
+version = "2.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f25f09ab1154736cc6b9d6ec944aebeae4a82b79a8d1b519e3393943fba8b809"
 dependencies = [
  "arc-swap",
  "axum",
@@ -2157,7 +2159,7 @@ dependencies = [
 
 [[package]]
 name = "maverick_os"
-version = "2.0.1"
+version = "2.0.2"
 dependencies = [
  "air",
  "android-activity",
