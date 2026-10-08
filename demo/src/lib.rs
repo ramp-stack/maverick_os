@@ -57,7 +57,8 @@ impl Application for DemoApplication {
     type Renderer<'surface> = DemoRenderer<'surface>;
 
     fn new(ctx: &Context) -> Self {
-        let room = ctx.air.create::<Room>("The Room".to_string());
+        let instances = ctx.air.instances::<Room>();
+        let room = instances.create("The Room".to_string());
         DemoApplication(room)
     }
 
@@ -65,10 +66,13 @@ impl Application for DemoApplication {
         if let Input::Device(_, DeviceInput::Keyboard(Key::Character(text), KeyboardState::Pressed, _)) = input {
             self.0.send(text.to_string());
             let vec = self.0.pending().messages.iter().map(|m| m.body.clone()).collect::<Vec<_>>();
+            let vec2 = self.0.confirmed().unwrap().messages.iter().map(|m| m.body.clone()).collect::<Vec<_>>();
             log::info!(
-                "\n\n\nRoom: {:?}, {:#?}",
+                "\n\n\nPending Room: {:?} : {:#?} \nConfirm Room: {:?} : {:#?}",
                 self.0.pending().name,
-                &vec[vec.len().saturating_sub(20)..]
+                &vec[vec.len().saturating_sub(20)..].concat(),
+                self.0.confirmed().unwrap().name,
+                &vec2[vec2.len().saturating_sub(20)..].concat()
             );
         }
     }

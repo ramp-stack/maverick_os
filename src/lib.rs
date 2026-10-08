@@ -3,8 +3,8 @@ pub mod hardware;
 pub mod window;
 use window::{Window, Renderer, Surface, Input};
 
-pub mod runtime;
-use runtime::Runtime;
+mod runtime;
+use runtime::{Runtime, RUNTIME};
 
 mod cache;
 use cache::Cache;
@@ -18,7 +18,6 @@ pub use config::{IS_MOBILE, IS_WEB};
 
 #[cfg(target_os = "android")]
 use winit::platform::android::activity::AndroidApp;
-use rusqlite::OptionalExtension;
 
 pub trait Application: 'static {
     type Renderer<'surface>: Renderer<'surface, Application=Self>;
@@ -55,7 +54,7 @@ impl<A: Application> MaverickOS<A> {
         let mut s = Cache::new("secret").unwrap();
         let secret = s.get("secret").unwrap().unwrap_or_else(air::Secret::new);
         s.insert("secret", &secret).unwrap();
-        let air = air::Context::new(runtime.clone(), secret);
+        let air = air::Context::new(secret);
         
         let context = Context{
             hardware,
