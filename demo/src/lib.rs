@@ -65,6 +65,7 @@ impl Application for DemoApplication {
     fn on_input(&mut self, _ctx: &Context, input: Input) {
         if let Input::Device(_, DeviceInput::Keyboard(Key::Character(text), KeyboardState::Pressed, _)) = input {
             self.0.send(text.to_string());
+            self.0.share(Name::orange_me());
             let vec = self.0.pending().messages.iter().map(|m| m.body.clone()).collect::<Vec<_>>();
             let vec2 = self.0.confirmed().unwrap().messages.iter().map(|m| m.body.clone()).collect::<Vec<_>>();
             log::info!(
