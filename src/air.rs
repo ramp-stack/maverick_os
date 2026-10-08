@@ -16,6 +16,7 @@ use std::future::pending;
 use std::sync::LazyLock;
 use std::sync::OnceLock;
 use std::sync::Arc;
+use std::pin::Pin;
 
 use crossfire::{AsyncRx, spsc};
 use serde::{Deserialize, Serialize};
@@ -59,7 +60,7 @@ impl<C: Contract> Instance<C> {
         if let Update::Pending(p) = self.0.request(msg) {p} else {panic!("-_-");}
     }
     pub fn share(&self, name: Name) {self.1.request((name, *self.0.as_ref().0.location()));}
-    pub fn pending(&self) -> Ref<'_, C> {self.0.as_ref().map(|i| i.0.pending())}
+    pub fn pending(&self) -> Ref<'_, C> {self.0.as_ref().map(|i| i.0.pending().unwrap())}
     pub fn confirmed(&self) -> Option<Ref<'_, C>> {
         let r = self.0.as_ref();
         r.0.confirmed().is_some().then(|| r.map(|i| i.0.confirmed().unwrap()))
@@ -69,33 +70,50 @@ impl<C: Contract> Instance<C> {
     pub fn try_next(&mut self) -> Option<Update<C::Result>> {self.0.try_next()}
 }
 
+enum InstancesPredicate { Received(Location), Confirmed(Id) }
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(bound = "C: Contract")]
-pub struct _Instances<C: Contract>(#[serde(skip)] HashMap<Id, Instance<C>>, Secret);
+struct _Instances<C: Contract>(#[serde(skip)] HashMap<Id, Instance<C>>, Secret, #[serde(skip)] HashMap<Id, Shared<RunningInstance<C>>>);
 impl<C: Contract> Sharable for _Instances<C> {
     type Init = Secret;
     type Request = C::Init;
     type Response = Instance<C>;
     type Memory = Shared<Inbox>;
-    type Predicate = Location;
+    type Predicate = InstancesPredicate;
 
-    async fn init(init: Self::Init) -> Self {Self(HashMap::new(), init)}
+    async fn init(init: Self::Init) -> Self {Self(HashMap::new(), init, HashMap::new())}
     async fn init_memory(&mut self) -> Self::Memory {Shared::new(self.1.clone())}
 
-    async fn predicate(&mut self, memory: &mut Self::Memory) -> Self::Predicate {loop {
-        let location = memory.next().await;
-        if location.contract == C::id() {
-            break location;
-        }
-    }}
+    async fn predicate(&mut self, memory: &mut Self::Memory) -> Self::Predicate {
+        
+        let mut futures: FuturesUnordered<Pin<Box<dyn Future<Output = InstancesPredicate> + Send>>> = FuturesUnordered::from_iter(self.2.iter_mut().map(|(id, inst)|
+            Box::pin(async move {inst.next().await; InstancesPredicate::Confirmed(*id)}) as _
+        ));
+        futures.push(Box::pin(async move {loop {
+            let location = memory.next().await;
+            if location.contract == C::id() {
+                break InstancesPredicate::Received(location);
+            }
+        }}));
+        futures.next().await.unwrap()
+    }
 
-    async fn handle_predicate(&mut self, location: Self::Predicate) -> Option<Instance<C>> {
-        let hash = Id::hash(&location);
-        if !self.0.contains_key(&hash) {
-            let instance = Instance(Shared::new(InstanceInit{secret: self.1.clone(), location, init: None}), Shared::new(self.1.clone()));
-            self.0.insert(hash, instance.clone());
-            Some(instance)
-        } else {None}
+    async fn handle_predicate(&mut self, predicate: Self::Predicate) -> Option<Instance<C>> {
+        match predicate {
+            InstancesPredicate::Received(location) => {
+                let hash = Id::hash(&location);
+                if !self.0.contains_key(&hash) && !self.2.contains_key(&hash) {
+                    self.2.insert(hash, Shared::new(InstanceInit{secret: self.1.clone(), location, init: None}));
+                }
+                None
+            },
+            InstancesPredicate::Confirmed(id) => {
+                let instance = Instance(self.2.remove(&id).unwrap(), Shared::new(self.1.clone()));
+                self.0.insert(id, instance.clone());
+                Some(instance)
+            }
+        }
     }
 
     async fn handle_request(&mut self, request: Self::Request) -> Self::Response {
