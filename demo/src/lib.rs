@@ -62,8 +62,10 @@ impl Application for DemoApplication {
         DemoApplication(room)
     }
 
-    fn on_input(&mut self, _ctx: &Context, input: Input) {
+    fn on_input(&mut self, ctx: &Context, input: Input) {
         let s = if let Input::Device(_, DeviceInput::Keyboard(Key::Character(text), KeyboardState::Pressed, _)) = input {
+            let newest = ctx.air.instances::<Room>().create(Id::random().to_string());
+            println!("Created {:?}", ctx.air.instances::<Room>().list().len());
             self.0.send(text.to_string());
             self.0.share(Name::orange_me());
             true
