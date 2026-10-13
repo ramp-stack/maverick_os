@@ -83,7 +83,17 @@ impl<C: Contract> Sharable for _Instances<C> {
     type Predicate = InstancesPredicate;
 
     async fn init(init: Self::Init) -> Self {Self(HashMap::new(), init, HashMap::new())}
-    async fn init_memory(&mut self) -> Self::Memory {Shared::new(self.1.clone())}
+    async fn init_memory(&mut self) -> Self::Memory {
+        let inbox: Shared<Inbox> = Shared::new(self.1.clone());
+        for location in inbox.as_ref().list(&C::id()) {
+            let instance: Shared<RunningInstance<C>> = Shared::new(InstanceInit{secret: self.1.clone(), location, init: None});
+            let i = &instance.as_ref().0;
+            if i.pending().is_some() {
+                self.0.insert(i.id(), Instance(instance, inbox.clone()));
+            } else {self.2.insert(i.id(), instance);}
+        }
+        inbox
+    }
 
     async fn predicate(&mut self, memory: &mut Self::Memory) -> Self::Predicate {
         
