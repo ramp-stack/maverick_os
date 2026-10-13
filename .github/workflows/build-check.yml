@@ -1,0 +1,129 @@
+name: Cross-platform Check
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  # ──────────────────────────────────────────────
+  # Linux
+  # ──────────────────────────────────────────────
+ #linux:
+ #  name: Linux (${{ matrix.target }})
+ #  runs-on: ubuntu-latest
+ #  strategy:
+ #    fail-fast: false
+ #    matrix:
+ #      target:
+ #        - x86_64-unknown-linux-gnu
+ #        - aarch64-unknown-linux-gnu
+ #  steps:
+ #    - uses: actions/checkout@v4
+ #    - uses: dtolnay/rust-toolchain@stable
+ #      with:
+ #        targets: ${{ matrix.target }}
+ #    - uses: Swatinem/rust-cache@v2
+ #    - run: cargo check --target ${{ matrix.target }}
+
+ ## ──────────────────────────────────────────────
+ ## Windows
+ ## ──────────────────────────────────────────────
+ #windows:
+ #  name: Windows (${{ matrix.target }})
+ #  runs-on: windows-latest
+ #  strategy:
+ #    fail-fast: false
+ #    matrix:
+ #      target:
+ #        - x86_64-pc-windows-msvc
+ #        - aarch64-pc-windows-msvc
+ #  steps:
+ #    - uses: actions/checkout@v4
+ #    - uses: dtolnay/rust-toolchain@stable
+ #      with:
+ #        targets: ${{ matrix.target }}
+ #    - uses: Swatinem/rust-cache@v2
+ #    - run: cargo check --target ${{ matrix.target }}
+
+  # ──────────────────────────────────────────────
+  # macOS
+  # ──────────────────────────────────────────────
+  macos:
+    name: macOS (${{ matrix.target }})
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - aarch64-apple-darwin
+          - x86_64-apple-darwin
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo check --target ${{ matrix.target }}
+
+  # ──────────────────────────────────────────────
+  # iOS (requires macOS runner + Xcode)
+  # ──────────────────────────────────────────────
+  ios:
+    name: iOS (${{ matrix.target }})
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - aarch64-apple-ios          # Device
+          - aarch64-apple-ios-sim      # Simulator (Apple Silicon)
+          - x86_64-apple-ios           # Simulator (Intel)
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo check --target ${{ matrix.target }}
+        env:
+          IPHONEOS_DEPLOYMENT_TARGET: "13.0"
+
+ ## ──────────────────────────────────────────────
+ ## Android
+ ## ──────────────────────────────────────────────
+ #android:
+ #  name: Android (${{ matrix.target }})
+ #  runs-on: ubuntu-latest
+ #  strategy:
+ #    fail-fast: false
+ #    matrix:
+ #      target:
+ #        - aarch64-linux-android
+ #        - armv7-linux-androideabi
+ #        - x86_64-linux-android
+ #        - i686-linux-android
+ #  steps:
+ #    - uses: actions/checkout@v4
+
+ #    - name: Install Rust + Android targets
+ #      uses: dtolnay/rust-toolchain@stable
+ #      with:
+ #        targets: ${{ matrix.target }}
+
+ #    - name: Install Android NDK
+ #      uses: nttld/setup-ndk@v1
+ #      id: setup-ndk
+ #      with:
+ #        ndk-version: r26d
+
+ #    - uses: Swatinem/rust-cache@v2
+
+ #    - name: cargo check
+ #      run: cargo check --target ${{ matrix.target }}
+ #      env:
+ #        ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+ #        CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER: ${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android21-clang
+ #        CARGO_TARGET_ARMV7_LINUX_ANDROIDEABI_LINKER: ${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/armv7a-linux-androideabi21-clang
+ #        CARGO_TARGET_X86_64_LINUX_ANDROID_LINKER: ${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/x86_64-linux-android21-clang
+ #        CARGO_TARGET_I686_LINUX_ANDROID_LINKER: ${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/i686-linux-android21-clang

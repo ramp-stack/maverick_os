@@ -1,11 +1,9 @@
-pub use air::{Secret, Name, Id};
-pub use air::contract::{Contract, Metadata};
-
-use air::contract::{Location, Instance as _Instance, Output};
-use air::names::DefaultResolver;
-use air::inbox::{Inbox, RequestType};
-use air::storage::Response;
+use air::{
+     Name, Id, Location, Instance as _Instance, Output, Contract,
+    DefaultResolver, Inbox, RequestType, Response
+};
 use air::client::Client;
+pub use air::Secret;
 
 use crate::runtime::RUNTIME;
 use crate::shared::{Shared, Sharable, Ref, Pending};
@@ -23,18 +21,22 @@ use serde::{Deserialize, Serialize};
 use futures::stream::{FuturesUnordered, StreamExt};
 use tokio::sync::Mutex;
 
+use predator::traits;
+
 static CLIENT: OnceLock<Client> = OnceLock::new();
 static RESOLVER: LazyLock<Arc<Mutex<DefaultResolver>>> = LazyLock::new(|| Arc::new(Mutex::new(DefaultResolver::default())));
 
+type Update<R> = predator::Update<Pending<R>, R>;
+
 #[derive(Clone)]
-pub struct Context{
+pub struct Air{
     secret: Secret,
 }
-impl Context {
+impl Air {
     pub fn new(secret: Secret) -> Self {
         let client = RUNTIME.get().unwrap().block_on(Client::new(DefaultResolver::default()));
         let _ = CLIENT.set(client);
-        Context{secret}
+        Self{secret}
     }
 
     pub fn me(&self) -> Name {self.secret.name()}
@@ -43,14 +45,30 @@ impl Context {
         Instances(Shared::new(self.secret.clone()))
     }
 }
+impl traits::Air for Air {
+    type Instance<C: Contract> = Instance<C>;
+    type Instances<C: Contract> = Instances<C>;
+
+    fn instances<C: Contract>(&self) -> Self::Instances<C> {Air::instances::<C>(self)}
+    fn me(&self) -> Name {Air::me(self)}
+}
 
 #[derive(Clone, Debug)]
 pub struct Instances<C: Contract>(Shared<_Instances<C>>);
 impl<C: Contract> Instances<C> {
     pub fn create(&self, init: C::Init) -> Instance<C> {self.0.request(init)}
-    pub fn list(&self) -> Ref<'_, HashMap<Id, Instance<C>>> {self.0.as_ref().map(|i| &i.0)}
+    pub fn list(&self) -> HashMap<Id, Instance<C>> {self.0.as_ref().0.clone()}
     pub async fn next(&mut self) -> Instance<C> {self.0.next().await}
     pub fn try_next(&mut self) -> Option<Instance<C>> {self.0.try_next()}
+}
+
+impl<C: Contract> traits::Instances<C> for Instances<C> {
+    type Instance = Instance<C>;
+
+    fn create(&self, init: C::Init) -> Self::Instance {Instances::create(self, init)}
+    fn list(&self) -> HashMap<Id, Self::Instance> {Instances::list(self)}
+    fn try_next(&mut self) -> Option<Self::Instance> {Instances::try_next(self)}
+    async fn next(&mut self) -> Self::Instance {Instances::next(self).await}
 }
 
 #[derive(Clone, Debug)]
@@ -70,6 +88,18 @@ impl<C: Contract> Instance<C> {
     pub fn try_next(&mut self) -> Option<Update<C::Result>> {self.0.try_next()}
 }
 
+impl<C: Contract> traits::Instance<C> for Instance<C> {
+    type Pending = Pending<C::Result>;
+    type Ref<'a> = Ref<'a, C>;
+
+    fn send(&mut self, msg: C::Message) -> Self::Pending {Instance::send(self, msg)}
+    fn share(&self, name: Name) {Instance::share(self, name)}
+    fn pending(&self) -> Ref<'_, C> {Instance::pending(self)}
+    fn confirmed(&self) -> Option<Ref<'_, C>> {Instance::confirmed(self)}
+    fn try_next(&mut self) -> Option<Update<C::Result>> {Instance::try_next(self)}
+    async fn next(&mut self) -> Update<C::Result> {Instance::next(self).await}
+}
+
 enum InstancesPredicate { Received(Location), Confirmed(Id) }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -83,7 +113,17 @@ impl<C: Contract> Sharable for _Instances<C> {
     type Predicate = InstancesPredicate;
 
     async fn init(init: Self::Init) -> Self {Self(HashMap::new(), init, HashMap::new())}
-    async fn init_memory(&mut self) -> Self::Memory {Shared::new(self.1.clone())}
+    async fn init_memory(&mut self) -> Self::Memory {
+        let inbox: Shared<Inbox> = Shared::new(self.1.clone());
+        for location in inbox.as_ref().list(&C::id()) {
+            let instance: Shared<RunningInstance<C>> = Shared::new(InstanceInit{secret: self.1.clone(), location, init: None});
+            let i = &instance.as_ref().0;
+            if i.pending().is_some() {
+                self.0.insert(i.id(), Instance(instance, inbox.clone()));
+            } else {self.2.insert(i.id(), instance);}
+        }
+        inbox
+    }
 
     async fn predicate(&mut self, memory: &mut Self::Memory) -> Self::Predicate {
         
@@ -128,8 +168,6 @@ impl<C: Contract> Sharable for _Instances<C> {
 pub struct InstanceInit<I> {secret: Secret, location: Location, init: Option<I> }
 impl<I> Hash for InstanceInit<I> {fn hash<H: Hasher>(&self, hasher: &mut H) {self.secret.hash(hasher); self.location.hash(hasher);}}
 
-#[derive(Debug, Clone)]
-pub enum Update<R: Clone + Send + Sync + 'static> {Init, Pending(Pending<R>), Confirmed(R)}
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(bound = "C: Contract")]

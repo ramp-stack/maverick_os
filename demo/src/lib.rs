@@ -1,6 +1,4 @@
-use maverick_os::{Application, Context, start};
-use maverick_os::air::{Contract, Instance, Name, Metadata, Id};
-use maverick_os::window::{self, Input, Key, Renderer, Handle, DeviceInput, KeyboardState};
+use predator::{traits, Application, Context, Window, Contracts, Input, Key, Renderer, DeviceInput, KeyboardState, Id, Name, Contract, Metadata, Instance};
 
 use serde::{Serialize, Deserialize};
 
@@ -42,33 +40,33 @@ impl Contract for Room {
     }
 }
 
-pub struct DemoRenderer<'surface>(&'surface dyn Handle);
-impl<'surface> Renderer<'surface> for DemoRenderer<'surface> {
-    type Application = DemoApplication;
-    fn new(_context: &window::Context, handle: &'surface dyn Handle) -> Self {DemoRenderer(handle)}
-    fn resize(&mut self, _context: &window::Context) {}
-    fn draw(&mut self, _context: &window::Context, _app: &Self::Application) {
-        self.0.display_handle().unwrap();
-    }
+pub struct DemoRenderer();
+impl Renderer for DemoRenderer {
+    type Instructions = ();
+
+    fn new(_window: Window) -> Self {DemoRenderer()}
+    fn resize(&mut self) {}
+    fn draw(&mut self, _instructions: Self::Instructions) {}
 }
 
-pub struct DemoApplication(Instance<Room>);
+pub struct DemoApplication(Instance<Room>, bool);
 impl Application for DemoApplication {
-    type Renderer<'surface> = DemoRenderer<'surface>;
+    type Renderer = DemoRenderer;
 
-    fn new(ctx: &Context) -> Self {
+    fn name() -> String {"Demo Application Name".to_string()}
+
+    fn new(ctx: &mut Context) -> Self {
         let instances = ctx.air.instances::<Room>();
         let room = instances.create("The Room".to_string());
-        DemoApplication(room)
+        DemoApplication(room, false)
     }
 
-    fn on_input(&mut self, _ctx: &Context, input: Input) {
-        let s = if let Input::Device(_, DeviceInput::Keyboard(Key::Character(text), KeyboardState::Pressed, _)) = input {
-            self.0.send(text.to_string());
-            self.0.share(Name::orange_me());
-            true
-        } else {false};
-        if input == Input::Tick && self.0.try_next().is_some() || s {
+    fn contracts<A: traits::Air>(contracts: Contracts<A>) -> Contracts<A> {
+        contracts.add::<Room>()
+    }
+
+    fn on_tick(&mut self, _ctx: &mut Context) -> <Self::Renderer as Renderer>::Instructions {
+        if self.1 || self.0.try_next().is_some() {
             let vec = self.0.pending().messages.iter().map(|m| m.body.clone()).collect::<Vec<_>>();
             let vec2 = self.0.confirmed().unwrap().messages.iter().map(|m| m.body.clone()).collect::<Vec<_>>();
             log::info!(
@@ -79,9 +77,18 @@ impl Application for DemoApplication {
                 &vec2[vec2.len().saturating_sub(20)..].concat()
             );
         }
+        self.1 = false;
+    }
+
+    fn on_input(&mut self, _ctx: &mut Context, input: Input) {
+        if let Input::Device(_, DeviceInput::Keyboard(Key::Character(text), KeyboardState::Pressed, _)) = input {
+            self.0.send(text.to_string());
+            self.0.share(Name::orange_me());
+            self.1 = true;
+        }
     }
     
     //fn services() -> Services {Services::default().add::<Lock<ChatBot>>()}
 }
 
-start!(DemoApplication);
+maverick_os::start!(DemoApplication);

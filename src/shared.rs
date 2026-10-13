@@ -18,6 +18,8 @@ use crossfire::{MTx, AsyncTx, AsyncRx, spsc, mpsc};
 use postage::broadcast::{channel, Sender, Receiver as PReceiver};
 use postage::prelude::{Stream, Sink};
 
+use predator::traits;
+
 #[allow(clippy::type_complexity)]
 static SHARED: LazyLock<Arc<Mutex<HashMap<String, Arc<OnceLock<Arc<Box<dyn Fn() -> Box<dyn Any + Send + Sync> + Send + Sync>>>>>>>> = LazyLock::new(|| {
     Arc::new(Mutex::new(HashMap::default()))
@@ -68,7 +70,7 @@ impl<S: Sharable> Requester<S> {
     }
 
     pub fn remove(&self, id: &Id) -> bool {RUNTIME.get().unwrap().block_on(self.2.lock()).remove(id)}
-    pub fn clear(&self) {self.2.blocking_lock().clear()}
+    pub fn clear(&self) {RUNTIME.get().unwrap().block_on(self.2.lock()).clear()}
 }
 
 #[derive(Debug)]
@@ -79,17 +81,17 @@ impl<U: Debug + Clone> Broadcaster<U> {
         (bx.clone(), Broadcaster(Arc::new(tokio::sync::Mutex::new(lx)), bx))
     }
     pub async fn send(&mut self, update: U) {self.1.send(update).await.unwrap()}
-    pub async fn next(&self) -> U {self.0.lock().await.recv().await.unwrap()}
-    pub fn try_next(&self) -> Option<U> {self.0.blocking_lock().try_recv().ok()}
-    pub fn clear(&self) {*self.0.blocking_lock() = self.1.subscribe();}
+    pub async fn next(&mut self) -> U {self.0.lock().await.recv().await.unwrap()}
+    pub fn try_next(&mut self) -> Option<U> {RUNTIME.get().unwrap().block_on(self.0.lock()).try_recv().ok()}
+    pub fn clear(&self) {*RUNTIME.get().unwrap().block_on(self.0.lock()) = self.1.subscribe();}
 }
 impl<U: Clone> Clone for Broadcaster<U> {fn clone(&self) -> Self {
     Self(Arc::new(tokio::sync::Mutex::new(RUNTIME.get().unwrap().block_on(self.0.lock()).clone())), self.1.clone())
 }}
 
 #[derive(Clone, Debug)]
-pub struct Pending<R: Clone + Send + Sync + 'static>(Arc<ArcSwap<(R, bool)>>, Broadcaster<bool>);
-impl<R: Clone + Send + Sync + 'static> Pending<R> {
+pub struct Pending<R: Debug + Clone + Send + Sync + 'static>(Arc<ArcSwap<(R, bool)>>, Broadcaster<bool>);
+impl<R: Debug + Clone + Send + Sync + 'static> Pending<R> {
     pub(crate) fn new(pending: R) -> Self {
         let (_, br) = Broadcaster::new();
         Self(Arc::new(ArcSwap::from(Arc::new((pending, false)))), br)
@@ -103,10 +105,20 @@ impl<R: Clone + Send + Sync + 'static> Pending<R> {
     pub fn try_confirmed(&self) -> Option<R> {
         let r = self.0.load(); r.1.then(|| r.0.clone())
     }
-    pub async fn confirmed(self) -> R {loop {if self.1.next().await {return self.0.load().0.clone();}}}
+    pub async fn confirmed(mut self) -> R {loop {if self.1.next().await {return self.0.load().0.clone();}}}
 
-    pub fn try_next(&self) -> Option<bool> {self.1.try_next()}
-    pub async fn next(&self) -> bool {self.1.next().await}
+    pub fn try_next(&mut self) -> Option<bool> {self.1.try_next()}
+    pub async fn next(&mut self) -> bool {self.1.next().await}
+}
+
+impl<R: Debug + Clone + Send + Sync + 'static> traits::Pending<R> for Pending<R> {
+    type Ref<'a> = Ref<'a, R>;
+
+    fn pending(&self) -> Self::Ref<'_> {Pending::pending(self)}
+    fn try_confirmed(&self) -> Option<R> {Pending::try_confirmed(self)}
+    async fn confirmed(self) -> R {Pending::confirmed(self).await}
+    fn try_next(&mut self) -> Option<bool> {Pending::try_next(self)}
+    async fn next(&mut self) -> bool {Pending::next(self).await}
 }
 
 pub trait Sharable: Serialize + for<'a> Deserialize<'a> + Debug + Clone + Send + Sync + 'static {

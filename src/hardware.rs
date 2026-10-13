@@ -1,75 +1,72 @@
-mod logger;
-mod camera;
-mod share;
-mod clipboard;
-mod cloud;
-mod haptics;
-mod photo_picker;
-mod safe_area;
-mod notifications;
-mod app_support;
+#[cfg(target_os = "ios")]
+mod ios;
+#[cfg(target_os = "ios")]
+use ios::{Clipboard, Haptics, Share, PhotoPicker};
+#[cfg(target_os = "ios")]
+pub use ios::SafeArea;
 
-pub use clipboard::Clipboard;
-pub use camera::Camera;
-pub use share::Share;
-pub use cloud::CloudStorage;
-pub use photo_picker::PhotoPicker;
-pub use safe_area::SafeAreaInsets;
-pub use haptics::Haptics;
-pub use notifications::Notifications;
-pub use logger::Logger;
+#[cfg(target_os = "macos")]
+mod macos;
+#[cfg(target_os = "macos")]
+use macos::{Clipboard, Haptics, Share, PhotoPicker};
+#[cfg(target_os = "macos")]
+pub use macos::SafeArea;
 
-use crate::window::Input;
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+mod apple;
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+use apple::{ApplicationSupport, CameraHandle, Camera, Logger};
 
-#[derive(Clone)]
-pub struct Context {
-    pub camera: Camera,
-    pub clipboard: Clipboard,
-    pub share: Share,
-    pub haptics: Haptics,
-    pub notifications: Notifications,
-    pub photo_picker: PhotoPicker,
+use predator::{traits, Data, Image};
+use crossfire::{spsc, AsyncRx};
 
-    #[allow(dead_code)]
-    pub(crate) cloud: CloudStorage
+impl traits::Camera for Camera {
+    fn frame(&mut self) -> Image {Camera::frame(self)}
 }
-impl Context {
+
+pub struct PickedPhoto(AsyncRx<spsc::One<Result<Image, ()>>>);
+
+impl traits::PickedPhoto for PickedPhoto {
+    async fn get(&mut self) -> Result<Image, ()> {self.0.recv().await.unwrap()}
+    fn try_get(&mut self) -> Option<Result<Image, ()>> {self.0.try_recv().ok()}
+}
+
+impl traits::Clipboard for Clipboard {
+    fn get(&mut self) -> Option<Data> {Clipboard::get(self)}
+    fn set(&mut self, data: Data) {Clipboard::set(self, data)}
+}
+
+pub struct Hardware {
+    clipboard: Clipboard,
+    camera: CameraHandle,
+    haptics: Haptics,
+    share: Share,
+    photo_picker: PhotoPicker
+}
+impl Hardware {
     pub fn new() -> Self {
-        std::env::set_current_dir(app_support::ApplicationSupport::get().expect("Could not get app support dir")).unwrap();
         Logger::start(None);
-        #[cfg(target_os = "android")]
-        let vm = {
-            let vm_ptr = ndk_context::android_context().vm().cast();
-            unsafe { jni::JavaVM::from_raw(vm_ptr).unwrap() }
-        };
-        let cloud = CloudStorage::new(
-            #[cfg(target_os = "android")]
-            &vm
-        );
-
-        Context {
-            camera: Camera::new(),
-            clipboard: Clipboard::new(
-                #[cfg(target_os = "android")]
-                &vm
-            ),
-            share: Share::new(),
+        std::env::set_current_dir(ApplicationSupport::get()).unwrap();
+        Hardware {
+            clipboard: Clipboard::new(),
+            camera: CameraHandle::new(),
             haptics: Haptics::new(),
-            notifications: Notifications::new(),
-            cloud,
-            photo_picker: PhotoPicker::new(),
+            share: Share::new(),
+            photo_picker: PhotoPicker::new()
         }
-    }
-
-    pub(crate) fn tick(&mut self) -> Vec<Input> {
-        let mut events = Vec::new();
-        if let Some(frame) = self.camera.tick() {
-            events.push(Input::CameraFrame(frame));
-        }
-        if let Some(photo) = self.photo_picker.tick() {
-            events.push(Input::SelectedPhoto(photo));
-        }
-        events
     }
 }
-impl Default for Context {fn default() -> Self {Self::new()}}
+impl Default for Hardware {fn default() -> Self {Self::new()}}
+
+impl traits::Hardware for Hardware {
+    type Camera = Camera;
+    type PickedPhoto = PickedPhoto;
+
+    fn start_camera(&mut self) -> Self::Camera {self.camera.start()}
+    fn pick_photo(&mut self) -> Self::PickedPhoto {PickedPhoto(self.photo_picker.pick_photo())}
+
+    fn share(&mut self, data: Data) {self.share.share(data);}
+    fn clipboard(&mut self) -> &mut dyn traits::Clipboard {&mut self.clipboard}
+
+    fn trigger_haptic(&mut self) {self.haptics.trigger()}
+}

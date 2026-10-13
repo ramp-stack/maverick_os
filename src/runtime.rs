@@ -20,25 +20,19 @@ pub static RUNTIME: OnceLock<Runtime> = OnceLock::new();
 #[derive(Clone, Debug)]
 pub struct Runtime(CancellationToken, TaskTracker, Handle);
 impl Runtime {
-    pub(crate) fn new() -> Self {
-        match RUNTIME.get() {
-            Some(runtime) => runtime.clone(),
-            None => {
-                let runtime = tokio::runtime::Builder::new_multi_thread().enable_time().enable_io().build().unwrap();
-                let handle = runtime.handle().clone();
-                let token = CancellationToken::new();
-                let tasks = TaskTracker::new();
-                let tk = token.clone();
-                let ts = tasks.clone();
-                std::thread::spawn(move || runtime.block_on(async move {
-                    tk.cancelled().await;
-                    ts.wait().await;
-                }));
-                let runtime = Runtime(token, tasks, handle);
-                let _ = RUNTIME.set(runtime.clone());
-                runtime
-            }
-        }
+    pub(crate) fn start() {
+        let runtime = tokio::runtime::Builder::new_multi_thread().enable_time().enable_io().build().unwrap();
+        let handle = runtime.handle().clone();
+        let token = CancellationToken::new();
+        let tasks = TaskTracker::new();
+        let tk = token.clone();
+        let ts = tasks.clone();
+        std::thread::spawn(move || runtime.block_on(async move {
+            tk.cancelled().await;
+            ts.wait().await;
+        }));
+        let runtime = Runtime(token, tasks, handle);
+        RUNTIME.set(runtime).unwrap()
     }
 
 

@@ -12,3 +12,4 @@ log = "0.4.29"
 maverick_os = {path = "../"}
 serde = "1.0.228"
 tokio = "1.52.3"
+predator = {path = "../../predator"}

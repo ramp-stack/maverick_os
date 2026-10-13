@@ -48,7 +48,7 @@ dependencies = [
 
 [[package]]
 name = "air"
-version = "2.0.2"
+version = "2.0.3"
 dependencies = [
  "arc-swap",
  "axum",
@@ -2085,7 +2085,7 @@ dependencies = [
 
 [[package]]
 name = "maverick_os"
-version = "2.0.3"
+version = "2.0.4"
 dependencies = [
  "air",
  "android-activity",
@@ -2115,10 +2115,12 @@ dependencies = [
  "objc2-core-media",
  "objc2-core-video",
  "objc2-foundation 0.3.2",
+ "objc2-photos-ui",
  "objc2-ui-kit 0.3.2",
  "objc2-user-notifications 0.3.2",
  "postage",
  "postcard",
+ "predator",
  "rand 0.9.5",
  "raw-window-handle",
  "rusqlite",
@@ -2747,6 +2749,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "objc2-map-kit"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "579edede1c244621cd8229b70ea6e20e6ec3bab5a74afdfd494b446b681e1e64"
+dependencies = [
+ "objc2 0.6.5",
+ "objc2-foundation 0.3.2",
+]
+
+[[package]]
 name = "objc2-media-toolbox"
 version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2779,6 +2791,34 @@ dependencies = [
  "bitflags 2.13.2",
  "objc2 0.6.5",
  "objc2-foundation 0.3.2",
+]
+
+[[package]]
+name = "objc2-photos"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d6ea9a706f18e32cf8a0723e99855af4f135282891e07259301bae9135ae3872"
+dependencies = [
+ "bitflags 2.13.2",
+ "objc2 0.6.5",
+ "objc2-foundation 0.3.2",
+]
+
+[[package]]
+name = "objc2-photos-ui"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fdddde9dfb986546746e3115021a85c4a83e1c5e9037b3c865a688fe9bf94ebb"
+dependencies = [
+ "bitflags 2.13.2",
+ "block2 0.6.2",
+ "objc2 0.6.5",
+ "objc2-app-kit 0.3.2",
+ "objc2-core-foundation",
+ "objc2-core-location 0.3.2",
+ "objc2-foundation 0.3.2",
+ "objc2-map-kit",
+ "objc2-photos",
 ]
 
 [[package]]
@@ -3123,6 +3163,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "85eae3c4ed2f50dcfe72643da4befc30deadb458a9b590d720cde2f2b1e97da9"
 dependencies = [
  "zerocopy",
+]
+
+[[package]]
+name = "predator"
+version = "1.0.0"
+dependencies = [
+ "air",
+ "dyn-clone",
+ "image 0.24.9",
+ "raw-window-handle",
 ]
 
 [[package]]
@@ -4146,9 +4196,9 @@ dependencies = [
 
 [[package]]
 name = "tokio-util"
-version = "0.7.19"
+version = "0.7.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "494815d09bf52b5548659851081238f0ca39ff638363907596da739561c62c52"
+checksum = "e464cf451ba96ebfc6f9b6542f17ee8b8956e33f1e40d9690624e59d7a7f8a4b"
 dependencies = [
  "bytes",
  "futures-core",
@@ -4169,9 +4219,9 @@ dependencies = [
 
 [[package]]
 name = "toml_edit"
-version = "0.25.16+spec-1.1.0"
+version = "0.25.17+spec-1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "88f38f3af8bf71841c67a990f4e2b52143b2d0a1a994c72513ff4c14977fc722"
+checksum = "e3641d5bbb5349a79e1020a242d251efbc546ad8048d133958323ce9c40a9c9c"
 dependencies = [
  "indexmap 2.14.2",
  "toml_datetime",
@@ -4181,9 +4231,9 @@ dependencies = [
 
 [[package]]
 name = "toml_parser"
-version = "1.1.4+spec-1.1.0"
+version = "1.1.5+spec-1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bed810ee007d8e7f9cf20b4774e7198142fa27186e0f805871da7f3c39eaf333"
+checksum = "baa693a8032d7e1cada7d0041e96126df243179ff061456783ac7f12bda4744c"
 dependencies = [
  "winnow",
 ]
