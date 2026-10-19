@@ -1,197 +1,246 @@
-use std::fmt::Debug;
-use std::hash::Hash;
+use std::any::{Any, TypeId, type_name};
 use std::collections::HashMap;
-use std::sync::{Arc, LazyLock};
-use std::any::Any;
-use std::marker::PhantomData;
-use std::collections::HashSet;
-use std::sync::Mutex;
-use std::sync::OnceLock;
+use std::fmt::{Debug, Formatter, Result as FmtResult};
+use std::hash::{DefaultHasher, Hash, Hasher};
+use std::ops::Deref;
+use std::sync::{Arc, LazyLock, Mutex};
+use std::sync::atomic::{AtomicU64, Ordering};
+use arc_swap::{ArcSwap, Guard};
+use arc_swap::access::{Access, Constant, Map};
+use serde::{Serialize, de::DeserializeOwned};
+use tokio::sync::{OnceCell, broadcast, mpsc, oneshot};
+use tokio::task::JoinHandle;
+use crate::RUNTIME;
+use crate::hardware::Cache;
 
-use crate::{Runtime, RUNTIME};
-use crate::Cache;
+pub trait Service: Send + Sized + 'static {
+    type Init: Hash + Send + 'static;
+    type Predicate: Send;
 
-use air::Id;
-use arc_swap::ArcSwap;
-use serde::{Deserialize, Serialize};
-use crossfire::{MTx, AsyncTx, AsyncRx, spsc, mpsc};
-use postage::broadcast::{channel, Sender, Receiver as PReceiver};
-use postage::prelude::{Stream, Sink};
+    fn init(init: Self::Init) -> impl Future<Output = Self> + Send;
+    fn predicate(&mut self) -> impl Future<Output = Self::Predicate> + Send;
+    fn handle(&mut self, predicate: Self::Predicate) -> impl Future<Output = ()> + Send;
+}
 
-#[allow(clippy::type_complexity)]
-static SHARED: LazyLock<Arc<Mutex<HashMap<String, Arc<OnceLock<Arc<Box<dyn Fn() -> Box<dyn Any + Send + Sync> + Send + Sync>>>>>>>> = LazyLock::new(|| {
-    Arc::new(Mutex::new(HashMap::default()))
-});
+pub trait Sharable: Serialize + DeserializeOwned + Clone + Send + Sync + 'static {
+    type Init: Hash + Send + 'static;
+    type Request: Send + 'static;
+    type Response: Clone + Send + Sync + 'static;
 
-type Request<S> = (<S as Sharable>::Request, AsyncTx<spsc::One<(Id, Box<<S as Sharable>::Response>)>>);
-type Guard<T> = arc_swap::Guard<Arc<T>, arc_swap::DefaultStrategy>;
+    fn persistent() -> bool {true}
+    fn init(init: Self::Init) -> impl Future<Output = Self> + Send;
+    fn handle(&mut self, request: Self::Request) -> impl Future<Output = Self::Response> + Send;
+}
 
 pub enum Ref<'a, T> {
-    Arc(Guard<T>, PhantomData::<&'a ()>),
-    #[allow(clippy::type_complexity)]
-    Map(Arc<Box<dyn for<'b> Fn(&'b ()) -> &'b T + Send + Sync>>, PhantomData::<&'a ()>)
+    Shared(Guard<Arc<T>>),
+    Mapped(Arc<dyn Deref<Target = T> + Send + Sync + 'a>),
 }
-impl<'a, T: Send + Sync + 'static> Ref<'a, T> {
-    pub fn new(arc: Guard<T>) -> Self {Ref::Arc(arc, PhantomData::<&'a ()>)}
-    pub fn map<R>(self, access: impl for<'b> Fn(&'b T) -> &'b R + Sync + Send + 'static) -> Ref<'a, R> {match self {
-        Ref::Arc(a, p) => Ref::Map(Arc::new(Box::new(move |_: &()| {
-            let r: &R = access(a.as_ref());
-            unsafe { &*(r as *const R) }
-        })), p),
-        Ref::Map(f, p) => Ref::Map(Arc::new(Box::new(move |t: &()| {
-            let r: &R = access(f(t));
-            unsafe { &*(r as *const R) }
-        })), p),
-    }}
+impl<'a, T: Send + Sync + 'a> Ref<'a, T> {
+    pub fn new(value: Guard<Arc<T>>) -> Self {Self::Shared(value)}
+    pub fn map<R: 'a>(self, access: impl Fn(&T) -> &R + Clone + Send + Sync + 'a) -> Ref<'a, R> {
+        Ref::Mapped(Arc::new(Map::new(Constant(self), move |value: &Ref<'a, T>| {
+            access(value)
+        }).load()))
+    }
 }
-impl<'a, T> AsRef<T> for Ref<'a, T> {fn as_ref(&self) -> &T {self}}
-impl<'a, T: Debug> Debug for Ref<'a, T> {fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {(**self).fmt(f)}}
-impl<'a, T> std::ops::Deref for Ref<'a, T> {type Target = T; fn deref(&self) -> &T {match self {Self::Arc(arc, _) => arc.as_ref(), Self::Map(f, _) => f(&())}}}
-impl<'a, T> Clone for Ref<'a, T> {fn clone(&self) -> Self {match self {Ref::Arc(a, p) => Ref::Arc(Guard::from_inner(Arc::clone(a)), *p), Ref::Map(f, p) => Ref::Map(f.clone(), *p)}}}
-
-#[derive(Debug, Clone)]
-pub struct Requester<S: Sharable>(MTx<mpsc::List<Request<S>>>, Runtime, Arc<tokio::sync::Mutex<HashSet<Id>>>);
-impl<S: Sharable> Requester<S> {
-    pub fn new(runtime: Runtime) -> (AsyncRx<mpsc::List<Request<S>>>, Self) {
-        let (tx, rx): (_, AsyncRx<_>) = mpsc::build(mpsc::List::new());
-        (rx, Requester(tx, runtime, Arc::new(tokio::sync::Mutex::new(HashSet::new()))))
+impl<T> AsRef<T> for Ref<'_, T> {fn as_ref(&self) -> &T {self}}
+impl<T> Clone for Ref<'_, T> {
+    fn clone(&self) -> Self {
+        match self {
+            Self::Shared(value) => Self::Shared(Guard::from_inner(Arc::clone(value))),
+            Self::Mapped(value) => Self::Mapped(value.clone()),
+        }
     }
-
-    pub fn request(&self, request: S::Request) -> S::Response {
-        self.1.block_on(async {
-            let (tx, rx): (_, AsyncRx<_>) = spsc::build(spsc::One::new());
-            self.0.send((request, tx)).unwrap();
-            let (id, b) = rx.recv().await.unwrap();
-            self.2.lock().await.insert(id);
-            *b
-        })
+}
+impl<T> Deref for Ref<'_, T> {
+    type Target = T;
+    fn deref(&self) -> &T {
+        match self {Self::Shared(value) => value, Self::Mapped(value) => value}
     }
-
-    pub fn remove(&self, id: &Id) -> bool {RUNTIME.get().unwrap().block_on(self.2.lock()).remove(id)}
-    pub fn clear(&self) {self.2.blocking_lock().clear()}
+}
+impl<T: Debug> Debug for Ref<'_, T> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {(**self).fmt(f)}
 }
 
-#[derive(Debug)]
-pub struct Broadcaster<U>(Arc<tokio::sync::Mutex<PReceiver<U>>>, Sender<U>);
-impl<U: Debug + Clone> Broadcaster<U> {
-    pub fn new() -> (Sender<U>, Self) {
-        let (bx, lx) = channel(10_000);
-        (bx.clone(), Broadcaster(Arc::new(tokio::sync::Mutex::new(lx)), bx))
-    }
-    pub async fn send(&mut self, update: U) {self.1.send(update).await.unwrap()}
-    pub async fn next(&self) -> U {self.0.lock().await.recv().await.unwrap()}
-    pub fn try_next(&self) -> Option<U> {self.0.blocking_lock().try_recv().ok()}
-    pub fn clear(&self) {*self.0.blocking_lock() = self.1.subscribe();}
+pub struct Shared<S: Sharable> {
+    key: Key,
+    value: Arc<ArcSwap<S>>,
+    requests: mpsc::UnboundedSender<Request<S>>,
+    sender: broadcast::WeakSender<Notification<S>>,
+    subscriber: u64,
+    responses: Mutex<broadcast::Receiver<Notification<S>>>,
 }
-impl<U: Clone> Clone for Broadcaster<U> {fn clone(&self) -> Self {
-    Self(Arc::new(tokio::sync::Mutex::new(RUNTIME.get().unwrap().block_on(self.0.lock()).clone())), self.1.clone())
-}}
-
-#[derive(Clone, Debug)]
-pub struct Pending<R: Clone + Send + Sync + 'static>(Arc<ArcSwap<(R, bool)>>, Broadcaster<bool>);
-impl<R: Clone + Send + Sync + 'static> Pending<R> {
-    pub(crate) fn new(pending: R) -> Self {
-        let (_, br) = Broadcaster::new();
-        Self(Arc::new(ArcSwap::from(Arc::new((pending, false)))), br)
-    }
-    pub(crate) async fn update(&mut self, update: R, confirmed: bool) {self.0.store((update, confirmed).into()); self.1.send(confirmed).await;}
-
-    pub fn pending(&self) -> Ref<'_, R> {
-        self.1.clear();
-        Ref::new(self.0.load()).map(|r| &r.0)
-    }
-    pub fn try_confirmed(&self) -> Option<R> {
-        let r = self.0.load(); r.1.then(|| r.0.clone())
-    }
-    pub async fn confirmed(self) -> R {loop {if self.1.next().await {return self.0.load().0.clone();}}}
-
-    pub fn try_next(&self) -> Option<bool> {self.1.try_next()}
-    pub async fn next(&self) -> bool {self.1.next().await}
-}
-
-pub trait Sharable: Serialize + for<'a> Deserialize<'a> + Debug + Clone + Send + Sync + 'static {
-    type Init: Hash;
-    type Request: Send + 'static;
-    type Response: Debug + Clone + Send + 'static;
-    type Memory: Send + 'static;
-    type Predicate: Send + 'static;
-
-    fn init(init: Self::Init) -> impl Future<Output = Self>;
-    fn init_memory(&mut self) -> impl Future<Output = Self::Memory>;
-
-    fn predicate(&mut self, memory: &mut Self::Memory) -> impl Future<Output = Self::Predicate> + Send;
-
-    fn handle_predicate(&mut self, predicate: Self::Predicate) -> impl Future<Output = Option<Self::Response>> + Send;
-
-    fn handle_request(&mut self, request: Self::Request) -> impl Future<Output = Self::Response> + Send;
-
-    fn update(&mut self, _memory: &mut Self::Memory) -> impl Future<Output = ()> + Send {async {}}
-}
-
-#[derive(Debug, Clone)]
-pub struct Shared<S: Sharable>(Arc<ArcSwap<S>>, Requester<S>, Broadcaster<(Id, S::Response)>);
 impl<S: Sharable> Shared<S> {
     pub fn new(init: S::Init) -> Self {
-        let runtime = RUNTIME.get().expect("Runtime must be started").clone();
-        let id = Id::hash(&(std::any::type_name::<S>(), &init)).to_string();
-        let once: Arc<OnceLock<_>> = SHARED.lock().unwrap().entry(id.clone()).or_insert_with(|| Arc::new(OnceLock::new())).clone();
-        *once.get_or_init(|| {
-            let mut cache = Cache::new(id.clone()).unwrap();
-            let mut sharable = cache.get::<S>("sharable").unwrap().unwrap_or(runtime.block_on(S::init(init)));
-            let mut memory = runtime.block_on(sharable.init_memory());
-
-            let arc = Arc::new(ArcSwap::from(Arc::new(sharable.clone())));
-            let (rx, rr) = Requester::new(runtime.clone());
-            let (mut bx, br) = Broadcaster::new();
-            let a = arc.clone();
-            runtime.spawn(Box::pin(async move { loop {
-                let (responder, response) = tokio::select! {
-                    biased; 
-                    r = rx.recv() => {
-                        let (request, responder): (_, AsyncTx<_>) = r.unwrap();
-                        let response = sharable.handle_request(request).await;
-                        (Some(responder), Some(response))
-                    },
-                    predicate = sharable.predicate(&mut memory) => {
-                        let r = sharable.handle_predicate(predicate).await;
-                        (None, r)
-                    },
-                };
-                sharable.update(&mut memory).await;
-                cache.insert("sharable", &sharable).unwrap();
-                arc.store(Arc::new(sharable.clone()));
-                if let Some(response) = response {
-                    let id = Id::random();
-                    if let Some(responder) = responder { 
-                        let _ = responder.send((id, Box::new(response.clone()))).await; 
-                    }
-                    bx.send((id, response.clone())).await.unwrap();
+        let runtime = RUNTIME.get().expect("Runtime must be started");
+        let key = Key::new::<S>(&init);
+        let once = SHARED.lock().unwrap().entry(key).or_default().clone();
+        let shared = runtime.block_on(once.get_or_init(async || {
+            let cache = S::persistent().then(Cache::new);
+            let id = format!("{}:{:016x}", type_name::<S>(), key.1);
+            let mut object = match cache.as_ref().and_then(|cache| cache.load(&id)) {
+                Some(object) => object,
+                None => {
+                    let object = S::init(init).await;
+                    if let Some(cache) = &cache {cache.save(&id, &object);}
+                    object
                 }
-            }}));
-            let shared = Shared(a, rr, br);
-            Arc::new(Box::new(move || Box::new(shared.clone())))
-        })().downcast::<Shared<S>>().unwrap()
+            };
+            let value = Arc::new(ArcSwap::from_pointee(object.clone()));
+            let (requests, mut receiver) = mpsc::unbounded_channel::<Request<S>>();
+            let (responses, _) = broadcast::channel(1024);
+            let snapshot = value.clone();
+            let sender = responses.downgrade();
+            let task = runtime.spawn(Box::pin(async move {
+                loop {
+                    let (origin, request, reply) = receiver.recv().await.unwrap();
+                    let response = object.handle(request).await;
+                    if let Some(cache) = &cache {cache.save(&id, &object);}
+                    value.store(Arc::new(object.clone()));
+                    let _ = responses.send((origin, Arc::new(response.clone())));
+                    reply.send(response).unwrap_or_else(|_| panic!("Shared reply receiver dropped"));
+                }
+            }));
+            Box::new((snapshot, requests, sender, Mutex::new(Some(task)))) as Box<dyn Any + Send + Sync>
+        }));
+        let (value, requests, sender, _) = shared.downcast_ref::<SharedData<S>>().unwrap();
+        let responses = sender.upgrade().unwrap().subscribe();
+        Self {
+            key, value: value.clone(), requests: requests.clone(), sender: sender.clone(),
+            subscriber: NEXT_SUBSCRIBER_ID.fetch_add(1, Ordering::Relaxed),
+            responses: Mutex::new(responses),
+        }
     }
 
-    pub async fn next(&mut self) -> S::Response {loop {
-        let (id, r) = self.2.next().await;
-        if !self.1.remove(&id) {
-            return r;
+    pub fn shutdown(&self) {
+        let worker = {
+            let shared = SHARED.lock().unwrap();
+            let Some(entry) = shared.get(&self.key).and_then(|entry| entry.get()) else {return};
+            let (value, _, _, worker) = entry.downcast_ref::<SharedData<S>>().unwrap();
+            if !Arc::ptr_eq(value, &self.value) {return}
+            let worker = worker.lock().unwrap().take();
+            worker
+        };
+        if let Some(worker) = worker {
+            worker.abort();
+            if let Err(error) = RUNTIME.get().unwrap().block_on(worker) {
+                assert!(error.is_cancelled(), "Shared worker failed: {error}");
+            }
+            SHARED.lock().unwrap().remove(&self.key);
         }
-    }}
-
-    pub fn try_next(&mut self) -> Option<S::Response> {loop {
-        let (id, r) = self.2.try_next()?;
-        if !self.1.remove(&id) {
-            return Some(r);
-        }
-    }}
-
-    pub fn as_ref(&self) -> Ref<'_, S> {
-        self.2.clear();
-        self.1.clear();
-        Ref::new(self.0.load())
     }
 
-    pub fn request(&self, request: S::Request) -> S::Response {self.1.request(request)}
+    pub fn update(&self, request: S::Request) -> S::Response {
+        let (reply, response) = oneshot::channel();
+        self.requests.send((self.subscriber, request, reply))
+            .unwrap_or_else(|_| panic!("Shared worker has stopped"));
+        RUNTIME.get().unwrap().block_on(response).expect("Shared worker stopped before replying")
+    }
+
+    pub fn load(&self) -> Ref<'_, S> {
+        let current = self.sender.upgrade().expect("Shared worker has stopped").subscribe();
+        *self.responses.lock().unwrap() = current;
+        Ref::new(self.value.as_ref().load())
+    }
+
+    pub async fn next(&mut self) -> S::Response {
+        let receiver = self.responses.get_mut().unwrap();
+        loop {
+            let (origin, response) = receiver.recv().await.unwrap();
+            if origin != self.subscriber {return (*response).clone()}
+        }
+    }
+
+    pub fn try_next(&mut self) -> Option<S::Response> {
+        let receiver = self.responses.get_mut().unwrap();
+        loop {
+            match receiver.try_recv() {
+                Ok((origin, response)) if origin != self.subscriber => return Some((*response).clone()),
+                Ok(_) => {}
+                Err(broadcast::error::TryRecvError::Empty) => return None,
+                Err(error) => panic!("{error}"),
+            }
+        }
+    }
+}
+impl<S: Sharable> Clone for Shared<S> {
+    fn clone(&self) -> Self {
+        let responses = self.sender.upgrade().expect("Shared worker has stopped").subscribe();
+        Self {
+            key: self.key,
+            value: self.value.clone(), requests: self.requests.clone(), sender: self.sender.clone(),
+            subscriber: NEXT_SUBSCRIBER_ID.fetch_add(1, Ordering::Relaxed),
+            responses: Mutex::new(responses),
+        }
+    }
+}
+impl<S: Sharable> Debug for Shared<S> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
+        f.debug_struct("Shared").field("type", &type_name::<S>()).finish_non_exhaustive()
+    }
+}
+
+pub struct Services;
+impl Services {
+    pub fn start<S: Service>(init: S::Init) {
+        let runtime = RUNTIME.get().expect("Runtime must be started");
+        let key = Key::new::<S>(&init);
+        let mut services = SERVICES.lock().unwrap();
+        if services.get(&key).is_some_and(|task| !task.is_finished()) {return}
+        let task = runtime.spawn(Box::pin(async move {
+            let mut service = S::init(init).await;
+            loop {
+                let predicate = service.predicate().await;
+                service.handle(predicate).await;
+                tokio::task::yield_now().await;
+            }
+        }));
+        services.insert(key, task);
+    }
+    pub fn shutdown<S: Service>(init: &S::Init) {
+        let task = SERVICES.lock().unwrap().remove(&Key::new::<S>(init));
+        if let Some(task) = task {
+            task.abort();
+            if let Err(error) = RUNTIME.get().unwrap().block_on(task) {
+                assert!(error.is_cancelled(), "Service failed: {error}");
+            }
+        }
+    }
+    pub fn shutdown_all() {
+        loop {
+            let tasks: Vec<_> = SERVICES.lock().unwrap().drain().map(|(_, task)| task).collect();
+            if tasks.is_empty() {break}
+            for task in &tasks {task.abort();}
+            RUNTIME.get().unwrap().block_on(async {
+                for task in tasks {
+                    if let Err(error) = task.await {
+                        assert!(error.is_cancelled(), "Service failed: {error}");
+                    }
+                }
+            });
+        }
+    }
+}
+
+type Request<S> = (u64, <S as Sharable>::Request, oneshot::Sender<<S as Sharable>::Response>);
+type Notification<S> = (u64, Arc<<S as Sharable>::Response>);
+type SharedData<S> = (
+    Arc<ArcSwap<S>>, mpsc::UnboundedSender<Request<S>>, broadcast::WeakSender<Notification<S>>,
+    Mutex<Option<JoinHandle<()>>>,
+);
+type SharedEntry = Arc<OnceCell<Box<dyn Any + Send + Sync>>>;
+
+static NEXT_SUBSCRIBER_ID: AtomicU64 = AtomicU64::new(0);
+static SHARED: LazyLock<Mutex<HashMap<Key, SharedEntry>>> = LazyLock::new(Mutex::default);
+static SERVICES: LazyLock<Mutex<HashMap<Key, JoinHandle<()>>>> = LazyLock::new(Mutex::default);
+
+#[derive(Clone, Copy, Eq, Hash, PartialEq)]
+struct Key(TypeId, u64);
+impl Key {
+    fn new<T: 'static>(init: &impl Hash) -> Self {
+        let mut hasher = DefaultHasher::new();
+        init.hash(&mut hasher);
+        Self(TypeId::of::<T>(), hasher.finish())
+    }
 }

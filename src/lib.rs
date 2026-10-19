@@ -1,147 +1,134 @@
-pub mod hardware;
+mod hardware;
+pub use hardware::{
+    Hardware, Camera, PickResult, Pickable, Picked, Cancled, Media, Data, Image, Video, Player,
+};
 
-pub mod window;
-use window::{Window, Renderer, Surface, Input};
+mod window;
+pub use window::{Window, PhysicalWindow, LogicalWindow};
+
+pub mod inputs;
+use inputs::{Inputs, OSInput, Input};
 
 mod runtime;
 use runtime::{Runtime, RUNTIME};
 
-mod cache;
-use cache::Cache;
-
-mod shared;
-
-pub mod air;
-
-mod config;
-pub use config::{IS_MOBILE, IS_WEB};
+pub mod shared;
 
 #[cfg(target_os = "android")]
-use winit::platform::android::activity::AndroidApp;
+pub use winit::platform::android::activity::AndroidApp;
+
+use winit::window::WindowId;
+use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
+use winit::application::ApplicationHandler;
+use winit::event::{StartCause, WindowEvent, DeviceEvent, DeviceId};
+
+#[cfg(target_os="android")]
+use winit::platform::android::EventLoopBuilderExtAndroid;
+
+use std::time::Duration;
+
+const TICK: Duration = Duration::from_millis(16);//60 fps
 
 pub trait Application: 'static {
-    type Renderer<'surface>: Renderer<'surface, Application=Self>;
+    type Renderer: Renderer;
 
-    fn new(context: &Context) -> Self;
-    fn on_input(&mut self, context: &Context, input: Input);
+    fn name() -> String;
+
+    fn new(hardware: Hardware, window: LogicalWindow) -> Self;
+
+    fn on_input(&mut self, input: Input);
+
+    fn on_tick(&mut self) -> <Self::Renderer as Renderer>::Instructions;
 }
 
-#[derive(Clone)]
-pub struct Context {
-    pub hardware: hardware::Context,
-    pub runtime: runtime::Runtime,
-    pub window: window::Context,
-    pub air: air::Context,
+pub trait Renderer {
+    type Instructions: 'static;
+
+    fn new(window: Window) -> Self;
+    fn resize(&mut self);
+    fn draw(&mut self, instructions: Self::Instructions);
 }
 
-pub struct MaverickOS<A: Application> {
-    context: Context,
-    surface: Surface<A>,
-    app: A,
-}
-
+pub struct MaverickOS<A: Application>(Option<App<A>>);
 impl<A: Application> MaverickOS<A> {
-    #[cfg(target_os = "android")] 
-    pub fn start(app: AndroidApp) {Window::<A>::start(app)}
+    #[cfg(target_os = "android")]
+    pub fn start(app: AndroidApp) {
+        EventLoop::builder().with_android_app(app).build().unwrap().run_app(&mut Self(None)).unwrap();
+    }
 
-    #[cfg(not(target_os = "android"))] 
-    pub fn start() {Window::<A>::start()}
+    #[cfg(target_arch = "wasm32")]
+    pub fn start() {
+        EventLoop::new().unwrap().spawn_app(Self(None)).unwrap();
+    }
 
-    fn new(window: window::Context, surface: Surface<A>) -> Self {
-        let hardware = hardware::Context::new();
-        let runtime = Runtime::new();
-
-        let mut s = Cache::new("secret").unwrap();
-        let secret = s.get("secret").unwrap().unwrap_or_else(air::Secret::new);
-        s.insert("secret", &secret).unwrap();
-        let air = air::Context::new(secret);
-        
-        let context = Context{
-            hardware,
-            runtime,
-            window,
-            air
-        };
-        let app = A::new(&context);
-        MaverickOS{
-            context,
-            surface,
-            app
-        }
+    #[cfg(not(any(target_os = "android", target_arch = "wasm32")))]
+    pub fn start() {
+        EventLoop::new().unwrap().run_app(&mut Self(None)).unwrap();
     }
 }
 
-#[cfg(any(target_os = "ios", target_os = "macos"))]
-#[link(name = "PhotosUI", kind = "framework")]
-unsafe extern "C" {}
+impl<A: Application> ApplicationHandler for MaverickOS<A> {
+    fn new_events(&mut self, _event_loop: &ActiveEventLoop, cause: StartCause) {
+        if let Some(app) = self.0.as_mut() && let StartCause::ResumeTimeReached{..} = cause {
+            app.window.request_redraw()
+        }
+    }
 
-#[cfg(target_os = "macos")]
-#[link(name = "Cocoa", kind = "framework")]
-unsafe extern "C" {}
+    fn suspended(&mut self, _event_loop: &ActiveEventLoop) {
+        if let Some(app) = self.0.as_mut() {
+            app.renderer = None;
+        }
+    }
 
-#[cfg(target_os = "macos")]
-#[link(name = "ApplicationServices", kind = "framework")]
-unsafe extern "C" {}
+    fn device_event(&mut self, _event_loop: &ActiveEventLoop, _device_id: DeviceId, event: DeviceEvent) {
+        log::debug!("Ignored Device Event: {:?}", event);
+    }
 
-#[cfg(target_os = "macos")]
-#[link(name = "AppKit", kind = "framework")]
-unsafe extern "C" {}
+    fn resumed(&mut self, event_loop: &ActiveEventLoop) {match &mut self.0 {
+        Some(app) => {
+            app.renderer = Some(A::Renderer::new(app.window.clone()));
+            app.app.on_input(Input::Resized(app.window.logical()));
+        },
+        none => {
+            let window = window::Window::new(event_loop, A::name());
+            *none = Some(App::new(window))
+        }
+    }}
 
-#[cfg(target_os = "macos")]
-#[link(name = "Carbon", kind = "framework")]
-unsafe extern "C" {}
+    fn memory_warning(&mut self, _event_loop: &ActiveEventLoop) {
+        log::warn!("Memory Warning");
+    }
 
-#[cfg(target_os = "ios")]
-#[link(name = "UIKit", kind = "framework")]
-unsafe extern "C" {}
+    fn exiting(&mut self, _event_loop: &ActiveEventLoop) {
+        if let Some(app) = self.0.take() {
+            drop(app);
+            RUNTIME.get().unwrap().clone().shutdown();
+        }
+    }
 
-#[cfg(any(target_os = "ios", target_os = "macos"))]
-#[link(name = "CoreGraphics", kind = "framework")]
-unsafe extern "C" {}
-
-#[cfg(any(target_os = "ios", target_os = "macos"))]
-#[link(name = "Metal", kind = "framework")]
-unsafe extern "C" {}
-
-#[cfg(any(target_os = "ios", target_os = "macos"))]
-#[link(name = "CoreVideo", kind = "framework")]
-unsafe extern "C" {}
-
-#[cfg(any(target_os = "ios", target_os = "macos"))]
-#[link(name = "CoreMedia", kind = "framework")]
-unsafe extern "C" {}
-
-#[cfg(any(target_os = "ios", target_os = "macos"))]
-#[link(name = "AVKit", kind = "framework")]
-unsafe extern "C" {}
-
-#[cfg(any(target_os = "ios", target_os = "macos"))]
-#[link(name = "AVFoundation", kind = "framework")]
-unsafe extern "C" {}
-
-#[cfg(any(target_os = "ios", target_os = "macos"))]#[link(name = "Security", kind = "framework")]
-unsafe extern "C" {}
-
-#[cfg(any(target_os = "ios", target_os = "macos"))]
-#[link(name = "QuartzCore", kind = "framework")]
-unsafe extern "C" {}
-
-#[cfg(any(target_os = "ios", target_os = "macos"))]
-#[link(name = "c++")]
-unsafe extern "C" {}
-
-#[cfg(any(target_os = "ios", target_os = "macos"))]
-#[link(name = "AudioToolbox", kind = "framework")]
-unsafe extern "C" {}
-
-#[cfg(any(target_os = "ios", target_os = "macos"))]
-#[link(name = "Foundation", kind = "framework")]
-unsafe extern "C" {}
-
-pub mod __private {
-    #[cfg(target_os = "android")]
-    pub use winit::platform::android::activity::AndroidApp;
-    pub use crate::MaverickOS;
+    fn window_event(&mut self, event_loop: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
+        let Some(app) = self.0.as_mut() else {return};
+        let scale = app.window.physical().scale_factor;
+        if id == app.window.id() && let Some(event) = app.inputs.process(event, scale) {match event {
+            OSInput::Close => event_loop.exit(),
+            OSInput::Draw => {
+                event_loop.set_control_flow(ControlFlow::WaitUntil(std::time::Instant::now()+TICK));
+                let instructions = app.app.on_tick();
+                if let Some(renderer) = app.renderer.as_mut() {
+                    renderer.draw(instructions);
+                } else {log::warn!("Redraw Requested Without A Valid Surface");}
+            }
+            OSInput::Resize => {
+                if let Some(renderer) = app.renderer.as_mut() {
+                    renderer.resize();
+                } else {log::warn!("Resize Requested Without A Valid Surface");}
+                app.app.on_input(Input::Resized(app.window.logical()));
+            }
+            OSInput::Input(input) => {
+                app.app.on_input(input);
+            }
+        }}
+    }
 }
 
 #[macro_export]
@@ -150,24 +137,43 @@ macro_rules! start {
         #[cfg(target_arch = "wasm32")]
         #[cfg_attr(target_arch = "wasm32", wasm_bindgen(start))]
         pub fn maverick_main() {
-            $crate::__private::MaverickOS::<$app>::start()
+            $crate::MaverickOS::<$app>::start()
         }
 
         #[cfg(target_os = "ios")]
         #[unsafe(no_mangle)]
         pub extern "C" fn maverick_main() {
-            $crate::__private::MaverickOS::<$app>::start()
+            $crate::MaverickOS::<$app>::start()
         }
 
         #[cfg(target_os = "android")]
         #[unsafe(no_mangle)]
-        pub fn android_main(app: $crate::__private::AndroidApp) {
-            $crate::__private::MaverickOS::<$app>::start(app)
+        pub fn android_main(app: $crate::AndroidApp) {
+            $crate::MaverickOS::<$app>::start(app)
         }
 
         #[cfg(not(any(target_os = "android", target_os="ios", target_arch = "wasm32")))]
-        pub fn maverick_main() {
-            $crate::__private::MaverickOS::<$app>::start()
+        pub fn main() {
+            $crate::MaverickOS::<$app>::start()
         }
     };
+}
+
+struct App<A: Application> {
+    _hardware: Hardware,
+    inputs: Inputs,
+    window: window::Window,
+    renderer: Option<A::Renderer>,
+    app: A,
+}
+
+impl<A: Application> App<A> {
+    fn new(window: window::Window) -> Self {
+        Runtime::start();
+        let _hardware = hardware::Hardware::new(A::name());
+
+        let app = A::new(_hardware.clone(), window.logical());
+        let renderer = Some(A::Renderer::new(window.clone()));
+        App{_hardware, window, inputs: Inputs::default(), renderer, app}
+    }
 }
