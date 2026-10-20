@@ -1,6 +1,6 @@
 [package]
 name = "maverick_os"
-version = "3.0.0"
+version = "3.0.1"
 edition = "2024"
 authors = ["Caleb Couch <caleb@orange.me>"]
 description = "Maverick OS"
@@ -26,7 +26,9 @@ hex = "0.4.3"
 rand = "0.9.1"
 downcast-rs = "2.0.1"
 image = "0.24.9"
-ffmpeg-next = {version = "9.0.0", default-features = false, features = ["codec", "format", "software-scaling"]}
+ffmpeg-next = {package = "ramp-ffmpeg", version = "9.0.1", default-features = false, features = [
+    "codec", "format", "software-scaling", "build-portable",
+]}
 libc = "0.2.172"
 imageproc = "0.25.0"
 
