@@ -41,6 +41,10 @@ objc2-core-foundation = "0.3.1"
 objc2-core-media = "0.3.1"
 objc2-foundation = "0.3.1"
 objc2-core-video = "0.3.1"
+objc2-core-haptics = { version = "0.3.2", features = [
+    "CHHapticEngine",
+    "CHHapticDeviceCapability",
+] }
 dispatch2 = "0.3.0"
 objc2-app-kit = "0.3.1"
 block2 = "0.6.2"

@@ -22,7 +22,7 @@ use crate::{MaverickOS, Application};
 
 use raw_window_handle::{HasWindowHandle, HasDisplayHandle};
 
-const TICK: Duration = Duration::from_millis(0);//60 fps
+const TICK: Duration = Duration::from_millis(16);//60 fps
 
 pub trait Handle: HasWindowHandle + HasDisplayHandle + Send + Sync {}
 impl<T: HasWindowHandle + HasDisplayHandle + Send + Sync> Handle for T {}
@@ -73,6 +73,7 @@ pub enum Input {
     WindowMoved(i32, i32),
     CameraFrame(RgbaImage),
     SelectedPhoto(RgbaImage),
+    SelectedMedia(crate::hardware::Media),
     DroppedFile(PathBuf),
     HoveredFile(PathBuf),
     HoveredFileCancelled,

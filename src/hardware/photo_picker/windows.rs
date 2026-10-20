@@ -43,4 +43,8 @@ impl OsPhotoPicker {
             }
         });
     }
+    
+    pub fn open_media(callback: impl FnOnce(Option<super::Media>) + Send + 'static) {
+        callback(None);
+    }
 }

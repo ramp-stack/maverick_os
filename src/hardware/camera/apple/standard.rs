@@ -1,5 +1,5 @@
 use std::slice::from_raw_parts;
-use std::cell::RefCell;
+use std::sync::Mutex;
 use image::RgbaImage;
 use image::Rgba;
 
@@ -23,7 +23,7 @@ impl StandardProcessor {
 }
 
 #[derive(Debug, Default)]
-pub struct Frame(RefCell<Option<RgbaImage>>);
+pub struct Frame(Mutex<Option<RgbaImage>>);
 
 define_class!(
     #[unsafe(super = NSObject)]
@@ -82,7 +82,7 @@ define_class!(
                     image.put_pixel(dest_x as u32, dest_y as u32, Rgba([r, g, b, a]));
                 }
             }
-            self.ivars().0.replace(Some(image));
+            *self.ivars().0.lock().unwrap() = Some(image);
 
             unsafe { CVPixelBufferUnlockBaseAddress(&pixel_buffer, CVPixelBufferLockFlags(0)); }
         }
@@ -188,7 +188,6 @@ impl StandardOsCamera {
     }
 
     pub fn frame(&self) -> Option<RgbaImage> {
-        self.processor.ivars().0.take()
+        self.processor.ivars().0.lock().unwrap().take()
     }
-
 }

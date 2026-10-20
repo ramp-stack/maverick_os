@@ -28,6 +28,10 @@ impl OsPhotoPicker {
       //});
     }
 
+    pub fn open_media(callback: impl FnOnce(Option<super::Media>) + Send + 'static) {
+        callback(None);
+    }
+
   //fn try_zenity() -> Option<String> {
   //    let output = Command::new("zenity")
   //        .args(&[

@@ -68,7 +68,7 @@ impl<S: Sharable> Requester<S> {
     }
 
     pub fn remove(&self, id: &Id) -> bool {RUNTIME.get().unwrap().block_on(self.2.lock()).remove(id)}
-    pub fn clear(&self) {self.2.blocking_lock().clear()}
+    pub fn clear(&self) {RUNTIME.get().unwrap().block_on(self.2.lock()).clear()}
 }
 
 #[derive(Debug)]
@@ -80,8 +80,8 @@ impl<U: Debug + Clone> Broadcaster<U> {
     }
     pub async fn send(&mut self, update: U) {self.1.send(update).await.unwrap()}
     pub async fn next(&self) -> U {self.0.lock().await.recv().await.unwrap()}
-    pub fn try_next(&self) -> Option<U> {self.0.blocking_lock().try_recv().ok()}
-    pub fn clear(&self) {*self.0.blocking_lock() = self.1.subscribe();}
+    pub fn try_next(&self) -> Option<U> {RUNTIME.get().unwrap().block_on(self.0.lock()).try_recv().ok()}
+    pub fn clear(&self) {*RUNTIME.get().unwrap().block_on(self.0.lock()) = self.1.subscribe();}
 }
 impl<U: Clone> Clone for Broadcaster<U> {fn clone(&self) -> Self {
     Self(Arc::new(tokio::sync::Mutex::new(RUNTIME.get().unwrap().block_on(self.0.lock()).clone())), self.1.clone())

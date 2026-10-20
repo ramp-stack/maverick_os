@@ -5,6 +5,8 @@ use std::path::PathBuf;
 use std::fs;
 use image::RgbaImage;
 
+use super::Media;
+
 #[derive(Clone)]
 pub struct OsPhotoPicker;
 
@@ -78,5 +80,9 @@ impl OsPhotoPicker {
                 }
             });
         });
+    }
+
+    pub fn open_media(callback: impl FnOnce(Option<Media>) + Send + 'static) {
+        Self::open(move |image| callback(image.map(Media::Photo)));
     }
 }

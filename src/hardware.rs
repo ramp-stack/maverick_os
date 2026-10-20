@@ -8,12 +8,14 @@ mod photo_picker;
 mod safe_area;
 mod notifications;
 mod app_support;
+mod video_player;
 
 pub use clipboard::Clipboard;
 pub use camera::Camera;
 pub use share::Share;
 pub use cloud::CloudStorage;
-pub use photo_picker::PhotoPicker;
+pub use photo_picker::{PhotoPicker, Media, MAX_VIDEO_BYTES};
+pub use video_player::VideoPlayer;
 pub use safe_area::SafeAreaInsets;
 pub use haptics::Haptics;
 pub use notifications::Notifications;
@@ -29,6 +31,7 @@ pub struct Context {
     pub haptics: Haptics,
     pub notifications: Notifications,
     pub photo_picker: PhotoPicker,
+    pub video_player: VideoPlayer,
 
     #[allow(dead_code)]
     pub(crate) cloud: CloudStorage
@@ -58,6 +61,7 @@ impl Context {
             notifications: Notifications::new(),
             cloud,
             photo_picker: PhotoPicker::new(),
+            video_player: VideoPlayer::new(),
         }
     }
 
@@ -68,6 +72,9 @@ impl Context {
         }
         if let Some(photo) = self.photo_picker.tick() {
             events.push(Input::SelectedPhoto(photo));
+        }
+        if let Some(media) = self.photo_picker.tick_media() {
+            events.push(Input::SelectedMedia(media));
         }
         events
     }
