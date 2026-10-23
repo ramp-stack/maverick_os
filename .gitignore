@@ -3,3 +3,13 @@
 
 /demo/target
 /demo/CACHE/**
+
+/.cargo/config.toml
+
+/android/target/
+/android/.gradle/
+/android/build/
+/android/app/build/
+/android/bridge/build/
+/android/local.properties
+/android/google-services.json

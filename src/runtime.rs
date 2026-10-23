@@ -1,26 +1,29 @@
-use std::sync::OnceLock;
-
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 use tokio::runtime::Handle;
 
+use std::sync::OnceLock;
+
+use crate::hardware::Cache;
+
+pub static RUNTIME: OnceLock<Runtime> = OnceLock::new();
+
 pub trait Task: Send + 'static {
+    fn repeat() -> bool {true}
     fn run(&mut self) -> impl Future<Output = ()> + Send;
     fn shutdown(self) -> impl Future<Output = ()> + Send;
 }
 
 impl<F: Future<Output = ()> + Unpin + Send + 'static> Task for F {
+    fn repeat() -> bool {false}
     async fn run(&mut self) -> () {self.await}
     async fn shutdown(self) -> () {}
 }
 
-
-pub static RUNTIME: OnceLock<Runtime> = OnceLock::new();
-
 #[derive(Clone, Debug)]
-pub struct Runtime(CancellationToken, TaskTracker, Handle);
+pub struct Runtime(CancellationToken, TaskTracker, Handle, Cache);
 impl Runtime {
-    pub(crate) fn start() {
+    pub fn start(cache: Cache) {
         let runtime = tokio::runtime::Builder::new_multi_thread().enable_time().enable_io().build().unwrap();
         let handle = runtime.handle().clone();
         let token = CancellationToken::new();
@@ -31,10 +34,11 @@ impl Runtime {
             tk.cancelled().await;
             ts.wait().await;
         }));
-        let runtime = Runtime(token, tasks, handle);
+        let runtime = Runtime(token, tasks, handle, cache);
         RUNTIME.set(runtime).unwrap()
     }
 
+    pub fn cache(&self) -> Cache {self.3.clone()}
 
     pub fn block_on<F: Future>(&self, future: F) -> F::Output {
         match Handle::try_current() {
@@ -45,7 +49,7 @@ impl Runtime {
         }
     }
 
-    pub fn spawn<T: Task>(&self, mut task: T) {
+    pub fn spawn<T: Task>(&self, mut task: T) -> tokio::task::JoinHandle<()> {
         let token = self.0.clone();
         self.1.spawn_on(async move {loop{
             tokio::select! {
@@ -54,12 +58,13 @@ impl Runtime {
                     task.shutdown().await;
                     break;
                 }
-                _ = task.run() => {}
+                _ = task.run() => {if !T::repeat() {break}}
             }
-        }}, &self.2);
+        }}, &self.2)
     }
 
-    pub(crate) fn shutdown(self) {
+    pub fn shutdown(self) {
+        crate::shared::Services::shutdown_all();
         self.0.cancel();
         self.1.close();
         self.block_on(self.1.wait());

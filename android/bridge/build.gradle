@@ -1,0 +1,15 @@
+plugins { id 'com.android.library' }
+android {
+    namespace 'me.ramp.maverick'
+    compileSdk 36
+    defaultConfig { minSdk 30 }
+    sourceSets.main {
+        java.srcDirs = ['../java']
+        manifest.srcFile '../AndroidManifest.xml'
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+}
+dependencies { implementation 'com.google.firebase:firebase-messaging:25.1.3' }

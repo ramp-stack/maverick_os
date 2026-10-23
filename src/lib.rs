@@ -1,142 +1,154 @@
-mod hardware;
-
-mod window;
-
-mod events;
-use events::{Events, Event};
-
-mod runtime;
-use runtime::{Runtime, RUNTIME};
-
-mod cache;
-use cache::Cache;
-
-mod shared;
-
-pub mod air;
+use futures::{FutureExt, StreamExt};
+use futures::channel::mpsc::{self, UnboundedReceiver, UnboundedSender};
+use futures::future::LocalBoxFuture;
+use winit::application::ApplicationHandler;
+use winit::event::{WindowEvent, DeviceEvent, DeviceId};
+use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy};
+use winit::window::WindowId;
 
 #[cfg(target_os = "android")]
-use winit::platform::android::activity::AndroidApp;
-
-use winit::window::WindowId;
-use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
-use winit::application::ApplicationHandler;
-use winit::event::{StartCause, WindowEvent, DeviceEvent, DeviceId};
-
-#[cfg(target_os="android")]
+pub use winit::platform::android::activity::AndroidApp;
+#[cfg(target_os = "android")]
 use winit::platform::android::EventLoopBuilderExtAndroid;
 
-use predator::{Application, Hardware, Renderer, Window, Air, Context, Input, traits::Window as _};
+use std::sync::Arc;
+use std::task::{Context as TaskContext, Wake, Waker};
+use std::marker::PhantomData;
 
-use std::time::Duration;
+mod hardware;
+pub use hardware::{
+    Hardware, Camera, Microphone, Capture, Keyboard, PickResult, Pickable, Picked, Cancled, Media, Data,
+    Image, Visual, Video, Audio, Sound, Chunks, Tracks, Format, Frame, PlaybackMode, Player,
+    PushDestination, Notify,
+};
 
-const TICK: Duration = Duration::from_millis(16);//60 fps
+mod window;
+pub use window::{Window, PhysicalWindow, LogicalWindow};
 
-struct App<A: Application> {
-    context: Context,
-    events: Events,
-    window: window::Window,
-    renderer: Option<A::Renderer>,
-    app: A,
+pub mod inputs;
+use inputs::Input;
+
+pub mod shared;
+
+mod events;
+use events::{Events, Output};
+
+mod runtime;
+use runtime::RUNTIME;
+
+pub trait Application: 'static {
+    type Renderer: Renderer;
+
+    fn name() -> String;
+    fn new(hardware: Hardware, window: LogicalWindow) -> Self;
+    fn on_input(&mut self, input: Input);
+    fn draw(&mut self) -> <Self::Renderer as Renderer>::Instructions;
+    fn changed(&mut self) -> impl Future<Output = ()> {std::future::pending()}
 }
 
-impl<A: Application> App<A> {
-    fn new(window: window::Window) -> Self {
-        Runtime::start();
-        let hardware = Hardware::new(hardware::Hardware::new());
+pub trait Renderer: 'static {
+    type Instructions: 'static;
 
-        let mut s = Cache::new("secret").unwrap();
-        let secret = s.get("secret").unwrap().unwrap_or_else(air::Secret::new);
-        s.insert("secret", &secret).unwrap();
-        let air = Air::new::<A, _>(air::Air::new(secret));
-        
-        let mut context = Context{hardware, window: window.logical(), air};
-        let app = A::new(&mut context);
-        let renderer = Some(A::Renderer::new(Window::new(window.clone())));
-        App{context, window, events: Events::default(), renderer, app}
-    }
+    fn new(window: Window) -> Self;
+    fn resize(&mut self);
+    fn update(&mut self, instructions: Self::Instructions) -> bool;
+    /// Returns true after submitting a displayable frame; false when rendering was skipped.
+    fn draw(&mut self) -> bool;
 }
 
-pub struct MaverickOS<A: Application>(Option<App<A>>);
+pub struct MaverickOS<A: Application> {
+    proxy: EventLoopProxy<Output>,
+    driver: Option<Driver>,
+    application: PhantomData<fn() -> A>,
+}
 impl<A: Application> MaverickOS<A> {
     #[cfg(target_os = "android")]
     pub fn start(app: AndroidApp) {
-        EventLoop::builder().with_android_app(app).build().unwrap().run_app(&mut Self(None)).unwrap();
+        let events = EventLoop::<Output>::with_user_event().with_android_app(app).build().unwrap();
+        let proxy = events.create_proxy();
+        events.run_app(&mut Self {proxy, driver: None, application: PhantomData}).unwrap();
     }
 
     #[cfg(target_arch = "wasm32")]
     pub fn start() {
-        EventLoop::new().unwrap().spawn_app(Self(None)).unwrap();
+        use winit::platform::web::EventLoopExtWebSys;
+        let events = EventLoop::<Output>::with_user_event().build().unwrap();
+        let proxy = events.create_proxy();
+        events.spawn_app(Self {proxy, driver: None, application: PhantomData});
     }
 
     #[cfg(not(any(target_os = "android", target_arch = "wasm32")))]
     pub fn start() {
-        EventLoop::new().unwrap().run_app(&mut Self(None)).unwrap();
+        let events = EventLoop::<Output>::with_user_event().build().unwrap();
+        let proxy = events.create_proxy();
+        events.run_app(&mut Self {proxy, driver: None, application: PhantomData}).unwrap();
+    }
+
+    fn send(&mut self, message: Message) {
+        self.driver.as_mut().unwrap().messages.unbounded_send(message).unwrap();
+        self.pump();
+    }
+    fn pump(&mut self) {
+        let driver = self.driver.as_mut().unwrap();
+        let waker = Waker::from(driver.wake.clone());
+        assert!(driver.task.as_mut().poll(&mut TaskContext::from_waker(&waker)).is_pending());
     }
 }
-
-impl<A: Application> ApplicationHandler for MaverickOS<A> {
-    fn new_events(&mut self, _event_loop: &ActiveEventLoop, cause: StartCause) {
-        if let Some(app) = self.0.as_mut() && let StartCause::ResumeTimeReached{..} = cause {
-            app.window.request_redraw()
+impl<A: Application> ApplicationHandler<Output> for MaverickOS<A> {
+    fn user_event(&mut self, _event_loop: &ActiveEventLoop, event: Output) {
+        if self.driver.is_some() {
+            match event {
+                Output::Wake => self.pump(),
+                Output::Input(input) => self.send(Message::Input(input)),
+                Output::GeometryChanged => self.send(Message::GeometryChanged),
+            }
         }
     }
 
-    fn suspended(&mut self, _event_loop: &ActiveEventLoop) {
-        if let Some(app) = self.0.as_mut() {
-            app.renderer = None;
-        }
+    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        event_loop.set_control_flow(ControlFlow::Wait);
+    }
+
+    fn suspended(&mut self, event_loop: &ActiveEventLoop) {
+        if self.driver.is_some() {self.send(Message::Suspended);}
+        event_loop.set_control_flow(ControlFlow::Wait);
     }
 
     fn device_event(&mut self, _event_loop: &ActiveEventLoop, _device_id: DeviceId, event: DeviceEvent) {
         log::debug!("Ignored Device Event: {:?}", event);
     }
 
-    fn resumed(&mut self, event_loop: &ActiveEventLoop) {match &mut self.0 {
-        Some(app) => {
-            app.renderer = Some(A::Renderer::new(Window::new(app.window.clone())));
-        },
-        none => {
-            let window = window::Window::new(event_loop, A::name());
-            *none = Some(App::new(window))
+    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        if self.driver.is_some() {self.send(Message::Resumed);} else {
+            let window = Window::new(event_loop, A::name(), self.proxy.clone());
+            let (messages, receiver) = mpsc::unbounded();
+            let task = Box::pin(App::<A>::new(window.clone(), self.proxy.clone()).run(receiver));
+            let wake = Arc::new(EventWake {proxy: self.proxy.clone()});
+            self.driver = Some(Driver {task, messages, window, wake});
+            self.pump();
         }
-    }}
+        event_loop.set_control_flow(ControlFlow::Wait);
+    }
 
-    fn memory_warning(&mut self, _event_loop: &ActiveEventLoop) {
-        log::warn!("Memory Warning");
+    fn memory_warning(&mut self, _event_loop: &ActiveEventLoop) {log::warn!("Memory Warning");}
+
+    fn exiting(&mut self, _event_loop: &ActiveEventLoop) {
+        if let Some(driver) = self.driver.take() {
+            drop(driver);
+            RUNTIME.get().unwrap().clone().shutdown();
+        }
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
-        if let Some(app) = self.0.as_mut() && id == app.window.id() && let Some(event) = app.events.process(event) {match event {
-            Event::Close => {
-                RUNTIME.get().unwrap().clone().shutdown();
-                event_loop.exit();
-            }
-            Event::Draw => {
-                event_loop.set_control_flow(ControlFlow::WaitUntil(std::time::Instant::now()+TICK));
-                let instructions = app.app.on_tick(&mut app.context);
-                if let Some(renderer) = app.renderer.as_mut() {
-                    renderer.draw(instructions);
-                } else {log::warn!("Redraw Requested Without A Valid Surface");}
-            }
-            Event::Resize => {
-                if let Some(renderer) = app.renderer.as_mut() {
-                    renderer.resize();
-                } else {log::warn!("Resize Requested Without A Valid Surface");}
-                app.app.on_input(&mut app.context, Input::Resized);
-            }
-            Event::Input(input) => {
-                app.app.on_input(&mut app.context, input);
-            }
-        }}
+        let Some(driver) = &mut self.driver else {return};
+        if id != driver.window.id() {return}
+        if matches!(event, WindowEvent::CloseRequested | WindowEvent::Destroyed) {
+            event_loop.exit();
+            return
+        }
+        let scale = driver.window.physical().scale_factor;
+        self.send(Message::Window(event, scale));
     }
-}
-
-
-pub mod __private {
-    #[cfg(target_os = "android")]
-    pub use winit::platform::android::activity::AndroidApp;
-    pub use crate::MaverickOS;
 }
 
 #[macro_export]
@@ -145,24 +157,140 @@ macro_rules! start {
         #[cfg(target_arch = "wasm32")]
         #[cfg_attr(target_arch = "wasm32", wasm_bindgen(start))]
         pub fn maverick_main() {
-            $crate::__private::MaverickOS::<$app>::start()
+            $crate::MaverickOS::<$app>::start()
         }
 
         #[cfg(target_os = "ios")]
         #[unsafe(no_mangle)]
         pub extern "C" fn maverick_main() {
-            $crate::__private::MaverickOS::<$app>::start()
+            $crate::MaverickOS::<$app>::start()
         }
 
         #[cfg(target_os = "android")]
         #[unsafe(no_mangle)]
-        pub fn android_main(app: $crate::__private::AndroidApp) {
-            $crate::__private::MaverickOS::<$app>::start(app)
+        pub fn android_main(app: $crate::AndroidApp) {
+            $crate::MaverickOS::<$app>::start(app)
         }
 
         #[cfg(not(any(target_os = "android", target_os="ios", target_arch = "wasm32")))]
-        pub fn maverick_main() {
-            $crate::__private::MaverickOS::<$app>::start()
+        pub fn main() {
+            $crate::MaverickOS::<$app>::start()
         }
     };
+}
+
+enum Message {Input(Input), Window(WindowEvent, f64), GeometryChanged, Suspended, Resumed}
+
+struct Driver {
+    task: LocalBoxFuture<'static, ()>,
+    messages: UnboundedSender<Message>,
+    window: Window,
+    wake: Arc<EventWake>,
+}
+
+struct App<A: Application> {
+    _hardware: Hardware,
+    events: Events,
+    launch: hardware::LaunchScreen,
+    window: Window,
+    logical: LogicalWindow,
+    renderer: Option<A::Renderer>,
+    app: A,
+}
+impl<A: Application> App<A> {
+    fn new(window: Window, proxy: EventLoopProxy<Output>) -> Self {
+        let launch = hardware::LaunchScreen::new(&window);
+        let hardware = Hardware::new(A::name(), proxy.clone());
+        let events = Events::new(&window, proxy);
+        let logical = window.logical();
+        let app = A::new(hardware.clone(), logical.clone());
+        let renderer = Some(A::Renderer::new(window.clone()));
+        Self {_hardware: hardware, launch, window, logical, events, renderer, app}
+    }
+    async fn run(mut self, mut messages: UnboundedReceiver<Message>) {
+        self.update();
+        self.window.request_redraw();
+        loop {
+            if self.renderer.is_none() {
+                let Some(message) = messages.next().await else {return};
+                self.message(message);
+                continue
+            }
+            futures::select_biased! {
+                message = messages.next().fuse() => {
+                    let Some(message) = message else {return};
+                    self.message(message);
+                },
+                input = self.events.next().fuse() => self.input(input),
+                _ = self.app.changed().fuse() => {
+                    if self.update() {self.window.request_redraw();}
+                },
+            }
+        }
+    }
+    fn message(&mut self, message: Message) {
+        match message {
+            Message::Suspended => {
+                self.events.suspend();
+                self.renderer = None;
+            }
+            Message::Resumed => {
+                self.renderer = Some(A::Renderer::new(self.window.clone()));
+                self.logical = self.window.logical();
+                self.app.on_input(Input::Resized(self.logical.clone()));
+                self.update();
+                self.window.request_redraw();
+            }
+            Message::Window(event, scale) => match event {
+                WindowEvent::RedrawRequested => {
+                    self.update();
+                    if let Some(renderer) = &mut self.renderer && renderer.draw() {
+                        self.launch.dismiss();
+                    }
+                }
+                WindowEvent::Resized(_) | WindowEvent::ScaleFactorChanged{..} => {
+                    let _ = self.events.process(event, scale);
+                    if let Some(renderer) = &mut self.renderer {renderer.resize();}
+                    self.logical = self.window.logical();
+                    self.app.on_input(Input::Resized(self.logical.clone()));
+                    self.update();
+                    if self.renderer.is_some() {self.window.request_redraw();}
+                }
+                event => {
+                    if let Some(input) = self.events.process(event, scale) {self.input(input);}
+                }
+            }
+            Message::Input(input) => self.input(input),
+            Message::GeometryChanged => {
+                if self.update() {self.window.request_redraw();}
+            }
+        }
+    }
+    fn input(&mut self, input: Input) {
+        let input = match input {
+            Input::Resized(_) => {
+                self.logical = self.window.logical();
+                Input::Resized(self.logical.clone())
+            }
+            input => input,
+        };
+        self.app.on_input(input);
+        if self.update() {self.window.request_redraw();}
+    }
+    fn update(&mut self) -> bool {
+        let logical = self.window.logical();
+        if logical != self.logical {
+            self.logical = logical;
+            self.app.on_input(Input::Resized(self.logical.clone()));
+        }
+        self.renderer.as_mut().is_some_and(|renderer| renderer.update(self.app.draw()))
+    }
+}
+
+struct EventWake {
+    proxy: EventLoopProxy<Output>,
+}
+impl Wake for EventWake {
+    fn wake(self: Arc<Self>) {self.wake_by_ref();}
+    fn wake_by_ref(self: &Arc<Self>) {let _ = self.proxy.send_event(Output::Wake);}
 }
