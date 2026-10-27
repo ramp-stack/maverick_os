@@ -1,13 +1,12 @@
 use rusqlite::{params, Connection, Error, Result, TransactionBehavior};
 use rusqlite::OptionalExtension;
-use image::RgbaImage;
 use serde::Serialize;
 
 use std::sync::{Arc, Mutex};
 use std::path::{Path, PathBuf};
 use std::io::Cursor;
 
-use crate::hardware::{Data, Format, Media};
+use crate::hardware::{Data, Format, Image, Media};
 
 #[derive(Clone, Debug)]
 pub struct Cache(Arc<Mutex<Connection>>);
@@ -41,11 +40,14 @@ impl Cache {
             "INSERT OR REPLACE INTO Cache (key, value) VALUES (?1, ?2)", params![key, bytes],
         ).map(|_| ()).map_err(|error| error.to_string())
     }
-    pub fn get(&self, key: &str) -> Result<Option<Data>, String> {
-        let bytes: Option<Vec<u8>> = self.0.lock().unwrap().query_row(
+    pub fn get(&self, key: &str) -> Option<Data> {
+        let bytes: Result<Vec<u8>> = self.0.lock().unwrap().query_row(
             "SELECT value FROM Cache WHERE key = ?1", [key], |row| row.get(0),
-        ).optional().map_err(|error| error.to_string())?;
-        bytes.map(Self::deserialize).transpose().map_err(|error| error.to_string())
+        );
+        match bytes.optional().and_then(|bytes| bytes.map(Self::deserialize).transpose()) {
+            Ok(data) => data,
+            Err(error) => {log::warn!("Could not read cached value {key:?}: {error}"); None}
+        }
     }
 
     fn serialize(data: &Data) -> Result<Vec<u8>, String> {
@@ -64,20 +66,18 @@ impl Cache {
                 v
             }
             Data::Image(img) => {
-                let img: &RgbaImage = img;
-                let raw = img.as_raw();
+                let (width, height) = img.dimensions;
+                let raw = img.as_ref();
                 let mut v = Vec::with_capacity(1 + 8 + raw.len());
                 v.push(1);
-                v.extend_from_slice(&img.width().to_le_bytes());
-                v.extend_from_slice(&img.height().to_le_bytes());
+                v.extend_from_slice(&width.to_le_bytes());
+                v.extend_from_slice(&height.to_le_bytes());
                 v.extend_from_slice(raw);
                 v
             }
             Data::Media(media) => {
-                let mut file = Cursor::new(Vec::new());
-                media.write(&mut file, Format::Mkv_Ffv1_PcmF32le)?;
-                let mut bytes = file.into_inner();
-                bytes.insert(0, 4);
+                let mut bytes = vec![4];
+                for chunk in media.encode(Format::Mkv_Ffv1_PcmF32le)? {bytes.extend(chunk?);}
                 bytes
             }
         })
@@ -124,11 +124,9 @@ impl Cache {
                     return Err(Error::InvalidColumnType(0, "value".into(), rusqlite::types::Type::Blob));
                 }
 
-                let img = RgbaImage::from_raw(width, height, pixel_data).ok_or_else(|| {
-                    Error::InvalidColumnType(0, "value".into(), rusqlite::types::Type::Blob)
-                })?;
-
-                Ok(Data::Image(img.into()))
+                Ok(Data::Image(Image::new(
+                    (width, height), bytemuck::cast_slice(&pixel_data).to_vec(),
+                )))
             }
             3 | 4 | 5 => {
                 // Older records carry a length-prefixed platform type before the movie bytes.

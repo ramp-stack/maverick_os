@@ -14,7 +14,7 @@ use objc2_ui_kit::UIApplicationDelegate;
 use objc2_foundation::{
     NSBundle, NSError,
     NSString, NSArray, NSSet, NSData, NSNotification, NSNotificationCenter, NSObject,
-    NSObjectProtocol, NSNumber, NSValue, NSURL, NSDictionary,
+    NSObjectProtocol, NSNumber, NSValue, NSURL, NSDictionary, NSRunLoop, NSRunLoopCommonModes,
     NSObjectNSKeyValueObserverRegistration, NSKeyValueObservingOptions,
     NSKeyValueChangeOldKey, NSKeyValueChangeNewKey,
 };
@@ -24,8 +24,8 @@ use objc2_avf_audio::{
     AVAudioSessionRouteChangeReason, AVAudioSessionInterruptionNotification,
     AVAudioSessionInterruptionTypeKey, AVAudioSessionInterruptionType,
 };
-use objc2_core_foundation::CGRect;
-use objc2_quartz_core::CATransaction;
+use objc2_core_foundation::{CGPoint, CGRect};
+use objc2_quartz_core::{CADisplayLink, CATransaction};
 use objc2::runtime::{AnyObject, ProtocolObject, Sel};
 use objc2::rc::{Retained, Allocated, Weak};
 use objc2_ui_kit::{
@@ -37,11 +37,12 @@ use objc2_ui_kit::{
     UIViewControllerTransitionCoordinator, UIViewControllerTransitionCoordinatorContext,
     UIAlertAction, UIAlertActionStyle, UIAlertController, UIAlertControllerStyle,
     UIAdaptivePresentationControllerDelegate, UIPresentationController,
-    UITextView, UITextViewDelegate, UIScrollViewDelegate, UITextInput, NSTextContainer,
-    UITextAutocorrectionType, UITextSpellCheckingType,
+    UITextView, UITextViewDelegate, UIScrollView, UIScrollViewDelegate, UITextInput, NSTextContainer,
+    UITextAutocorrectionType, UITextSpellCheckingType, UIColor, UIEvent,
+    UIScrollViewKeyboardDismissMode, UIScrollViewContentInsetAdjustmentBehavior,
     NSObjectUIAccessibility, NSValueUIGeometryExtensions,
     UIKeyboardDidShowNotification, UIKeyboardDidHideNotification, UIKeyboardDidChangeFrameNotification,
-    UIKeyboardWillChangeFrameNotification, UIKeyboardAnimationDurationUserInfoKey,
+    UIKeyboardWillChangeFrameNotification,
     UIKeyboardFrameEndUserInfoKey, UIKeyboardIsLocalUserInfoKey,
 };
 use objc2_photos_ui::{
@@ -65,7 +66,7 @@ use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
 use crate::hardware::{
-    Data, Hardware, Image, Media, Pickable, Picked, PickResult, PushDestination,
+    Data, Hardware, Image, Media, Pickable, Picked, PickResult, PushToken,
 };
 use super::apple::{AudioType, MovieType, PickRequest, PickState};
 use super::apple::MediaCommands;
@@ -76,43 +77,79 @@ static AUDIO_SESSIONS: Mutex<(usize, usize)> = Mutex::new((0, 0));
 thread_local! {static PUSH: _Push = _Push::new();}
 
 #[derive(Clone)]
-pub struct Keyboard(Rc<Retained<KeyboardView>>);
-impl Drop for Keyboard {
-    fn drop(&mut self) {
-        if Rc::strong_count(&self.0) != 1 {return;}
-        self.0.ivars().active.set(false);
-        self.0.resignFirstResponder();
-        unsafe {self.0.setDelegate(None);}
-        self.0.removeFromSuperview();
+pub struct Keyboard(Rc<Keyboards>);
+impl Keyboard {
+    pub(crate) fn new(proxy: EventLoopProxy<Output>, inset: Arc<KeyboardInset>) -> Self {
+        Self(Rc::new(Keyboards {proxy, inset, view: RefCell::new(None)}))
     }
-}
 
-#[derive(Default)]
-pub struct Keyboards(RefCell<std::rc::Weak<Retained<KeyboardView>>>);
-impl Keyboards {
-    pub fn open(&self, proxy: EventLoopProxy<Output>) -> Keyboard {
-        let mut current = self.0.borrow_mut();
-        if let Some(view) = current.upgrade() {return Keyboard(view);}
+    pub fn show(&self, dismiss_padding: f32) {
         let mtm = MainThreadMarker::new().unwrap();
-        let view = KeyboardView::alloc(mtm).set_ivars(KeyboardIvars {
-            active: Cell::new(true), flushing: Cell::new(false), proxy,
+        let parent = self.0.inset.view.get(mtm).superview().unwrap();
+        let window = parent.window().unwrap();
+        parent.keyboardLayoutGuide().setKeyboardDismissPadding(dismiss_padding as f64);
+        let mut current = self.0.view.borrow_mut();
+        let view = current.get_or_insert_with(|| {
+            let view = KeyboardView::alloc(mtm).set_ivars(KeyboardIvars {
+                active: Cell::new(true), flushing: Cell::new(false), proxy: self.0.proxy.clone(),
+            });
+            let view: Retained<KeyboardView> = unsafe {
+                msg_send![
+                    super(view), initWithFrame: window.bounds(), textContainer: None::<&NSTextContainer>
+                ]
+            };
+            unsafe {view.setDelegate(Some(ProtocolObject::from_ref(&*view)));}
+            view.setAutoresizingMask(UIViewAutoresizing::FlexibleWidth | UIViewAutoresizing::FlexibleHeight);
+            view.setOpaque(false);
+            view.setBackgroundColor(Some(&UIColor::clearColor()));
+            view.setTextColor(Some(&UIColor::clearColor()));
+            unsafe {view.setTintColor(Some(&UIColor::clearColor()));}
+            view.setShowsVerticalScrollIndicator(false);
+            view.setShowsHorizontalScrollIndicator(false);
+            view.setScrollsToTop(false);
+            view.setAlwaysBounceVertical(true);
+            view.setDelaysContentTouches(false);
+            view.setContentInsetAdjustmentBehavior(UIScrollViewContentInsetAdjustmentBehavior::Never);
+            view.setAccessibilityElementsHidden(true, mtm);
+            window.addSubview(&view);
+            view.setKeyboardDismissMode(UIScrollViewKeyboardDismissMode::Interactive);
+            let pan = view.panGestureRecognizer();
+            pan.setCancelsTouchesInView(false);
+            pan.setDelaysTouchesBegan(false);
+            pan.setDelaysTouchesEnded(false);
+            // UIKit scrolls this invisible input; Prism's renderer and coordinates stay fixed.
+            parent.addGestureRecognizer(&pan);
+            view
         });
-        let view: Retained<KeyboardView> = unsafe {
-            msg_send![super(view), initWithFrame: CGRect::ZERO, textContainer: None::<&NSTextContainer>]
-        };
-        unsafe {view.setDelegate(Some(ProtocolObject::from_ref(&*view)));}
-        view.setAccessibilityElementsHidden(true, mtm);
-        SafeArea::window().addSubview(&view);
-        view.becomeFirstResponder();
-        let view = Rc::new(view);
-        *current = Rc::downgrade(&view);
-        Keyboard(view)
+        view.ivars().active.set(true);
+        let mut children = vec![window.into_super()];
+        let mut editing = false;
+        while let Some(child) = children.pop() {
+            if child.isFirstResponder()
+                && child.downcast_ref::<UITextView>().is_some_and(|text| text.isEditable()) {
+                editing = true;
+                break
+            }
+            children.extend(child.subviews());
+        }
+        if !editing {view.becomeFirstResponder();}
     }
+
+    pub fn hide(&self) {
+        let mtm = MainThreadMarker::new().unwrap();
+        let current = self.0.view.borrow();
+        if let Some(view) = current.as_ref() {view.ivars().active.set(false);}
+        // Native text overlays can own the responder before our input bridge is needed.
+        if let Some(window) = self.0.inset.view.get(mtm).window() {window.endEditing(true);}
+        if let Some(view) = current.as_ref() {view.setText(None);}
+    }
+
+    pub fn visible(&self) -> bool {self.0.inset.get().1}
 }
 
 pub struct SafeArea;
 impl SafeArea {
-    pub fn touch_controls() -> bool {true}
+    pub fn is_mobile() -> bool {true}
     pub fn physical(window: &winit::window::Window) -> crate::PhysicalWindow {
         // Winit's iOS inner size excludes safe-area insets; rendering and touches do not.
         let size = window.outer_size();
@@ -190,7 +227,8 @@ impl Drop for LaunchScreen {
 }
 
 pub struct KeyboardInset {
-    view: MainThreadBound<Retained<UIView>>,
+    view: MainThreadBound<Retained<KeyboardAnimation>>,
+    display: MainThreadBound<Retained<CADisplayLink>>,
     visible: MainThreadBound<Rc<Cell<bool>>>,
     observers: MainThreadBound<Vec<Retained<ProtocolObject<dyn NSObjectProtocol>>>>,
 }
@@ -202,8 +240,12 @@ impl KeyboardInset {
         };
         let parent = unsafe {handle.ui_view.cast::<UIView>().as_ref()};
         let guide = parent.keyboardLayoutGuide();
+        guide.setFollowsUndockedKeyboard(true);
         guide.setUsesBottomSafeArea(false);
-        let view = UIView::initWithFrame(UIView::alloc(mtm), CGRect::ZERO);
+        let view = KeyboardAnimation::alloc(mtm).set_ivars((proxy.clone(), Cell::new(true)));
+        let view: Retained<KeyboardAnimation> = unsafe {
+            msg_send![super(view), initWithFrame: CGRect::ZERO]
+        };
         view.setTranslatesAutoresizingMaskIntoConstraints(false);
         view.setUserInteractionEnabled(false);
         view.setAccessibilityElementsHidden(true, mtm);
@@ -213,6 +255,9 @@ impl KeyboardInset {
         view.leadingAnchor().constraintEqualToAnchor(&parent.leadingAnchor()).setActive(true);
         view.trailingAnchor().constraintEqualToAnchor(&parent.trailingAnchor()).setActive(true);
         parent.layoutIfNeeded();
+        let display = unsafe {CADisplayLink::displayLinkWithTarget_selector(&view, sel!(frame:))};
+        display.setPaused(true);
+        unsafe {display.addToRunLoop_forMode(&NSRunLoop::mainRunLoop(), NSRunLoopCommonModes);}
         let visible = Rc::new(Cell::new(false));
         let center = NSNotificationCenter::defaultCenter();
         let mut observers = Vec::new();
@@ -223,12 +268,16 @@ impl KeyboardInset {
             (UIKeyboardWillChangeFrameNotification, false, false),
         ]} {
             let visible = visible.clone();
+            let view = view.clone();
+            let display = display.clone();
             let parent = parent.retain();
             let proxy = proxy.clone();
             let block = RcBlock::new(move |notification: NonNull<NSNotification>| {
                 let notification = unsafe {notification.as_ref()};
                 let Some(showing) = Self::visibility(notification, hidden, &parent) else {return};
                 if finished || showing {visible.set(showing);}
+                view.ivars().1.set(finished);
+                display.setPaused(false);
                 let _ = proxy.send_event(Output::GeometryChanged);
             });
             observers.push(unsafe {
@@ -236,8 +285,8 @@ impl KeyboardInset {
             });
         }
         Self {
-            view: MainThreadBound::new(view, mtm), visible: MainThreadBound::new(visible, mtm),
-            observers: MainThreadBound::new(observers, mtm),
+            view: MainThreadBound::new(view, mtm), display: MainThreadBound::new(display, mtm),
+            visible: MainThreadBound::new(visible, mtm), observers: MainThreadBound::new(observers, mtm),
         }
     }
 
@@ -247,9 +296,9 @@ impl KeyboardInset {
         let parent = view.superview().unwrap();
         let layer = view.layer();
         // The layout frame is the animation's destination; the presentation layer is onscreen now.
-        let frame = unsafe {layer.presentationLayer()}.unwrap_or(layer).frame();
+        let frame = unsafe {layer.presentationLayer()}.unwrap_or_else(|| layer.clone()).frame();
         let overlap = frame.size.height.max(0.0).min(parent.bounds().size.height) as f32;
-        (overlap, self.visible.get(mtm).get() || overlap > 0.0)
+        (overlap, overlap > 0.0 || self.visible.get(mtm).get())
     }
 
     fn visibility(notification: &NSNotification, hidden: bool, view: &UIView) -> Option<bool> {
@@ -278,6 +327,7 @@ impl Drop for KeyboardInset {
             for observer in self.observers.get(mtm) {unsafe {
                 center.removeObserver(AsRef::<AnyObject>::as_ref(&**observer));
             }}
+            self.display.get(mtm).invalidate();
             self.view.get(mtm).removeFromSuperview();
         });
     }
@@ -329,24 +379,18 @@ impl Drop for AudioSession {
 }
 
 pub struct Events {
-    window: crate::Window,
     touches: usize,
     samples: VecDeque<(Instant, (f32, f32))>,
     position: (f32, f32),
     dragged: bool,
     velocity: (f32, f32),
     updated: Option<Instant>,
-    animation: Rc<Cell<Option<(Instant, Instant)>>>,
     observers: Vec<Retained<ProtocolObject<dyn NSObjectProtocol>>>,
     volume: Retained<VolumeObserver>,
     _commands: MediaCommands,
 }
 impl Events {
-    pub fn new(window: &crate::Window, proxy: EventLoopProxy<Output>) -> Self {
-        let RawWindowHandle::UiKit(handle) = window.window_handle().unwrap().as_raw() else {
-            unreachable!()
-        };
-        let view = unsafe {handle.ui_view.cast::<UIView>().as_ref()}.retain();
+    pub fn new(_window: &crate::Window, proxy: EventLoopProxy<Output>) -> Self {
         let session = unsafe {AVAudioSession::sharedInstance()};
         let center = NSNotificationCenter::defaultCenter();
         let notifications = unsafe {[
@@ -370,26 +414,6 @@ impl Events {
                 center.addObserverForName_object_queue_usingBlock(name, Some(&session), None, &block)
             });
         }
-        let animation = Rc::new(Cell::new(None));
-        let timing = animation.clone();
-        let geometry = window.clone();
-        let resize = proxy.clone();
-        let block = RcBlock::new(move |notification: NonNull<NSNotification>| {
-            let notification = unsafe {notification.as_ref()};
-            if KeyboardInset::visibility(notification, false, &view).is_none() {return;}
-            let duration = notification.userInfo().unwrap()
-                .objectForKey(unsafe {UIKeyboardAnimationDurationUserInfoKey}).unwrap()
-                .downcast::<NSNumber>().unwrap().doubleValue();
-            let now = Instant::now();
-            let end = now + Duration::from_secs_f64(duration);
-            timing.set(Some(((now + Duration::from_millis(16)).min(end), end)));
-            let _ = resize.send_event(Output::Input(Input::Resized(geometry.logical())));
-        });
-        observers.push(unsafe {
-            center.addObserverForName_object_queue_usingBlock(
-                Some(UIKeyboardWillChangeFrameNotification), None, None, &block,
-            )
-        });
         let volume = VolumeObserver::alloc().set_ivars(proxy.clone());
         let volume: Retained<VolumeObserver> = unsafe {msg_send![super(volume), init]};
         unsafe {
@@ -400,7 +424,7 @@ impl Events {
             );
         }
         Self {
-            window: window.clone(), animation, observers, volume, _commands: MediaCommands::new(proxy),
+            observers, volume, _commands: MediaCommands::new(proxy),
             touches: 0, samples: VecDeque::new(), position: (0.0, 0.0), dragged: false,
             velocity: (0.0, 0.0), updated: None,
         }
@@ -463,34 +487,21 @@ impl Events {
     }
     pub fn suspend(&mut self) {self.reset_gesture();}
     pub async fn next(&mut self) -> Input {
-        loop {
-            let momentum = self.updated.map(|updated| (updated + Duration::from_millis(16), false));
-            let animation = self.animation.get().map(|(next, _)| (next, true));
-            let Some((next, animation)) = [momentum, animation].into_iter().flatten().min() else {
-                return std::future::pending().await
-            };
-            Delay::new(next.saturating_duration_since(Instant::now())).await;
-            let now = Instant::now();
-            if animation {
-                let Some((next, end)) = self.animation.get() else {continue};
-                if now < next {continue;}
-                self.animation.set((now < end).then_some((
-                    (now + Duration::from_millis(16)).min(end), end,
-                )));
-                return Input::Resized(self.window.logical())
-            }
-            let elapsed = now.duration_since(self.updated.unwrap()).as_secs_f32();
-            let damping = 2.0;
-            let remaining = (self.velocity.0.hypot(self.velocity.1) / 5.0).ln() / damping;
-            let decay = (-damping * elapsed.min(remaining)).exp();
-            let distance = (1.0 - decay) / damping;
-            let delta = (self.velocity.0 * distance, self.velocity.1 * distance);
-            self.velocity = (self.velocity.0 * decay, self.velocity.1 * decay);
-            self.updated = (elapsed < remaining).then_some(now);
-            return Input::Device(u64::MAX, DeviceInput::Mouse(
-                self.position, MouseState::Scroll(delta.0, delta.1)
-            ))
-        }
+        let Some(updated) = self.updated else {return std::future::pending().await};
+        let next = updated + Duration::from_millis(16);
+        Delay::new(next.saturating_duration_since(Instant::now())).await;
+        let now = Instant::now();
+        let elapsed = now.duration_since(updated).as_secs_f32();
+        let damping = 2.0;
+        let remaining = (self.velocity.0.hypot(self.velocity.1) / 5.0).ln() / damping;
+        let decay = (-damping * elapsed.min(remaining)).exp();
+        let distance = (1.0 - decay) / damping;
+        let delta = (self.velocity.0 * distance, self.velocity.1 * distance);
+        self.velocity = (self.velocity.0 * decay, self.velocity.1 * decay);
+        self.updated = (elapsed < remaining).then_some(now);
+        Input::Device(u64::MAX, DeviceInput::Mouse(
+            self.position, MouseState::Scroll(delta.0, delta.1)
+        ))
     }
     fn reset_gesture(&mut self) {
         self.touches = 0;
@@ -602,43 +613,51 @@ impl Haptics {
     }
 }
 
-pub struct Push;
+pub struct Push {
+    destination: Option<tokio::sync::watch::Receiver<Option<String>>>,
+    previous: Option<String>,
+}
 
 impl Push {
-    pub async fn current(previous: Option<&PushDestination>) -> PushDestination {
-        let (sender, receiver) = tokio::sync::oneshot::channel();
-        DispatchQueue::main().exec_async(move || {
-            let destination = PUSH.with(|push| push.0.as_ref().map(|delegate| {
-                delegate.ivars().destination.subscribe()
-            }));
-            let _ = sender.send(destination);
-        });
-        let Some(mut destination) = receiver.await.unwrap() else {
+    pub fn new() -> Self {Self {destination: None, previous: None}}
+    pub async fn next(&mut self) -> PushToken {
+        if self.destination.is_none() {
+            let (sender, receiver) = tokio::sync::oneshot::channel();
+            DispatchQueue::main().exec_async(move || {
+                let destination = PUSH.with(|push| push.0.as_ref().map(|delegate| {
+                    delegate.ivars().destination.subscribe()
+                }));
+                let _ = sender.send(destination);
+            });
+            self.destination = receiver.await.unwrap();
+        }
+        let Some(destination) = self.destination.as_mut() else {
             return futures::future::pending().await
         };
         loop {
             let current = destination.borrow_and_update().clone();
             if let Some(current) = current {
-                if previous != Some(&current) {return current}
+                if self.previous.as_ref() != Some(&current) {
+                    self.previous = Some(current.clone());
+                    return PushToken::Apns(current)
+                }
                 destination.changed().await.unwrap();
                 continue;
             }
-            let (sender, receiver) = tokio::sync::oneshot::channel();
-            DispatchQueue::main().after(Duration::from_secs(30).try_into().unwrap(), move || {
-                PUSH.with(|push| {
-                    let delegate = push.0.as_ref().unwrap();
-                    if delegate.ivars().destination.borrow().is_none()
-                        && delegate.ivars().requested.get().elapsed() >= Duration::from_secs(30) {
-                        delegate.ivars().requested.set(Instant::now());
-                        UIApplication::sharedApplication(MainThreadMarker::new().unwrap()).registerForRemoteNotifications();
-                    }
-                });
-                let _ = sender.send(());
-            }).unwrap();
             tokio::select! {
                 biased;
                 changed = destination.changed() => changed.unwrap(),
-                elapsed = receiver => elapsed.unwrap(),
+                _ = tokio::time::sleep(Duration::from_secs(30)) => {
+                    DispatchQueue::main().exec_async(|| PUSH.with(|push| {
+                        let delegate = push.0.as_ref().unwrap();
+                        if delegate.ivars().destination.borrow().is_none()
+                            && delegate.ivars().requested.get().elapsed() >= Duration::from_secs(30) {
+                            delegate.ivars().requested.set(Instant::now());
+                            UIApplication::sharedApplication(MainThreadMarker::new().unwrap())
+                                .registerForRemoteNotifications();
+                        }
+                    }));
+                }
             }
         }
     }
@@ -1109,6 +1128,51 @@ impl LibraryPickerDelegate {
     }
 }
 
+define_class!(
+    #[unsafe(super(UIView))]
+    #[thread_kind = MainThreadOnly]
+    #[ivars = (EventLoopProxy<Output>, Cell<bool>)]
+    struct KeyboardAnimation;
+
+    unsafe impl NSObjectProtocol for KeyboardAnimation {}
+
+    impl KeyboardAnimation {
+        #[unsafe(method(layoutSubviews))]
+        fn layout_subviews(&self) {
+            let _: () = unsafe {msg_send![super(self), layoutSubviews]};
+            // Follow floating keyboard constraints even when no keyboard notification is posted.
+            let _ = self.ivars().0.send_event(Output::GeometryChanged);
+        }
+
+        #[unsafe(method(frame:))]
+        fn frame(&self, display: &CADisplayLink) {
+            let (proxy, finished) = self.ivars();
+            let _ = proxy.send_event(Output::GeometryChanged);
+            if finished.get() && self.layer().animationKeys().is_none_or(|keys| keys.is_empty()) {
+                display.setPaused(true);
+            }
+        }
+    }
+);
+
+struct Keyboards {
+    proxy: EventLoopProxy<Output>,
+    inset: Arc<KeyboardInset>,
+    view: RefCell<Option<Retained<KeyboardView>>>,
+}
+impl Drop for Keyboards {
+    fn drop(&mut self) {
+        if let Some(view) = self.view.get_mut() {
+            view.ivars().active.set(false);
+            view.setKeyboardDismissMode(UIScrollViewKeyboardDismissMode::None);
+            view.addGestureRecognizer(&view.panGestureRecognizer());
+            if let Some(window) = view.window() {window.endEditing(true);}
+            unsafe {view.setDelegate(None);}
+            view.removeFromSuperview();
+        }
+    }
+}
+
 struct KeyboardIvars {
     active: Cell<bool>,
     flushing: Cell<bool>,
@@ -1122,12 +1186,22 @@ define_class!(
     struct KeyboardView;
 
     unsafe impl NSObjectProtocol for KeyboardView {}
-    unsafe impl UIScrollViewDelegate for KeyboardView {}
+    unsafe impl UIScrollViewDelegate for KeyboardView {
+        #[unsafe(method(scrollViewDidScroll:))]
+        fn scrolled(&self, _view: &UIScrollView) {
+            let _ = self.ivars().proxy.send_event(Output::GeometryChanged);
+        }
+    }
     unsafe impl UITextViewDelegate for KeyboardView {
         #[unsafe(method(textViewDidChange:))]
         fn changed(&self, _view: &UITextView) {self.commit();}
     }
     impl KeyboardView {
+        #[unsafe(method_id(hitTest:withEvent:))]
+        fn hit_test(&self, _point: CGPoint, _event: Option<&UIEvent>) -> Option<Retained<UIView>> {
+            None
+        }
+
         #[unsafe(method(autocorrectionType))]
         fn autocorrection_type(&self) -> UITextAutocorrectionType {UITextAutocorrectionType::No}
 
@@ -1236,7 +1310,7 @@ impl Drop for _Push {
 
 struct PushIvars {
     previous: Option<Retained<AnyObject>>,
-    destination: tokio::sync::watch::Sender<Option<PushDestination>>,
+    destination: tokio::sync::watch::Sender<Option<String>>,
     requested: Cell<Instant>,
 }
 
@@ -1267,7 +1341,7 @@ define_class!(
     unsafe impl UIApplicationDelegate for PushDelegate {
         #[unsafe(method(application:didRegisterForRemoteNotificationsWithDeviceToken:))]
         fn registered(&self, application: &UIApplication, token: &NSData) {
-            let destination = PushDestination::Apns(hex::encode(token.to_vec()));
+            let destination = hex::encode(token.to_vec());
             self.ivars().destination.send_replace(Some(destination));
             if let Some(previous) = &self.ivars().previous {
                 let selector =

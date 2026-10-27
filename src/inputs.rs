@@ -15,7 +15,7 @@ pub enum Input {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Media {Play, Pause, VolumeUp, VolumeDown}
+pub enum Media {Play, Pause, Toggle, VolumeUp, VolumeDown}
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum DeviceInput {

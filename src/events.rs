@@ -86,9 +86,7 @@ impl Events {
                             let input = match named {
                                 WinitNamedKey::MediaPlay => Media::Play,
                                 WinitNamedKey::MediaPause => Media::Pause,
-                                _ => if hardware::Clock::playing().unwrap_or(false) {
-                                    Media::Pause
-                                } else {Media::Play},
+                                _ => Media::Toggle,
                             };
                             Input::Media(input)
                         });

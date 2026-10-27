@@ -2,35 +2,49 @@ use ashpd::desktop::file_chooser::{FileFilter, SelectedFiles};
 use ashpd::desktop::notification::{Notification, NotificationProxy};
 use ashpd::desktop::open_uri::OpenFileRequest;
 use crossfire::{spsc, AsyncTx};
+use gstreamer::{self as gst, prelude::*};
+use gstreamer_app::{AppSink, AppSinkCallbacks};
+use gstreamer_video::{VideoFrameExt, VideoFrameRef, VideoInfo};
+use souvlaki::{MediaControls, MediaControlEvent, MediaPlayback, PlatformConfig};
+use tokio::sync::broadcast;
 use tokio::sync::Notify;
 use winit::event::WindowEvent;
 use winit::event_loop::EventLoopProxy;
 
 use std::borrow::Cow;
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::fs::OpenOptions;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock, Mutex};
+use std::time::Duration;
 
-use super::{Data, Hardware, Image, Media, Pickable, Picked, PickResult, PushDestination};
+use super::{
+    Camera, Microphone, Capture, Data, Format, Hardware, Image, Media, Pickable, Picked, PickResult,
+    PushToken, Sample, Sound,
+};
+use super::capture::{Feed, Frame};
 use super::picker::{PickKind, PickRequest};
 use crate::events::Output;
 use crate::inputs::Input;
 use crate::runtime::RUNTIME;
 
+static MEDIA_COMMANDS: LazyLock<Mutex<(Option<MediaControls>, HashMap<u128, bool>)>> =
+    LazyLock::new(|| Mutex::new((None, HashMap::new())));
+
 #[derive(Clone)]
 pub struct Keyboard;
-
-#[derive(Default)]
-pub struct Keyboards;
-impl Keyboards {
-    pub fn open(&self, _proxy: EventLoopProxy<Output>) -> Keyboard {Keyboard}
+impl Keyboard {
+    pub(crate) fn new(_proxy: EventLoopProxy<Output>, _inset: Arc<KeyboardInset>) -> Self {Self}
+    pub fn show(&self, _padding: f32) {}
+    pub fn hide(&self) {}
+    pub fn visible(&self) -> bool {false}
 }
 
 pub struct SafeArea;
 impl SafeArea {
-    pub fn touch_controls() -> bool {false}
+    pub fn is_mobile() -> bool {false}
     pub fn physical(window: &winit::window::Window) -> crate::PhysicalWindow {
         let size = window.inner_size();
         crate::PhysicalWindow {
@@ -54,10 +68,21 @@ impl KeyboardInset {
 
 pub struct Events;
 impl Events {
-    pub fn new(_window: &crate::Window, _proxy: EventLoopProxy<Output>) -> Self {Self}
+    pub fn new(_window: &crate::Window, proxy: EventLoopProxy<Output>) -> Self {
+        MediaCommands::start(proxy);
+        Self
+    }
     pub fn process(&mut self, event: WindowEvent, _scale: f64) -> Option<WindowEvent> {Some(event)}
     pub fn suspend(&mut self) {}
     pub async fn next(&mut self) -> Input {std::future::pending().await}
+}
+
+impl Drop for Events {
+    fn drop(&mut self) {
+        let mut state = MEDIA_COMMANDS.lock().unwrap();
+        state.0.take();
+        state.1.clear();
+    }
 }
 
 pub struct Logger;
@@ -97,12 +122,17 @@ impl ApplicationSupport {
     }
 }
 
-pub struct Clipboard(RefCell<Option<arboard::Clipboard>>);
+pub struct Clipboard {
+    clipboard: RefCell<Option<arboard::Clipboard>>,
+    media: RefCell<Option<tempfile::NamedTempFile>>,
+}
 impl Clipboard {
-    pub fn new() -> Self {Self(RefCell::new(None))}
+    pub fn new() -> Self {
+        Self {clipboard: RefCell::new(None), media: RefCell::new(None)}
+    }
 
     pub fn set(&self, data: &Data) {
-        let mut clipboard = self.0.borrow_mut();
+        let mut clipboard = self.clipboard.borrow_mut();
         if clipboard.is_none() {
             match arboard::Clipboard::new() {
                 Ok(value) => *clipboard = Some(value),
@@ -112,21 +142,36 @@ impl Clipboard {
         let clipboard = clipboard.as_mut().unwrap();
         let result = match data {
             Data::Text(text) => clipboard.set_text(text),
-            Data::Image(image) => clipboard.set_image(arboard::ImageData {
-                width: image.width() as usize, height: image.height() as usize,
-                bytes: Cow::Borrowed(image.as_raw()),
-            }),
+            Data::Image(image) => {
+                let (width, height) = image.dimensions;
+                clipboard.set_image(arboard::ImageData {
+                    width: width as usize, height: height as usize,
+                    bytes: Cow::Borrowed(image.as_ref()),
+                })
+            }
             Data::File(path) => clipboard.set().file_list(&[path]),
-            Data::Media(_) => {
-                log::warn!("Linux audio/video clipboard support is not implemented");
-                return
+            Data::Media(media) => {
+                let format = if media.video.dimensions().is_some() {
+                    Format::Mkv_Ffv1_PcmF32le
+                } else {Format::Wav_PcmF32le};
+                let file = match tempfile::Builder::new().suffix(&format!(".{}", format.extension())).tempfile() {
+                    Ok(file) => file,
+                    Err(error) => {log::warn!("Clipboard export failed: {error}"); return}
+                };
+                let result = file.reopen().map_err(|error| error.to_string())
+                    .and_then(|file| media.write(file, format));
+                if let Err(error) = result {log::warn!("Clipboard export failed: {error}"); return}
+                let result = clipboard.set().file_list(&[file.path()]);
+                if result.is_ok() {*self.media.borrow_mut() = Some(file);}
+                result
             }
         };
         if let Err(error) = result {log::warn!("Clipboard write failed: {error}");}
+        else if !matches!(data, Data::Media(_)) {self.media.borrow_mut().take();}
     }
 
     pub fn get(&self) -> Option<Data> {
-        let mut clipboard = self.0.borrow_mut();
+        let mut clipboard = self.clipboard.borrow_mut();
         if clipboard.is_none() {
             match arboard::Clipboard::new() {
                 Ok(value) => *clipboard = Some(value),
@@ -136,14 +181,16 @@ impl Clipboard {
         let clipboard = clipboard.as_mut().unwrap();
         if let Ok(files) = clipboard.get().file_list() {
             // Data represents one file; do not silently discard the rest of a file list.
-            if files.len() == 1 {return Some(Data::File(files.into_iter().next().unwrap()))}
+            if files.len() == 1 {
+                return DataPicker::load(PickKind::Data, &files.into_iter().next().unwrap()).ok()
+            }
         }
         if let Ok(image) = clipboard.get_image() {
-            let image = image::RgbaImage::from_raw(
-                image.width.try_into().unwrap(), image.height.try_into().unwrap(),
-                image.bytes.into_owned(),
-            ).expect("Clipboard image dimensions must match its pixels");
-            return Some(Data::Image(image.into()))
+            let image = Image::new(
+                (image.width.try_into().unwrap(), image.height.try_into().unwrap()),
+                bytemuck::cast_slice(&image.bytes).to_vec(),
+            );
+            return Some(Data::Image(image))
         }
         clipboard.get_text().ok().map(Data::Text)
     }
@@ -157,7 +204,8 @@ impl Haptics {
 
 pub struct Push;
 impl Push {
-    pub async fn current(_previous: Option<&PushDestination>) -> PushDestination {
+    pub fn new() -> Self {Self}
+    pub async fn next(&mut self) -> PushToken {
         // There is no Linux push provider yet; an unavailable destination remains pending.
         std::future::pending().await
     }
@@ -194,12 +242,20 @@ impl Share {
             }
             Data::Image(image) => {
                 let path = path.with_extension("png");
-                image.save_with_format(&path, image::ImageFormat::Png)
-                    .map_err(std::io::Error::other).and_then(|_| std::fs::File::open(path))
+                std::fs::File::create(&path).and_then(|file| {
+                    image.write(file, super::ImageFormat::Png).map_err(std::io::Error::other)?;
+                    std::fs::File::open(path)
+                })
             }
-            Data::Media(_) => {
-                log::warn!("Linux audio/video sharing is not implemented");
-                return
+            Data::Media(media) => {
+                let format = if media.video.dimensions().is_some() {
+                    Format::Mkv_Ffv1_PcmF32le
+                } else {Format::Wav_PcmF32le};
+                let path = path.with_extension(format.extension());
+                std::fs::File::create(&path).and_then(|file| {
+                    media.write(file, format).map_err(std::io::Error::other)?;
+                    std::fs::File::open(path)
+                })
             }
         };
         let file = match file {
@@ -316,9 +372,10 @@ impl DataPicker {
         if reader.format().is_some() || matches!(kind, PickKind::Image) {
             return Image::read(reader.into_inner()).map(Data::Image)
         }
-        if kind.media() && !matches!(kind, PickKind::Data) {
-            return std::fs::File::open(path).map_err(|error| error.to_string())
-                .and_then(Media::read).map(Data::Media)
+        if kind.media() {
+            let result = std::fs::File::open(path).map_err(|error| error.to_string())
+                .and_then(Media::read).map(Data::Media);
+            if result.is_ok() || !matches!(kind, PickKind::Data) {return result}
         }
         Ok(Data::File(path.to_owned()))
     }
@@ -334,7 +391,6 @@ impl Drop for DataPicker {
     }
 }
 
-// Media adapters remain deferred while the shared media API is being refined.
 pub struct AudioSession;
 impl AudioSession {
     pub fn new() -> Result<Self, String> {Ok(Self)}
@@ -342,46 +398,217 @@ impl AudioSession {
 
 pub struct MediaCommands;
 impl MediaCommands {
-    pub fn update() {}
+    pub fn update(id: u128, playing: bool) {
+        let mut state = MEDIA_COMMANDS.lock().unwrap();
+        if state.1.insert(id, playing) != Some(playing) {Self::publish(&mut state);}
+    }
+    pub fn remove(id: u128) {
+        let mut state = MEDIA_COMMANDS.lock().unwrap();
+        if state.1.remove(&id).is_some() {Self::publish(&mut state);}
+    }
+    fn start(proxy: EventLoopProxy<Output>) {
+        let name = format!("maverick.instance{}", std::process::id());
+        let result = (|| {
+            let mut controls = MediaControls::new(PlatformConfig {
+                dbus_name: &name, display_name: "Maverick", hwnd: None,
+            })?;
+            controls.attach(move |event| {
+                let event = match event {
+                    MediaControlEvent::Play => crate::inputs::Media::Play,
+                    MediaControlEvent::Pause | MediaControlEvent::Stop => crate::inputs::Media::Pause,
+                    MediaControlEvent::Toggle => crate::inputs::Media::Toggle,
+                    _ => return,
+                };
+                let _ = proxy.send_event(Output::Input(Input::Media(event)));
+            })?;
+            Ok::<_, souvlaki::Error>(controls)
+        })();
+        match result {
+            Ok(controls) => {
+                let mut state = MEDIA_COMMANDS.lock().unwrap();
+                state.0 = Some(controls);
+                Self::publish(&mut state);
+            }
+            Err(error) => log::warn!("Desktop media controls unavailable: {error}"),
+        }
+    }
+    fn publish(state: &mut (Option<MediaControls>, HashMap<u128, bool>)) {
+        let playback = if state.1.is_empty() {MediaPlayback::Stopped}
+            else if state.1.values().any(|playing| *playing) {MediaPlayback::Playing {progress: None}}
+            else {MediaPlayback::Paused {progress: None}};
+        if let Some(controls) = &mut state.0
+            && let Err(error) = controls.set_playback(playback)
+        {
+            log::warn!("Could not update desktop playback: {error}");
+        }
+    }
 }
 
-#[derive(Clone)]
-pub struct Camera(std::convert::Infallible);
-impl Camera {
-    pub fn error(&self) -> Option<String> {match self.0 {}}
+pub struct CaptureHub {
+    feeds: Arc<Mutex<HashMap<u128, Feed>>>,
+    camera: RefCell<Option<CaptureInput>>,
+    microphone: RefCell<Option<CaptureInput>>,
 }
-impl AsRef<Media> for Camera {
-    fn as_ref(&self) -> &Media {match self.0 {}}
-}
-
-#[derive(Clone)]
-pub struct Microphone(std::convert::Infallible);
-impl Microphone {
-    pub fn error(&self) -> Option<String> {match self.0 {}}
-}
-impl AsRef<Media> for Microphone {
-    fn as_ref(&self) -> &Media {match self.0 {}}
-}
-
-#[derive(Clone)]
-pub struct Capture(std::convert::Infallible);
-impl Capture {
-    pub fn error(&self) -> Option<String> {match self.0 {}}
-}
-impl AsRef<Media> for Capture {
-    fn as_ref(&self) -> &Media {match self.0 {}}
-}
-
-pub struct CaptureHub;
 impl CaptureHub {
-    pub fn new(_hardware: &Hardware) -> Self {Self}
-    pub fn camera(&self) -> Result<Camera, String> {
-        Err("Linux video capture is not implemented".into())
+    pub fn new(_hardware: &Hardware) -> Self {
+        Self {
+            feeds: Arc::new(Mutex::new(HashMap::new())),
+            camera: RefCell::new(None), microphone: RefCell::new(None),
+        }
     }
-    pub fn microphone(&self) -> Result<Microphone, String> {
-        Err("Linux audio capture is not implemented".into())
+    pub fn camera(&self, hardware: &Hardware) -> Result<Camera, String> {
+        let (id, frames) = self.subscribe(true, false)?;
+        Ok(Camera::new(hardware, id, frames))
     }
-    pub fn capture(&self) -> Result<Capture, String> {
-        Err("Linux video capture is not implemented".into())
+    pub fn microphone(&self, hardware: &Hardware) -> Result<Microphone, String> {
+        let (id, frames) = self.subscribe(false, true)?;
+        Ok(Microphone::new(hardware, id, frames))
+    }
+    pub fn capture(&self, hardware: &Hardware) -> Result<Capture, String> {
+        let (id, frames) = self.subscribe(true, true)?;
+        Ok(Capture::new(hardware, id, frames))
+    }
+    pub fn error(&self, id: u128) -> Option<String> {
+        self.feeds.lock().unwrap().get(&id).and_then(|feed| feed.error())
+    }
+    pub fn remove(&self, id: u128) {
+        let (camera, microphone) = {
+            let mut feeds = self.feeds.lock().unwrap();
+            feeds.remove(&id).unwrap();
+            let active = feeds.values().filter(|feed| feed.started());
+            (active.clone().any(|feed| feed.camera()), active.clone().any(|feed| feed.microphone()))
+        };
+        if !camera {self.camera.borrow_mut().take();}
+        if !microphone {self.microphone.borrow_mut().take();}
+    }
+    fn subscribe(&self, camera: bool, microphone: bool) -> Result<(u128, broadcast::Receiver<(Duration, Arc<Frame>)>), String> {
+        gst::init().map_err(|error| error.to_string())?;
+        let (video_active, audio_active) = {
+            let feeds = self.feeds.lock().unwrap();
+            let active = feeds.values().filter(|feed| feed.started());
+            (active.clone().any(|feed| feed.camera()), active.clone().any(|feed| feed.microphone()))
+        };
+        if !video_active {self.camera.borrow_mut().take();}
+        if !audio_active {self.microphone.borrow_mut().take();}
+        let id = rand::random();
+        let origin = gst::SystemClock::obtain().time().nseconds() as f64 / 1e9;
+        let (mut feed, frames) = Feed::new(camera, microphone);
+        feed.start(origin);
+        self.feeds.lock().unwrap().insert(id, feed);
+        let result = (|| {
+            if camera && self.camera.borrow().is_none() {
+                *self.camera.borrow_mut() = Some(CaptureInput::new(true, self.feeds.clone())?);
+            }
+            if microphone && self.microphone.borrow().is_none() {
+                *self.microphone.borrow_mut() = Some(CaptureInput::new(false, self.feeds.clone())?);
+            }
+            Ok(())
+        })();
+        if let Err(error) = result {self.remove(id); return Err(error)}
+        Ok((id, frames))
+    }
+}
+impl Drop for CaptureHub {
+    fn drop(&mut self) {
+        self.camera.get_mut().take();
+        self.microphone.get_mut().take();
+        self.feeds.lock().unwrap().clear();
+    }
+}
+
+struct CaptureInput {
+    pipeline: gst::Pipeline,
+}
+impl CaptureInput {
+    fn new(camera: bool, feeds: Arc<Mutex<HashMap<u128, Feed>>>) -> Result<Self, String> {
+        let source = if camera {
+            "autovideosrc name=device ! decodebin ! videoconvert ! video/x-raw,format=RGBA"
+        } else {"autoaudiosrc name=device ! audioconvert ! audio/x-raw,format=F32LE,layout=interleaved"};
+        let description = format!("{source} ! appsink name=frames sync=false max-buffers=2 drop=true");
+        let pipeline = gst::parse::launch(&description).map_err(|error| error.to_string())?
+            .downcast::<gst::Pipeline>().unwrap();
+        pipeline.use_clock(Some(&gst::SystemClock::obtain()));
+        let sink = pipeline.by_name("frames").unwrap().downcast::<AppSink>().unwrap();
+        let weak = pipeline.downgrade();
+        let output = feeds.clone();
+        sink.set_callbacks(AppSinkCallbacks::builder().new_sample(move |sink| {
+            let sample = sink.pull_sample().map_err(|_| gst::FlowError::Eos)?;
+            let Some(pipeline) = weak.upgrade() else {return Err(gst::FlowError::Flushing)};
+            match Self::frame(&sample, &pipeline, camera) {
+                Ok((timestamp, frame)) => {
+                    let frame = Arc::new(frame);
+                    for feed in output.lock().unwrap().values() {feed.send(timestamp, &frame);}
+                    Ok(gst::FlowSuccess::Ok)
+                }
+                Err(error) => {
+                    Self::fail(&output, camera, error);
+                    Err(gst::FlowError::Error)
+                }
+            }
+        }).build());
+        pipeline.bus().unwrap().set_sync_handler(move |_, message| {
+            match message.view() {
+                gst::MessageView::Error(error) => Self::fail(&feeds, camera, error.error().to_string()),
+                // Autodetect substitutes a test source when no real device can open.
+                gst::MessageView::Warning(error)
+                    if error.src().is_some_and(|source| source.name() == "device") => {
+                    Self::fail(&feeds, camera, error.error().to_string());
+                }
+                gst::MessageView::Eos(_) => Self::fail(&feeds, camera, "Capture device stopped".into()),
+                _ => {},
+            }
+            gst::BusSyncReply::Drop
+        });
+        let input = Self {pipeline};
+        input.pipeline.set_state(gst::State::Playing).map_err(|error| error.to_string())?;
+        Ok(input)
+    }
+    fn fail(feeds: &Mutex<HashMap<u128, Feed>>, camera: bool, error: String) {
+        for feed in feeds.lock().unwrap().values_mut() {
+            if if camera {feed.camera()} else {feed.microphone()} {feed.fail(error.clone());}
+        }
+    }
+    fn frame(sample: &gst::Sample, pipeline: &gst::Pipeline, camera: bool) -> Result<(f64, Frame), String> {
+        let buffer = sample.buffer().ok_or("Capture returned no buffer")?;
+        let caps = sample.caps().ok_or("Capture returned no format")?;
+        let segment = sample.segment().unwrap().downcast_ref::<gst::ClockTime>().unwrap();
+        let time = segment.to_running_time(buffer.pts()).ok_or("Capture has no timestamp")?;
+        let time = pipeline.base_time().unwrap() + time;
+        let frame = if camera {
+            let info = VideoInfo::from_caps(caps).map_err(|error| error.to_string())?;
+            let image = VideoFrameRef::from_buffer_ref_readable(buffer, &info)
+                .map_err(|error| error.to_string())?;
+            let bytes = image.plane_data(0).map_err(|error| error.to_string())?;
+            let stride = image.plane_stride()[0] as usize;
+            let mut pixels = Vec::with_capacity(info.width() as usize * info.height() as usize);
+            for row in bytes.chunks(stride).take(info.height() as usize) {
+                pixels.extend_from_slice(bytemuck::cast_slice(&row[..info.width() as usize * 4]));
+            }
+            let duration = match buffer.duration() {
+                Some(time) => Duration::from_nanos(time.nseconds()),
+                None => {
+                    let fps = info.fps();
+                    Duration::try_from_secs_f64(fps.denom() as f64 / fps.numer() as f64)
+                        .map_err(|_| "Camera did not provide frame timing".to_owned())?
+                }
+            };
+            Frame::Image(Image::new((info.width(), info.height()), pixels), duration)
+        } else {
+            let format = caps.structure(0).unwrap();
+            let channels = format.get::<i32>("channels").unwrap() as u16;
+            let rate = format.get::<i32>("rate").unwrap();
+            let bytes = buffer.map_readable().map_err(|error| error.to_string())?;
+            let samples: Vec<_> = bytes.chunks_exact(4)
+                .map(|bytes| Sample(f32::from_le_bytes(bytes.try_into().unwrap()))).collect();
+            let duration = Duration::from_secs_f64(samples.len() as f64 / channels as f64 / rate as f64);
+            Frame::Sound(Sound {channels, samples}, duration)
+        };
+        Ok((time.nseconds() as f64 / 1e9, frame))
+    }
+}
+impl Drop for CaptureInput {
+    fn drop(&mut self) {
+        self.pipeline.bus().unwrap().unset_sync_handler();
+        self.pipeline.set_state(gst::State::Null).unwrap();
     }
 }

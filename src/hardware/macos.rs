@@ -10,8 +10,6 @@ use objc2_core_audio::{
     kAudioDevicePropertyVolumeScalar, kAudioDevicePropertyPreferredChannelsForStereo,
 };
 
-use image::ImageEncoder;
-use image::codecs::png::PngEncoder;
 use crossfire::{spsc, AsyncRx, AsyncTx};
 use dispatch2::{MainThreadBound, DispatchQueue};
 
@@ -55,7 +53,7 @@ use std::ptr::NonNull;
 use crate::inputs::{Input, Media as MediaInput};
 use crate::events::Output;
 use crate::hardware::{
-    Data, Hardware, Image, Media, Pickable, Picked, PickResult, PushDestination,
+    Data, Hardware, Image, Media, Pickable, Picked, PickResult, PushToken,
 };
 use super::apple::{AudioType, MovieType, PickRequest, PickState, MediaCommands};
 
@@ -63,16 +61,16 @@ thread_local! {static PUSH: Option<_Push> = _Push::new();}
 
 #[derive(Clone)]
 pub struct Keyboard;
-
-#[derive(Default)]
-pub struct Keyboards;
-impl Keyboards {
-    pub fn open(&self, _proxy: EventLoopProxy<Output>) -> Keyboard {Keyboard}
+impl Keyboard {
+    pub(crate) fn new(_proxy: EventLoopProxy<Output>, _inset: Arc<KeyboardInset>) -> Self {Self}
+    pub fn show(&self, _padding: f32) {}
+    pub fn hide(&self) {}
+    pub fn visible(&self) -> bool {false}
 }
 
 pub struct SafeArea;
 impl SafeArea {
-    pub fn touch_controls() -> bool {false}
+    pub fn is_mobile() -> bool {false}
     pub fn physical(window: &winit::window::Window) -> crate::PhysicalWindow {
         let size = window.inner_size();
         crate::PhysicalWindow {
@@ -147,13 +145,9 @@ impl Clipboard {
                 pb.setString_forType(&s, unsafe { NSPasteboardTypeString })
             }
             Data::Image(img) => {
-                let img: &image::RgbaImage = img;
-                let mut buf = Cursor::new(Vec::new());
-                let encoder = PngEncoder::new(&mut buf);
-                encoder.write_image(
-                    img.as_raw(), img.width(), img.height(), image::ColorType::Rgba8,
-                ).unwrap();
-                let bytes = NSData::with_bytes(&buf.into_inner());
+                let mut bytes = Vec::new();
+                img.write(&mut bytes, super::ImageFormat::Png).unwrap();
+                let bytes = NSData::with_bytes(&bytes);
                 pb.setData_forType(Some(&bytes), unsafe { NSPasteboardTypePNG })
             }
             Data::File(path) => {
@@ -222,43 +216,51 @@ impl Haptics {
     }
 }
 
-pub struct Push;
+pub struct Push {
+    destination: Option<tokio::sync::watch::Receiver<Option<String>>>,
+    previous: Option<String>,
+}
 
 impl Push {
-    pub async fn current(previous: Option<&PushDestination>) -> PushDestination {
-        let (sender, receiver) = tokio::sync::oneshot::channel();
-        DispatchQueue::main().exec_async(move || {
-            let destination = PUSH.with(|push| push.as_ref().map(|push| {
-                push.destination.subscribe()
-            }));
-            let _ = sender.send(destination);
-        });
-        let Some(mut destination) = receiver.await.unwrap() else {
+    pub fn new() -> Self {Self {destination: None, previous: None}}
+    pub async fn next(&mut self) -> PushToken {
+        if self.destination.is_none() {
+            let (sender, receiver) = tokio::sync::oneshot::channel();
+            DispatchQueue::main().exec_async(move || {
+                let destination = PUSH.with(|push| push.as_ref().map(|push| {
+                    push.destination.subscribe()
+                }));
+                let _ = sender.send(destination);
+            });
+            self.destination = receiver.await.unwrap();
+        }
+        let Some(destination) = self.destination.as_mut() else {
             return futures::future::pending().await
         };
         loop {
             let current = destination.borrow_and_update().clone();
             if let Some(current) = current {
-                if previous != Some(&current) {return current}
+                if self.previous.as_ref() != Some(&current) {
+                    self.previous = Some(current.clone());
+                    return PushToken::Apns(current)
+                }
                 destination.changed().await.unwrap();
                 continue;
             }
-            let (sender, receiver) = tokio::sync::oneshot::channel();
-            DispatchQueue::main().after(Duration::from_secs(30).try_into().unwrap(), move || {
-                PUSH.with(|push| {
-                    let push = push.as_ref().unwrap();
-                    if push.destination.borrow().is_none()
-                        && push.requested.get().elapsed() >= Duration::from_secs(30) {
-                        push.requested.set(Instant::now());
-                        NSApplication::sharedApplication(MainThreadMarker::new().unwrap()).registerForRemoteNotifications();
-                    }
-                });
-                let _ = sender.send(());
-            }).unwrap();
             tokio::select! {
                 biased;
                 changed = destination.changed() => changed.unwrap(),
-                elapsed = receiver => elapsed.unwrap(),
+                _ = tokio::time::sleep(Duration::from_secs(30)) => {
+                    DispatchQueue::main().exec_async(|| PUSH.with(|push| {
+                        let push = push.as_ref().unwrap();
+                        if push.destination.borrow().is_none()
+                            && push.requested.get().elapsed() >= Duration::from_secs(30) {
+                            push.requested.set(Instant::now());
+                            NSApplication::sharedApplication(MainThreadMarker::new().unwrap())
+                                .registerForRemoteNotifications();
+                        }
+                    }));
+                }
             }
         }
     }
@@ -285,7 +287,7 @@ impl Share {
         let item: Retained<AnyObject> = match data {
             Data::Text(text) => NSString::from_str(text).into(),
             Data::Image(image) => {
-                let (width, height) = image.dimensions();
+                let (width, height) = image.dimensions;
                 let size = CGSize::new(width as f64, height as f64);
                 let image = super::apple::ShareMedia::native_image(image);
                 NSImage::initWithCGImage_size(NSImage::alloc(), &image, size).into()
@@ -828,7 +830,7 @@ impl Presentation {
 
 
 struct _Push {
-    destination: tokio::sync::watch::Sender<Option<PushDestination>>,
+    destination: tokio::sync::watch::Sender<Option<String>>,
     requested: Cell<Instant>,
 }
 
@@ -864,7 +866,7 @@ impl _Push {
     }
 
     extern "C-unwind" fn registered(_delegate: &AnyObject, _selector: Sel, _app: &NSApplication, token: &NSData) {
-        let destination = PushDestination::Apns(hex::encode(token.to_vec()));
+        let destination = hex::encode(token.to_vec());
         PUSH.with(|push| push.as_ref().unwrap().destination.send_replace(Some(destination)));
     }
 

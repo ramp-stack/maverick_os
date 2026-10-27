@@ -139,8 +139,8 @@ impl Canvas<'_> {
         }
         match quad.data.as_ref() {
             Some(Data::Image(image)) => self.blit(cx, cy, cw, ch, image),
-            Some(Data::Media(media)) => match media.thumbnail() {
-                Some(image) => self.blit(cx, cy, cw, ch, &image),
+            Some(Data::Media(media)) => match media.video.cursor().video() {
+                Some(frame) => self.blit(cx, cy, cw, ch, &frame.image),
                 None => self.draw_text(
                     cx, cy, cw, ch, &format!("Audio: {:.1}s", media.duration().as_secs_f64()),
                     0x00f2f2f2,
@@ -172,16 +172,18 @@ impl Canvas<'_> {
     }
 
     fn blit(&mut self, x: u32, y: u32, w: u32, h: u32, image: &Image) {
-        let image: &image::RgbaImage = image;
-        let (iw, ih) = image.dimensions();
+        let (iw, ih) = image.dimensions;
+        let pixels = image.as_ref();
         if w == 0 || h == 0 {return}
         for row in 0..h {
             let sy = (row as u64 * ih as u64 / h as u64) as u32;
             let dst = (y + row) as usize * self.width as usize + x as usize;
             for col in 0..w {
                 let sx = (col as u64 * iw as u64 / w as u64) as u32;
-                let pixel = image.get_pixel(sx, sy).0;
-                self.pixels[dst + col as usize] = (pixel[0] as u32) << 16 | (pixel[1] as u32) << 8 | pixel[2] as u32;
+                let index = (sy as usize * iw as usize + sx as usize) * 4;
+                let pixel = &pixels[index..index + 4];
+                self.pixels[dst + col as usize] = (pixel[0] as u32) << 16
+                    | (pixel[1] as u32) << 8 | pixel[2] as u32;
             }
         }
     }

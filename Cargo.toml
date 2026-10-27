@@ -1,6 +1,6 @@
 [package]
 name = "maverick_os"
-version = "3.0.3"
+version = "5.0.0"
 edition = "2024"
 authors = ["Caleb Couch <caleb@orange.me>"]
 description = "Maverick OS"
@@ -22,7 +22,7 @@ demo = ["dep:softbuffer"]
 async-trait = {version = "0.1.88"}
 log = {version = "0.4.27"}
 raw-window-handle = {version = "0.6.2"}
-winit = {version = "0.30.11"}
+winit = {package = "ramp-winit", version = "0.30.14", path = "../winit"}
 softbuffer = {version = "0.4.6", optional = true}
 font8x8 = {version = "0.3.1"}
 serde_json = {version = "1.0.140"}
@@ -31,12 +31,10 @@ hex = {version = "0.4.3"}
 rand = {version = "0.9.1"}
 downcast-rs = {version = "2.0.1"}
 image = {version = "0.24.9"}
-ffmpeg-next = {package = "ramp-ffmpeg", version = "9.0.3", default-features = false, features = [
-    "codec", "format", "software-scaling", "software-resampling", "build-portable",
-]}
+media = {package = "media2", version = "0.1.0", path = "../media"}
+bytemuck = {version = "1.23"}
 cpal = {version = "0.16"}
 libc = {version = "0.2.172"}
-imageproc = {version = "0.25.0"}
 
 crossfire = {version = "3.1.7"}
 
@@ -51,8 +49,13 @@ arboard = {version = "3.6", features = ["wayland-data-control"]}
 ashpd = {version = "0.13", default-features = false, features = ["tokio", "file_chooser", "open_uri", "notification"]}
 url = "2.5"
 tempfile = "3"
+gstreamer = "0.24"
+gstreamer-app = "0.24"
+gstreamer-video = "0.24"
+souvlaki = {version = "0.8", default-features = false, features = ["use_zbus"]}
 
 [target.'cfg(any(target_os = "ios", target_os = "macos"))'.dependencies]
+tempfile = "3"
 objc2 = {version = "0.6.5"}
 objc2-core-graphics = {version = "0.3.1"}
 objc2-user-notifications = {version = "0.3.1"}
@@ -81,7 +84,7 @@ objc2-quartz-core = {version = "0.3.2"}
 
 
 [target.'cfg(target_os = "android")'.dependencies]
-winit = {version = "0.30.11", features = ["android-native-activity"]}
+winit = {package = "ramp-winit", version = "0.30.14", path = "../winit", features = ["android-native-activity"]}
 ndk-sys = "0.6"
 tokio = {version = "1.45.1", features = ["io-util"]}
 android_logger = {version = "0.15.1"}

@@ -4,9 +4,12 @@ use std::path::PathBuf;
 use std::rc::{Rc, Weak};
 use std::sync::Arc;
 
-use super::{Audio, Data, Hardware, Image, Media, Video, Visual, _Hardware};
+use super::{Audio, Data, Hardware, Image, Media, Video, _Hardware};
 
 pub type PickResult = Result<Vec<Data>, Cancled>;
+
+#[derive(Clone, Debug)]
+pub enum Visual {Image(Image), Video(Media)}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Cancled;
@@ -75,7 +78,7 @@ impl Pickable for Visual {
     fn from_data(items: Vec<Data>) -> Self {
         match Data::from_data(items) {
             Data::Image(image) => Self::Image(image),
-            Data::Media(media) => Self::Video(Video(media)),
+            Data::Media(media) => Self::Video(media),
             _ => unreachable!("The visual picker returned a different data type"),
         }
     }
@@ -85,14 +88,14 @@ impl Pickable for Video {
     fn request(tx: AsyncTx<spsc::One<PickResult>>) -> PickRequest {
         PickRequest::new(PickKind::Video, tx)
     }
-    fn from_data(items: Vec<Data>) -> Self {Self(Media::from_data(items))}
+    fn from_data(items: Vec<Data>) -> Self {Media::from_data(items).video}
 }
 
 impl Pickable for Audio {
     fn request(tx: AsyncTx<spsc::One<PickResult>>) -> PickRequest {
         PickRequest::new(PickKind::Audio, tx)
     }
-    fn from_data(items: Vec<Data>) -> Self {Self(Media::from_data(items))}
+    fn from_data(items: Vec<Data>) -> Self {Media::from_data(items).audio}
 }
 
 impl Pickable for PathBuf {
@@ -183,7 +186,7 @@ impl PickRequest {
                 Ok(item) => {
                     let accepted = match &item {
                         Data::Image(_) => self.kind.image(),
-                        Data::Media(media) if media.dimensions().is_some() => self.kind.video(),
+                        Data::Media(media) if media.video.dimensions().is_some() => self.kind.video(),
                         Data::Media(_) => self.kind.audio(),
                         Data::File(_) => matches!(self.kind, PickKind::File | PickKind::Data),
                         Data::Text(_) => matches!(self.kind, PickKind::Data),

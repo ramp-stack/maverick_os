@@ -18,8 +18,9 @@ use std::marker::PhantomData;
 mod hardware;
 pub use hardware::{
     Hardware, Camera, Microphone, Capture, Keyboard, PickResult, Pickable, Picked, Cancled, Media, Data,
-    Image, Visual, Video, Audio, Sound, Chunks, Tracks, Format, Frame, PlaybackMode, Player,
-    PushDestination, Notify,
+    Image, ImageFormat, Pixel, Sample, Visual, Video, VideoFrame, Audio, AudioFrame, Sound,
+    MediaFrame, Cursor, Encoder, Decoder, Tracks, Format,
+    Frame, PlaybackMode, Player, Speaker, Playback, PushDestination, PushToken, Notify,
 };
 
 mod window;
@@ -120,9 +121,9 @@ impl<A: Application> ApplicationHandler<Output> for MaverickOS<A> {
 
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.driver.is_some() {self.send(Message::Resumed);} else {
-            let window = Window::new(event_loop, A::name(), self.proxy.clone());
+            let (window, keyboard) = Window::new(event_loop, A::name(), self.proxy.clone());
             let (messages, receiver) = mpsc::unbounded();
-            let task = Box::pin(App::<A>::new(window.clone(), self.proxy.clone()).run(receiver));
+            let task = Box::pin(App::<A>::new(window.clone(), self.proxy.clone(), keyboard).run(receiver));
             let wake = Arc::new(EventWake {proxy: self.proxy.clone()});
             self.driver = Some(Driver {task, messages, window, wake});
             self.pump();
@@ -189,23 +190,31 @@ struct Driver {
 }
 
 struct App<A: Application> {
-    _hardware: Hardware,
+    hardware: Hardware,
     events: Events,
     launch: hardware::LaunchScreen,
     window: Window,
+    physical: PhysicalWindow,
     logical: LogicalWindow,
+    keyboard_visible: bool,
     renderer: Option<A::Renderer>,
+    redraw: bool,
     app: A,
 }
 impl<A: Application> App<A> {
-    fn new(window: Window, proxy: EventLoopProxy<Output>) -> Self {
+    fn new(window: Window, proxy: EventLoopProxy<Output>, keyboard: hardware::Keyboard) -> Self {
         let launch = hardware::LaunchScreen::new(&window);
-        let hardware = Hardware::new(A::name(), proxy.clone());
+        let hardware = Hardware::new(A::name(), proxy.clone(), keyboard);
         let events = Events::new(&window, proxy);
+        let physical = window.physical();
         let logical = window.logical();
+        let keyboard_visible = hardware.keyboard().visible();
         let app = A::new(hardware.clone(), logical.clone());
         let renderer = Some(A::Renderer::new(window.clone()));
-        Self {_hardware: hardware, launch, window, logical, events, renderer, app}
+        Self {
+            hardware, launch, window, physical, logical, keyboard_visible, events,
+            renderer, redraw: false, app,
+        }
     }
     async fn run(mut self, mut messages: UnboundedReceiver<Message>) {
         self.update();
@@ -233,26 +242,30 @@ impl<A: Application> App<A> {
             Message::Suspended => {
                 self.events.suspend();
                 self.renderer = None;
+                self.redraw = false;
             }
             Message::Resumed => {
                 self.renderer = Some(A::Renderer::new(self.window.clone()));
+                self.physical = self.window.physical();
                 self.logical = self.window.logical();
+                self.keyboard_visible = self.hardware.keyboard().visible();
                 self.app.on_input(Input::Resized(self.logical.clone()));
                 self.update();
                 self.window.request_redraw();
             }
             Message::Window(event, scale) => match event {
                 WindowEvent::RedrawRequested => {
-                    self.update();
-                    if let Some(renderer) = &mut self.renderer && renderer.draw() {
-                        self.launch.dismiss();
-                    }
+                    if self.geometry_changed() {self.update();}
+                    self.draw();
                 }
                 WindowEvent::Resized(_) | WindowEvent::ScaleFactorChanged{..} => {
-                    let _ = self.events.process(event, scale);
-                    if let Some(renderer) = &mut self.renderer {renderer.resize();}
-                    self.logical = self.window.logical();
-                    self.app.on_input(Input::Resized(self.logical.clone()));
+                    let physical = self.window.physical();
+                    if physical == self.physical && !self.geometry_changed() {return}
+                    if physical != self.physical {
+                        let _ = self.events.process(event, scale);
+                        self.physical = physical;
+                        if let Some(renderer) = &mut self.renderer {renderer.resize();}
+                    }
                     self.update();
                     if self.renderer.is_some() {self.window.request_redraw();}
                 }
@@ -262,7 +275,8 @@ impl<A: Application> App<A> {
             }
             Message::Input(input) => self.input(input),
             Message::GeometryChanged => {
-                if self.update() {self.window.request_redraw();}
+                if self.geometry_changed() {self.update();}
+                if self.redraw {self.draw();}
             }
         }
     }
@@ -270,6 +284,7 @@ impl<A: Application> App<A> {
         let input = match input {
             Input::Resized(_) => {
                 self.logical = self.window.logical();
+                self.keyboard_visible = self.hardware.keyboard().visible();
                 Input::Resized(self.logical.clone())
             }
             input => input,
@@ -277,13 +292,28 @@ impl<A: Application> App<A> {
         self.app.on_input(input);
         if self.update() {self.window.request_redraw();}
     }
+    fn draw(&mut self) {
+        let Some(renderer) = &mut self.renderer else {return};
+        if renderer.draw() {
+            self.redraw = false;
+            self.launch.dismiss();
+        } else {self.redraw = true;}
+    }
     fn update(&mut self) -> bool {
         let logical = self.window.logical();
-        if logical != self.logical {
+        let keyboard_visible = self.hardware.keyboard().visible();
+        if logical != self.logical || keyboard_visible != self.keyboard_visible {
             self.logical = logical;
+            self.keyboard_visible = keyboard_visible;
             self.app.on_input(Input::Resized(self.logical.clone()));
         }
-        self.renderer.as_mut().is_some_and(|renderer| renderer.update(self.app.draw()))
+        self.redraw |= self.renderer.as_mut().is_some_and(|renderer| renderer.update(self.app.draw()));
+        self.redraw
+    }
+
+    fn geometry_changed(&self) -> bool {
+        self.window.logical() != self.logical
+            || self.hardware.keyboard().visible() != self.keyboard_visible
     }
 }
 

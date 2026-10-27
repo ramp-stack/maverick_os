@@ -3,7 +3,7 @@ use futures_timer::Delay;
 use maverick_os::inputs::{DeviceInput, Input, Key, KeyboardState, Media as MediaInput, MouseButton, MouseState};
 use maverick_os::{
     Application, Camera, Cancled, Data, Hardware, Image, Keyboard,
-    LogicalWindow, Media, Picked, PlaybackMode, Player,
+    LogicalWindow, Media, Picked, Playback, PlaybackMode, Player, Speaker, Video,
 };
 
 use std::collections::HashMap;
@@ -16,28 +16,32 @@ use demo_render::{DemoRenderer, Screen, Quad, Button};
 pub struct Demo {
     hardware: Hardware,
     layout: Layout,
-    camera: Option<Result<(Camera, Player), String>>,
+    camera: Option<Result<(Camera, Video, Player), String>>,
     keyboard: Option<Keyboard>,
     typed: String,
     picked: Option<Selection>,
     progress: Option<Delay>,
     clipboard: Option<Data>,
     cache: Option<Data>,
-    players: HashMap<&'static str, Result<Player, String>>,
+    players: HashMap<&'static str, Result<(Player, Option<(Speaker, u64)>), String>>,
+    playback: Option<u128>,
     mode: PlaybackMode,
     speed: f64,
     volume: f64,
 }
 
 impl Demo {
-    fn playbacks(&self) -> impl Iterator<Item = &Player> {
-        self.camera.iter().filter_map(|camera| camera.as_ref().ok().map(|(_, player)| player))
-            .chain(self.players.values().filter_map(|player| player.as_ref().ok()))
+    fn playbacks(&mut self) -> impl Iterator<Item = &mut Player> {
+        self.camera.iter_mut().filter_map(|camera| camera.as_mut().ok().map(|(_, _, player)| player))
+            .chain(self.players.values_mut().filter_map(|player| {
+                player.as_mut().ok().map(|(player, _)| player)
+            }))
     }
 
     fn change_volume(&mut self, change: f64) {
         self.volume = (self.volume + change).clamp(0.0, 1.0);
-        for player in self.playbacks() {player.set_volume(self.volume);}
+        let volume = self.volume;
+        for player in self.playbacks() {player.set_volume(volume);}
     }
 
     fn mode_label(mode: PlaybackMode) -> &'static str {
@@ -46,13 +50,62 @@ impl Demo {
             PlaybackMode::Live(_) => "live",
         }
     }
-    fn status(player: &Player) -> String {
-        let position = player.position();
-        let duration = player.duration();
-        let state = if player.error().is_some() {"error"} else if !player.is_playing() {"paused"}
-            else if position >= duration {"waiting"} else {"playing"};
-        format!("{state} {} {:.1}/{:.1}s\n{:.1}x volume {:.0}%", Self::mode_label(player.mode()),
-            position.as_secs_f64(), duration.as_secs_f64(), player.speed(), player.volume() * 100.0)
+    fn status(player: &mut Player) -> String {
+        let mode = Self::mode_label(player.mode());
+        let frame = player.frame();
+        let (position, duration) = (frame.position, frame.duration);
+        let state = if !frame.playing {"paused"}
+            else if duration.is_some_and(|end| position >= end) {"waiting"} else {"playing"};
+        let duration = duration.map_or_else(|| "live".into(), |end| format!("{:.1}s", end.as_secs_f64()));
+        format!("{state} {mode} {:.1}s/{duration}\n{:.1}x volume {:.0}%",
+            position.as_secs_f64(), frame.speed, frame.volume * 100.0)
+    }
+    fn update_players(&mut self) {
+        for entry in self.players.values_mut() {
+            let Ok((player, output)) = entry else {continue};
+            let result = (|| {
+                player.frame();
+                if !player.has_audio() {*output = None;}
+                else if output.is_none() {
+                    let speaker = Speaker::new()?;
+                    player.synchronize_audio();
+                    *output = Some((speaker, player.audio_revision()));
+                }
+                if let Some((speaker, revision)) = output {
+                    let playing = player.frame().playing;
+                    let (mut duration, underrun) = speaker.request()?;
+                    if *revision != player.audio_revision() || playing && underrun {
+                        speaker.clear();
+                        player.synchronize_audio();
+                        *revision = player.audio_revision();
+                        duration = speaker.request()?.0;
+                    }
+                    if playing && !duration.is_zero() {
+                        let (rate, channels) = speaker.format();
+                        loop {
+                            let current = player.audio_revision();
+                            let audio = player.audio(duration, rate, channels)?;
+                            if current == player.audio_revision() {
+                                speaker.write(audio.sound);
+                                break
+                            }
+                            speaker.clear();
+                            player.synchronize_audio();
+                            duration = speaker.request()?.0;
+                        }
+                    }
+                    *revision = player.audio_revision();
+                    speaker.set_playing(player.frame().playing)?;
+                }
+                Ok::<_, String>(())
+            })();
+            if let Err(error) = result {*entry = Err(error);}
+        }
+    }
+}
+impl Drop for Demo {
+    fn drop(&mut self) {
+        if let Some(id) = self.playback {Playback::remove(id);}
     }
 }
 
@@ -63,7 +116,7 @@ impl Application for Demo {
 
     fn new(hardware: Hardware, window: LogicalWindow) -> Self {
         let clipboard = hardware.get_clipboard();
-        let cache = hardware.get_cache("demo").unwrap_or_else(|error| Some(Data::Text(error)));
+        let cache = hardware.get_cache("demo");
         Demo{
             hardware, clipboard, cache,
             layout: Layout::new(&window),
@@ -71,10 +124,15 @@ impl Application for Demo {
             keyboard: None, typed: String::new(),
             picked: None, progress: None,
             players: HashMap::new(), mode: PlaybackMode::Default, speed: 1.0, volume: 1.0,
+            playback: None,
         }
     }
 
     fn draw(&mut self) -> Screen {
+        self.update_players();
+        if let Some(Ok((camera, _, _))) = &self.camera && let Some(error) = camera.error() {
+            self.camera = Some(Err(error));
+        }
         let mut clear = false;
         let picked = match self.picked.as_mut().and_then(|pick| pick.try_get()) {
             Some(Ok(item)) => Some(item),
@@ -89,14 +147,14 @@ impl Application for Demo {
             Quad{
                 label: if self.keyboard.is_some() {"keyboard"} else {"camera"},
                 data: if self.keyboard.is_some() {Some(Data::Text(self.typed.clone()))}
-                else {self.camera.as_ref().and_then(|camera| match camera {
-                    Ok((camera, player)) => camera.error().or_else(|| player.error()).map(Data::Text)
-                        .or_else(|| player.frame().image.map(Data::Image)),
+                else {self.camera.as_mut().and_then(|camera| match camera {
+                    Ok((_, _, player)) => player.frame().video.as_ref()
+                        .map(|frame| Data::Image(frame.image.clone())),
                     Err(error) => Some(Data::Text(error.clone())),
                 })},
                 status: if self.keyboard.is_some() {None} else {
-                    self.camera.as_ref().and_then(|camera| camera.as_ref().ok())
-                        .map(|(_, player)| Self::status(player))
+                    self.camera.as_mut().and_then(|camera| camera.as_mut().ok())
+                        .map(|(_, _, player)| Self::status(player))
                 },
             },
             Quad{label: "picked", data: picked, status: None},
@@ -109,31 +167,34 @@ impl Application for Demo {
         for quad in &mut quads {
             if !matches!(&quad.data, Some(Data::Media(_))) {continue}
             let player = self.players.entry(quad.label).or_insert_with(|| {
-                let player = match quad.data.as_ref().unwrap() {
-                    Data::Media(media) => Player::new(media),
+                let mut player = match quad.data.as_ref().unwrap() {
+                    Data::Media(media) => media.player(),
                     _ => unreachable!(),
                 };
-                if let Ok(player) = &player {
-                    player.set_mode(self.mode);
-                    player.set_speed(self.speed);
-                    player.set_volume(self.volume);
-                    player.start();
-                }
-                player
+                player.set_mode(self.mode);
+                player.set_speed(self.speed);
+                player.set_volume(self.volume);
+                player.start();
+                Ok((player, None))
             });
             match player {
-                Ok(player) => {
+                Ok((player, _)) => {
                     quad.status = Some(Self::status(player));
-                    if let Some(error) = player.error() {quad.data = Some(Data::Text(error));}
-                    else if let Some(frame) = player.frame().image {quad.data = Some(Data::Image(frame));}
+                    if let Some(frame) = &player.frame().video {
+                        quad.data = Some(Data::Image(frame.image.clone()));
+                    }
                 }
                 Err(error) => quad.data = Some(Data::Text(format!("Unable to play media: {error}"))),
             }
         }
-        let playing = self.playbacks().any(Player::is_playing);
+        let playing = self.playbacks().any(|player| player.frame().playing);
+        if self.playbacks().next().is_some() {
+            Playback::update(*self.playback.get_or_insert_with(rand::random), playing);
+        } else if let Some(id) = self.playback.take() {Playback::remove(id);}
+        let default_mode = Self::mode_label(self.mode);
         let mode = self.playbacks().map(|player| Self::mode_label(player.mode()))
             .reduce(|mode, next| if mode == next {mode} else {"mixed"})
-            .unwrap_or(Self::mode_label(self.mode));
+            .unwrap_or(default_mode);
         for button in &mut self.layout.buttons {
             match button.label {
                 "play all" | "pause all" => button.label = if playing {"pause all"} else {"play all"},
@@ -152,16 +213,15 @@ impl Application for Demo {
     }
 
     async fn changed(&mut self) {
-        let advancing = self.playbacks().any(|player| {
-            player.is_playing() && player.position() < player.duration()
-        });
-        if advancing {
-            self.progress.get_or_insert_with(|| Delay::new(Duration::from_millis(100)));
+        if self.playbacks().next().is_some() {
+            self.progress.get_or_insert_with(|| Delay::new(Duration::from_millis(5)));
         } else {self.progress = None;}
-        let mut changes: FuturesUnordered<LocalBoxFuture<'_, ()>> = self.camera.iter_mut()
-            .filter_map(|camera| camera.as_mut().ok().map(|(_, player)| player))
-            .chain(self.players.values_mut().filter_map(|player| player.as_mut().ok()))
-            .map(|player| Box::pin(async move {player.next().await;}) as LocalBoxFuture<'_, ()>).collect();
+        let mut changes: FuturesUnordered<LocalBoxFuture<'_, ()>> = FuturesUnordered::new();
+        if let Some(Ok((camera, video, _))) = &mut self.camera {
+            changes.push(Box::pin(async move {
+                if let Some(frame) = camera.next().await {video.insert(frame);}
+            }));
+        }
         if let Some(selection) = &mut self.picked && !matches!(selection, Selection::Ready(_)) {
             changes.push(Box::pin(selection.changed()));
         }
@@ -183,12 +243,20 @@ impl Application for Demo {
                     Key::Backspace => {self.typed.pop();}
                     Key::Enter => self.typed.push('\n'),
                     Key::Tab => self.typed.push('\t'),
-                    Key::Escape => self.keyboard = None,
+                    Key::Escape => {
+                        self.keyboard.take().unwrap().hide();
+                    }
                     _ => {}
                 },
             Input::Media(media @ (MediaInput::Play | MediaInput::Pause)) => {
                 for player in self.playbacks() {
                     if media == MediaInput::Play {player.start();} else {player.stop();}
+                }
+            }
+            Input::Media(MediaInput::Toggle) => {
+                let playing = self.playbacks().any(|player| player.frame().playing);
+                for player in self.playbacks() {
+                    if playing {player.stop();} else {player.start();}
                 }
             }
             Input::Media(MediaInput::VolumeUp) => self.change_volume(0.1),
@@ -203,17 +271,22 @@ impl Application for Demo {
                     };
                     if let Some(label) = changed {self.players.remove(label);}
                     match label {
-                        "keyboard" => if self.keyboard.take().is_none() {
-                            self.keyboard = Some(self.hardware.open_keyboard());
+                        "keyboard" => if let Some(keyboard) = self.keyboard.take() {
+                            keyboard.hide();
+                        } else {
+                            let keyboard = self.hardware.keyboard();
+                            keyboard.show(0.0);
+                            self.keyboard = Some(keyboard);
                         },
                         "camera" => if self.camera.take().is_none() {
                             self.camera = Some(self.hardware.start_camera().and_then(|camera| {
-                                let player = Player::new(&camera)?;
+                                let video = Video::new();
+                                let mut player = video.player();
                                 player.set_mode(PlaybackMode::Live(Duration::ZERO));
                                 player.set_speed(self.speed);
                                 player.set_volume(self.volume);
                                 player.start();
-                                Ok((camera, player))
+                                Ok((camera, video, player))
                             }));
                         },
                         "photo" => self.picked = Some(Selection::Photo(self.hardware.pick::<Image>())),
@@ -231,22 +304,22 @@ impl Application for Demo {
                                 "copy" => self.hardware.set_clipboard(&data),
                                 _ => {
                                     self.cache = match self.hardware.set_cache("demo", &data) {
-                                        Ok(()) => self.hardware.get_cache("demo")
-                                            .unwrap_or_else(|error| Some(Data::Text(error))),
+                                        Ok(()) => self.hardware.get_cache("demo"),
                                         Err(error) => Some(Data::Text(error)),
                                     };
                                 }
                             }}
                         }
                         "play all" | "pause all" => {
-                            let playing = self.playbacks().any(Player::is_playing);
+                            let playing = self.playbacks().any(|player| player.frame().playing);
                             for player in self.playbacks() {
                                 if playing {player.stop();} else {player.start();}
                             }
                         }
                         "0.5x" | "1x" | "2x" => {
                             self.speed = match self.speed {0.5 => 1.0, 1.0 => 2.0, _ => 0.5};
-                            for player in self.playbacks() {player.set_speed(self.speed);}
+                            let speed = self.speed;
+                            for player in self.playbacks() {player.set_speed(speed);}
                         }
                         "default" | "loop" | "live" | "mixed" => {
                             self.mode = match label {
@@ -254,15 +327,19 @@ impl Application for Demo {
                                 "loop" => PlaybackMode::Live(Duration::ZERO),
                                 _ => PlaybackMode::Default,
                             };
-                            for player in self.playbacks() {player.set_mode(self.mode);}
+                            let mode = self.mode;
+                            for player in self.playbacks() {player.set_mode(mode);}
                         }
                         "restart" | "-5s" | "+5s" => {
                             for player in self.playbacks() {
+                                let frame = player.frame();
                                 let position = match label {
-                                    "-5s" => player.position()
+                                    "-5s" => frame.position
                                         .saturating_sub(Duration::from_secs(5)),
-                                    "+5s" => (player.position() + Duration::from_secs(5))
-                                        .min(player.duration()),
+                                    "+5s" => {
+                                        let position = frame.position + Duration::from_secs(5);
+                                        frame.duration.map_or(position, |end| position.min(end))
+                                    },
                                     _ => Duration::ZERO,
                                 };
                                 player.seek(position);

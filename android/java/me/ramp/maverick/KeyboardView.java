@@ -28,18 +28,22 @@ final class KeyboardView extends View {
     }
 
     void show() {
-        if (active && hasWindowFocus()) {
+        if (active && isFocused() && hasWindowFocus()) {
             getContext().getSystemService(InputMethodManager.class).showSoftInput(this, 0);
         }
     }
 
     void close() {
         active = false;
+        hide();
+        if (getParent() instanceof ViewGroup) ((ViewGroup) getParent()).removeView(this);
+    }
+
+    void hide() {
         if (connection != null) connection.closeConnection();
+        setFocusable(false);
         getContext().getSystemService(InputMethodManager.class)
             .hideSoftInputFromWindow(getWindowToken(), 0);
-        clearFocus();
-        if (getParent() instanceof ViewGroup) ((ViewGroup) getParent()).removeView(this);
     }
 
     @Override public void onWindowFocusChanged(boolean focused) {

@@ -2,21 +2,39 @@ package me.ramp.maverick;
 
 import android.Manifest;
 import android.app.NativeActivity;
+import android.app.Notification;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
+import android.app.PendingIntent;
+import android.content.BroadcastReceiver;
 import android.content.ClipData;
 import android.content.ClipboardManager;
+import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
 import android.graphics.ImageDecoder;
+import android.media.AudioAttributes;
+import android.media.AudioFocusRequest;
+import android.media.AudioManager;
+import android.media.session.MediaSession;
+import android.media.session.PlaybackState;
 import android.net.Uri;
 import android.os.Bundle;
+import android.os.Handler;
 import android.os.ParcelFileDescriptor;
 import android.provider.OpenableColumns;
 import android.util.Log;
 import android.view.HapticFeedbackConstants;
+import android.view.MotionEvent;
 import android.view.View;
-import android.view.WindowInsetsAnimation;
+import android.view.ViewGroup;
 import android.view.WindowInsets;
+import android.view.WindowInsetsAnimation;
+import android.widget.TextView;
+import org.json.JSONArray;
+import org.json.JSONObject;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.InputStream;
@@ -26,8 +44,6 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
-import org.json.JSONArray;
-import org.json.JSONObject;
 
 public final class MaverickActivity extends NativeActivity {
     private static volatile java.lang.ref.WeakReference<MaverickActivity> current = new java.lang.ref.WeakReference<>(null);
@@ -39,18 +55,29 @@ public final class MaverickActivity extends NativeActivity {
     private volatile float[] insets = new float[4];
     private final AtomicInteger nextKeyboard = new AtomicInteger(1);
     private KeyboardView keyboard;
+    private boolean keyboardDragging;
+    private long keyboardDragPointer;
+    private float keyboardDragX;
+    private float keyboardDragY;
     private long events;
     private boolean observingEvents;
     private volatile boolean keyboardVisible;
     private PushRegistration push;
+    private MaverickCapture capture;
+    private MediaSession mediaSession;
+    private final HashMap<String, Boolean> players = new HashMap<>();
+    private AudioFocusRequest audioFocus;
+    private int audioUsers;
+    private BroadcastReceiver audioRoutes;
     private boolean resumed;
     private boolean notificationPermissionRequested;
     private boolean notificationPermissionWanted;
     private volatile float keyboardInset;
     private WindowInsets animatedInsets;
     private android.graphics.Rect windowBounds;
-    private final java.util.HashSet<WindowInsetsAnimation> imeAnimations = new java.util.HashSet<>();
+    private final HashMap<WindowInsetsAnimation, Boolean> imeAnimations = new HashMap<>();
 
+    private native void mediaCommand(int command);
     private native void windowChanged();
     private native void keyboardText(String text);
     private native boolean keyboardKey(int code, int unicode, int action, int repeat, int meta);
@@ -61,6 +88,7 @@ public final class MaverickActivity extends NativeActivity {
             synchronized (this) {
                 if (events == 0 || isDestroyed()) return;
                 observingEvents = true;
+                startMedia();
                 updateInsets();
                 getWindow().getDecorView().requestApplyInsets();
                 flushNotifications();
@@ -70,10 +98,16 @@ public final class MaverickActivity extends NativeActivity {
 
     public synchronized void stopEvents() {
         observingEvents = false;
+        runOnUiThread(() -> {
+            if (mediaSession != null) {mediaSession.release(); mediaSession = null;}
+            if (audioRoutes != null) {unregisterReceiver(audioRoutes); audioRoutes = null;}
+            getSystemService(NotificationManager.class).cancel("maverick.media", 0);
+        });
         KeyboardView closing = keyboard;
         runOnUiThread(() -> {
             synchronized (this) {
                 if (closing == null || keyboard != closing) return;
+                keyboardDragging = false;
                 closing.close();
                 keyboard = null;
             }
@@ -102,8 +136,9 @@ public final class MaverickActivity extends NativeActivity {
             synchronized (this) {
                 if (!observingEvents || events == 0) return;
                 if (keyboard != null) keyboard.close();
+                keyboardDragging = false;
                 keyboard = new KeyboardView(this, id);
-                addContentView(keyboard, new android.view.ViewGroup.LayoutParams(1, 1));
+                addContentView(keyboard, new ViewGroup.LayoutParams(1, 1));
                 keyboard.requestFocus();
                 keyboard.post(() -> {
                     synchronized (this) {
@@ -117,12 +152,61 @@ public final class MaverickActivity extends NativeActivity {
         return id;
     }
 
+    public void reopenKeyboard(int id) {
+        runOnUiThread(() -> {
+            if (keyboard == null || keyboard.id != id) return;
+            keyboardDragging = false;
+            WindowInsets value = getWindow().getDecorView().getRootWindowInsets();
+            if (!keyboard.isFocused() || value == null || !value.isVisible(WindowInsets.Type.ime())) {
+                keyboard.setFocusableInTouchMode(true);
+                keyboard.requestFocus();
+                keyboard.show();
+            }
+        });
+    }
+
+    public void hideKeyboard(int id) {
+        runOnUiThread(() -> {
+            if (keyboard == null || keyboard.id != id) return;
+            keyboardDragging = false;
+            keyboard.hide();
+        });
+    }
+
     public void closeKeyboard(int id) {
         runOnUiThread(() -> {
             synchronized (this) {
                 if (keyboard == null || keyboard.id != id) return;
+                keyboardDragging = false;
                 keyboard.close();
                 keyboard = null;
+            }
+        });
+    }
+
+    public void keyboardTouch(int action, long pointer, float x, float y, int touches) {
+        runOnUiThread(() -> {
+            if (keyboard == null) return;
+            WindowInsets value = imeAnimations.isEmpty() ?
+                getWindow().getDecorView().getRootWindowInsets() : animatedInsets;
+            if (value == null || (!value.isVisible(WindowInsets.Type.ime())
+                && value.getInsets(WindowInsets.Type.ime()).bottom == 0)) return;
+            if (action == MotionEvent.ACTION_DOWN) {
+                keyboardDragging = touches == 1
+                    && !keyboardDragBlocked(getWindow().getDecorView(), x, y);
+                if (keyboardDragging) {
+                    keyboardDragPointer = pointer;
+                    keyboardDragX = x;
+                    keyboardDragY = y;
+                }
+            } else if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) {
+                keyboardDragging = false;
+            } else if (keyboardDragging && pointer == keyboardDragPointer) {
+                float dx = x - keyboardDragX, dy = y - keyboardDragY;
+                if (dy >= 32 * getResources().getDisplayMetrics().density && dy > Math.abs(dx)) {
+                    keyboardDragging = false;
+                    keyboard.hide();
+                }
             }
         });
     }
@@ -143,18 +227,27 @@ public final class MaverickActivity extends NativeActivity {
             @Override public void onPrepare(WindowInsetsAnimation animation) {
                 if ((animation.getTypeMask() & WindowInsets.Type.ime()) != 0) {
                     if (imeAnimations.isEmpty()) animatedInsets = decor.getRootWindowInsets();
-                    imeAnimations.add(animation);
+                    imeAnimations.put(animation, false);
                 }
             }
-            @Override public WindowInsets onProgress(WindowInsets value,
-                java.util.List<WindowInsetsAnimation> running) {
+            @Override public WindowInsetsAnimation.Bounds onStart(WindowInsetsAnimation animation, WindowInsetsAnimation.Bounds bounds) {
+                if ((animation.getTypeMask() & WindowInsets.Type.ime()) != 0) {
+                    imeAnimations.put(animation, true);
+                }
+                return bounds;
+            }
+            @Override public WindowInsets onProgress(WindowInsets value, java.util.List<WindowInsetsAnimation> running) {
                 animatedInsets = value;
                 updateInsets(value);
                 return value;
             }
             @Override public void onEnd(WindowInsetsAnimation animation) {
-                imeAnimations.remove(animation);
-                if (imeAnimations.isEmpty()) {animatedInsets = null; updateInsets();}
+                if (imeAnimations.remove(animation) == null) return;
+                if (!imeAnimations.containsValue(true)) {
+                    imeAnimations.clear();
+                    animatedInsets = null;
+                    updateInsets();
+                }
             }
         });
         decor.getViewTreeObserver().addOnGlobalLayoutListener(() -> updateInsets());
@@ -169,7 +262,114 @@ public final class MaverickActivity extends NativeActivity {
 
     @Override protected void onPause() {
         resumed = false;
+        keyboardDragging = false;
         super.onPause();
+    }
+
+    private synchronized void sendMedia(int command) {
+        if (observingEvents && events != 0) mediaCommand(command);
+    }
+
+    private void startMedia() {
+        if (mediaSession != null) return;
+        mediaSession = new MediaSession(this, "Maverick");
+        mediaSession.setCallback(new MediaSession.Callback() {
+            @Override public void onPlay() {sendMedia(0);}
+            @Override public void onPause() {sendMedia(1);}
+            @Override public void onStop() {sendMedia(1);}
+        });
+        audioRoutes = new BroadcastReceiver() {
+            @Override public void onReceive(Context context, Intent intent) {
+                sendMedia(intent.getAction().equals(getPackageName() + ".maverick.PLAY") ? 0 : 1);
+            }
+        };
+        IntentFilter filter = new IntentFilter(
+            AudioManager.ACTION_AUDIO_BECOMING_NOISY);
+        filter.addAction(getPackageName() + ".maverick.PLAY");
+        filter.addAction(getPackageName() + ".maverick.PAUSE");
+        if (android.os.Build.VERSION.SDK_INT >= 33) registerReceiver(audioRoutes, filter, RECEIVER_NOT_EXPORTED);
+        else registerReceiver(audioRoutes, filter);
+        publishPlayback();
+    }
+
+    public void playback(String id, int state) {
+        runOnUiThread(() -> {
+            if (state < 0) {
+                if (players.remove(id) == null) return;
+            } else {
+                Boolean previous = players.put(id, state != 0);
+                if (previous != null && previous == (state != 0)) return;
+            }
+            publishPlayback();
+        });
+    }
+
+    private void publishPlayback() {
+        if (mediaSession == null) return;
+        boolean playing = players.containsValue(true);
+        int state = players.isEmpty() ? PlaybackState.STATE_STOPPED :
+            playing ? PlaybackState.STATE_PLAYING :
+            PlaybackState.STATE_PAUSED;
+        mediaSession.setPlaybackState(new PlaybackState.Builder()
+            .setActions(PlaybackState.ACTION_PLAY |
+                PlaybackState.ACTION_PAUSE |
+                PlaybackState.ACTION_PLAY_PAUSE |
+                PlaybackState.ACTION_STOP)
+            .setState(state, PlaybackState.PLAYBACK_POSITION_UNKNOWN,
+                playing ? 1.0f : 0.0f).build());
+        mediaSession.setActive(!players.isEmpty());
+        NotificationManager manager = getSystemService(NotificationManager.class);
+        if (players.isEmpty()) {manager.cancel("maverick.media", 0); return;}
+        manager.createNotificationChannel(new NotificationChannel(
+            "maverick.media", "Playback", NotificationManager.IMPORTANCE_LOW));
+        Intent action = new Intent(getPackageName() + (playing ? ".maverick.PAUSE" : ".maverick.PLAY"))
+            .setPackage(getPackageName());
+        PendingIntent pending = PendingIntent.getBroadcast(this, 0, action,
+            PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+        Notification.Builder notification = new Notification.Builder(this, "maverick.media")
+            .setSmallIcon(android.R.drawable.ic_media_play)
+            .setContentTitle(getApplicationInfo().loadLabel(getPackageManager()))
+            .setCategory(Notification.CATEGORY_TRANSPORT).setOnlyAlertOnce(true)
+            .setShowWhen(false).setOngoing(playing)
+            .setStyle(new Notification.MediaStyle().setMediaSession(mediaSession.getSessionToken())
+                .setShowActionsInCompactView(0))
+            .addAction(playing ? android.R.drawable.ic_media_pause : android.R.drawable.ic_media_play,
+                playing ? "Pause" : "Play", pending);
+        Intent launch = getPackageManager().getLaunchIntentForPackage(getPackageName());
+        if (launch != null) notification.setContentIntent(PendingIntent.getActivity(this, 0,
+            launch, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE));
+        manager.notify("maverick.media", 0, notification.build());
+    }
+
+    public synchronized String acquireAudio() {
+        if (audioUsers > 0) {audioUsers++; return null;}
+        AudioManager manager = getSystemService(AudioManager.class);
+        audioFocus = new AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
+            .setAudioAttributes(new AudioAttributes.Builder()
+                .setUsage(AudioAttributes.USAGE_MEDIA)
+                .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC).build())
+            .setWillPauseWhenDucked(true)
+            .setOnAudioFocusChangeListener(change -> {
+                if (change < 0) sendMedia(1);
+            }, new Handler(getMainLooper())).build();
+        if (manager.requestAudioFocus(audioFocus) != AudioManager.AUDIOFOCUS_REQUEST_GRANTED) {
+            audioFocus = null;
+            return "Audio focus is unavailable";
+        }
+        audioUsers = 1;
+        return null;
+    }
+
+    public synchronized void releaseAudio() {
+        if (--audioUsers == 0) {
+            getSystemService(AudioManager.class).abandonAudioFocusRequest(audioFocus);
+            audioFocus = null;
+        }
+    }
+
+    public MaverickCapture createCapture() {
+        capture = new MaverickCapture(this);
+        return capture;
     }
 
     public long beginPush(String previous) throws java.io.IOException {return push.begin(previous);}
@@ -182,6 +382,25 @@ public final class MaverickActivity extends NativeActivity {
             || checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) return;
         notificationPermissionRequested = true;
         requestPermissions(new String[] {Manifest.permission.POST_NOTIFICATIONS}, 60001);
+    }
+
+    private boolean keyboardDragBlocked(View view, float x, float y) {
+        if (!view.isShown()) return false;
+        int[] position = new int[2];
+        view.getLocationInWindow(position);
+        if (x < position[0] || x >= position[0] + view.getWidth()
+            || y < position[1] || y >= position[1] + view.getHeight()) return false;
+        if (view instanceof TextView || view.isClickable() || view.isLongClickable()
+            || view.onCheckIsTextEditor() || view.canScrollVertically(-1)
+            || view.canScrollVertically(1) || view.canScrollHorizontally(-1)
+            || view.canScrollHorizontally(1)) return true;
+        if (view instanceof ViewGroup) {
+            ViewGroup group = (ViewGroup) view;
+            for (int i = group.getChildCount() - 1; i >= 0; i--) {
+                if (keyboardDragBlocked(group.getChildAt(i), x, y)) return true;
+            }
+        }
+        return false;
     }
 
     private void updateInsets() {
@@ -212,6 +431,7 @@ public final class MaverickActivity extends NativeActivity {
         };
         keyboardInset = Math.min(surface.getHeight(), Math.max(0, ime - below)) / scale;
         keyboardVisible = value.isVisible(WindowInsets.Type.ime()) || ime > 0;
+        if (!keyboardVisible) keyboardDragging = false;
         synchronized (this) {
             if (!observingEvents || events == 0) return;
             if (!java.util.Arrays.equals(previousInsets, insets) || previousKeyboardInset != keyboardInset
@@ -290,6 +510,7 @@ public final class MaverickActivity extends NativeActivity {
 
     @Override public void onRequestPermissionsResult(int request, String[] permissions, int[] results) {
         super.onRequestPermissionsResult(request, permissions, results);
+        if (request == 60002) {if (capture != null) capture.permissions(); return;}
         if (request != 60001) return;
         if (results.length > 0 && results[0] == PackageManager.PERMISSION_GRANTED) {
             for (String[] notification : notifications) {
@@ -377,7 +598,8 @@ public final class MaverickActivity extends NativeActivity {
                     Files.copy(input, target.toPath());
                 }
             }
-            return new JSONObject().put("path", target.getAbsolutePath()).put("image", image);
+            return new JSONObject().put("path", target.getAbsolutePath()).put("image", image)
+                .put("media", mime != null && (mime.startsWith("audio/") || mime.startsWith("video/")));
         } catch (Exception error) {
             if (target != null) target.delete();
             return new JSONObject().put("error", error.toString());
@@ -399,6 +621,7 @@ public final class MaverickActivity extends NativeActivity {
         notifications.clear();
         pendingNotifications.clear();
         push.close();
+        if (capture != null) capture.close();
         super.onDestroy();
         if (current.get() == this) current.clear();
     }

@@ -4,9 +4,10 @@ use winit::event_loop::{ActiveEventLoop, EventLoopProxy};
 
 use std::sync::Arc;
 
-use crate::hardware::{SafeArea, KeyboardInset};
+use crate::hardware::{SafeArea, KeyboardInset, Keyboard};
 use crate::events::Output;
 
+#[derive(PartialEq)]
 pub struct PhysicalWindow {
     pub width: u32,
     pub height: u32,
@@ -15,23 +16,23 @@ pub struct PhysicalWindow {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct LogicalWindow {
-    /// Available size above the docked native keyboard, including animation frames.
+    /// Available size above native keyboard obstruction, including animation frames.
     pub size: (f32, f32),
     pub insets: (f32, f32, f32, f32),
-    /// Native keyboard visibility, including floating keyboards and dismissal animations.
-    pub keyboard_visible: bool,
-    pub touch_controls: bool,
+    /// Selects mobile layout and touch-oriented interaction behavior.
+    pub is_mobile: bool,
 }
 
 #[derive(Clone)]
 pub struct Window(Arc<WinitWindow>, Arc<KeyboardInset>);
 impl Window {
-    pub(crate) fn new(event_loop: &ActiveEventLoop, name: String, proxy: EventLoopProxy<Output>) -> Self {
+    pub(crate) fn new(event_loop: &ActiveEventLoop, name: String, proxy: EventLoopProxy<Output>) -> (Self, Keyboard) {
         let window = Arc::new(event_loop.create_window(
             WinitWindow::default_attributes().with_title(&name)
         ).unwrap());
-        let keyboard = Arc::new(KeyboardInset::new(&window, proxy));
-        Self(window, keyboard)
+        let inset = Arc::new(KeyboardInset::new(&window, proxy.clone()));
+        let keyboard = Keyboard::new(proxy, inset.clone());
+        (Self(window, inset), keyboard)
     }
 
     pub fn id(&self) -> WindowId {self.0.id()}
@@ -42,14 +43,14 @@ impl Window {
 
     pub fn logical(&self) -> LogicalWindow {
         let physical = self.physical();
-        let (overlap, keyboard_visible) = self.1.get();
+        let overlap = self.1.get().0;
         let mut window = LogicalWindow {
             size: (
                 (physical.width as f64 / physical.scale_factor) as f32,
                 (physical.height as f64 / physical.scale_factor) as f32
             ),
             insets: SafeArea::get(&self.0),
-            keyboard_visible, touch_controls: SafeArea::touch_controls(),
+            is_mobile: SafeArea::is_mobile(),
         };
         window.size.1 = (window.size.1 - overlap).max(0.0);
         window.insets.2 = (window.insets.2 - overlap).max(0.0);

@@ -1,5 +1,6 @@
 use block2::RcBlock;
 use dispatch2::{DispatchQueue, DispatchQueueAttr, MainThreadBound};
+use ::media::{Image, Pixel, Sample, Sound};
 use objc2::{AnyThread, DefinedClass, MainThreadMarker, define_class, msg_send};
 use objc2::rc::Retained;
 use objc2::runtime::{Bool, ProtocolObject};
@@ -22,6 +23,7 @@ use objc2_core_video::{
 use objc2_foundation::{NSDictionary, NSNumber, NSObject, NSObjectProtocol, NSString};
 use objc2_core_audio_types::AudioBufferList;
 use objc2_core_foundation::CFRetained;
+use tokio::sync::broadcast;
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -30,46 +32,10 @@ use std::rc::{Rc, Weak};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use super::super::{AudioSession, Hardware, Image, Media, Sound, _Hardware};
-use super::super::media::{AudioFrame, VideoFrame, Source};
+use super::super::{AudioSession, Camera, Microphone, Capture, Hardware, _Hardware};
+use super::super::capture::{Feed, Frame};
 
 type Feeds = Arc<Mutex<HashMap<u128, Feed>>>;
-
-#[derive(Clone)]
-pub struct Camera {
-    media: Media,
-    subscription: Rc<Subscription>,
-}
-impl Camera {
-    pub fn error(&self) -> Option<String> {self.subscription.error()}
-}
-impl AsRef<Media> for Camera {
-    fn as_ref(&self) -> &Media {&self.media}
-}
-
-#[derive(Clone)]
-pub struct Microphone {
-    media: Media,
-    subscription: Rc<Subscription>,
-}
-impl Microphone {
-    pub fn error(&self) -> Option<String> {self.subscription.error()}
-}
-impl AsRef<Media> for Microphone {
-    fn as_ref(&self) -> &Media {&self.media}
-}
-
-#[derive(Clone)]
-pub struct Capture {
-    media: Media,
-    subscription: Rc<Subscription>,
-}
-impl Capture {
-    pub fn error(&self) -> Option<String> {self.subscription.error()}
-}
-impl AsRef<Media> for Capture {
-    fn as_ref(&self) -> &Media {&self.media}
-}
 
 pub struct CaptureHub {
     owner: Weak<_Hardware>,
@@ -93,36 +59,42 @@ impl CaptureHub {
             rotation: RefCell::new(None), delegate,
         }
     }
-    pub fn camera(&self) -> Result<Camera, String> {
-        let media = Media::new();
-        let subscription = self.subscribe(&media, true, false)?;
-        Ok(Camera {media, subscription})
+    pub fn camera(&self, hardware: &Hardware) -> Result<Camera, String> {
+        let (id, frames) = self.subscribe(true, false)?;
+        Ok(Camera::new(hardware, id, frames))
     }
-    pub fn microphone(&self) -> Result<Microphone, String> {
-        let media = Media::new();
-        let subscription = self.subscribe(&media, false, true)?;
-        Ok(Microphone {media, subscription})
+    pub fn microphone(&self, hardware: &Hardware) -> Result<Microphone, String> {
+        let (id, frames) = self.subscribe(false, true)?;
+        Ok(Microphone::new(hardware, id, frames))
     }
-    pub fn capture(&self) -> Result<Capture, String> {
-        let media = Media::new();
-        let subscription = self.subscribe(&media, true, true)?;
-        Ok(Capture {media, subscription})
+    pub fn capture(&self, hardware: &Hardware) -> Result<Capture, String> {
+        let (id, frames) = self.subscribe(true, true)?;
+        Ok(Capture::new(hardware, id, frames))
     }
-    fn subscribe(&self, media: &Media, camera: bool, microphone: bool) -> Result<Rc<Subscription>, String> {
-        let source = <&Source>::from(media);
-        let offset = if camera {source.capture_video(microphone)?} else {source.capture_audio()?};
+    pub fn error(&self, id: u128) -> Option<String> {
+        self.feeds.lock().unwrap().get(&id).and_then(|feed| feed.error())
+    }
+    pub fn remove(&self, id: u128) {
+        let (camera, microphone) = {
+            let mut feeds = self.feeds.lock().unwrap();
+            feeds.remove(&id).unwrap();
+            let active = feeds.values().filter(|feed| feed.started());
+            (active.clone().any(|feed| feed.camera()), active.clone().any(|feed| feed.microphone()))
+        };
+        self.configure(camera, microphone).expect("Could not release capture inputs");
+    }
+    fn subscribe(&self, camera: bool, microphone: bool) -> Result<(u128, broadcast::Receiver<(Duration, Arc<Frame>)>), String> {
         let id = rand::random();
-        self.feeds.lock().unwrap().insert(id, Feed {
-            media: media.clone(), camera, microphone, origin: None, offset,
-        });
+        let (feed, frames) = Feed::new(camera, microphone);
+        self.feeds.lock().unwrap().insert(id, feed);
         if let Err(error) = self.start(id) {self.remove(id); return Err(error)}
-        Ok(Rc::new(Subscription {owner: self.owner.clone(), id}))
+        Ok((id, frames))
     }
     fn start(&self, id: u128) -> Result<(), String> {
         let Some(feed) = self.feeds.lock().unwrap().get(&id).cloned() else {return Ok(())};
         for (needed, media, name) in unsafe {[
-            (feed.camera, AVMediaTypeVideo.unwrap(), "Camera"),
-            (feed.microphone, AVMediaTypeAudio.unwrap(), "Microphone"),
+            (feed.camera(), AVMediaTypeVideo.unwrap(), "Camera"),
+            (feed.microphone(), AVMediaTypeAudio.unwrap(), "Microphone"),
         ]} {
             if !needed {continue}
             match unsafe {AVCaptureDevice::authorizationStatusForMediaType(media)} {
@@ -135,9 +107,9 @@ impl CaptureHub {
                         let Some(owner) = owner.upgrade() else {return};
                         let hub = owner.capture.get().unwrap();
                         if let Err(error) = hub.start(id)
-                            && let Some(feed) = hub.feeds.lock().unwrap().get(&id)
+                            && let Some(feed) = hub.feeds.lock().unwrap().get_mut(&id)
                         {
-                            <&Source>::from(&feed.media).fail(error);
+                            feed.fail(error);
                         }
                     }));
                     unsafe {AVCaptureDevice::requestAccessForMediaType_completionHandler(
@@ -150,10 +122,10 @@ impl CaptureHub {
         }
         let (camera, microphone) = {
             let feeds = self.feeds.lock().unwrap();
-            let active = feeds.values().filter(|feed| feed.origin.is_some());
-            (active.clone().any(|feed| feed.camera), active.clone().any(|feed| feed.microphone))
+            let active = feeds.values().filter(|feed| feed.started());
+            (active.clone().any(|feed| feed.camera()), active.clone().any(|feed| feed.microphone()))
         };
-        if let Err(error) = self.configure(camera || feed.camera, microphone || feed.microphone) {
+        if let Err(error) = self.configure(camera || feed.camera(), microphone || feed.microphone()) {
             self.configure(camera, microphone).ok();
             return Err(error)
         }
@@ -163,7 +135,7 @@ impl CaptureHub {
             return Err("Capture could not start".into())
         }
         let origin = unsafe {CMClock::host_time_clock().time().seconds()};
-        self.feeds.lock().unwrap().get_mut(&id).unwrap().origin = Some(origin);
+        self.feeds.lock().unwrap().get_mut(&id).unwrap().start(origin);
         Ok(())
     }
     fn configure(&self, camera: bool, microphone: bool) -> Result<(), String> {
@@ -261,62 +233,18 @@ impl CaptureHub {
         drop(audio_session);
         result
     }
-    fn remove(&self, id: u128) {
-        let (feed, camera, microphone) = {
-            let mut feeds = self.feeds.lock().unwrap();
-            let feed = feeds.remove(&id).unwrap();
-            let active = feeds.values().filter(|feed| feed.origin.is_some());
-            (feed, active.clone().any(|feed| feed.camera),
-                active.clone().any(|feed| feed.microphone))
-        };
-        <&Source>::from(&feed.media).end_capture();
-        self.configure(camera, microphone).expect("Could not release capture inputs");
-    }
 }
 impl Drop for CaptureHub {
     fn drop(&mut self) {
-        let feeds = std::mem::take(&mut *self.feeds.lock().unwrap());
-        for feed in feeds.into_values() {<&Source>::from(&feed.media).end_capture();}
+        self.feeds.lock().unwrap().clear();
         self.configure(false, false).unwrap();
     }
-}
-
-enum Frame {
-    Image(Image, Duration),
-    Sound(Sound),
-}
-
-#[derive(Clone)]
-struct Feed {
-    media: Media,
-    camera: bool,
-    microphone: bool,
-    origin: Option<f64>,
-    offset: Duration,
 }
 
 struct CaptureState {
     feeds: Feeds,
     session: Retained<AVCaptureSession>,
     interval: Mutex<Duration>,
-}
-
-struct Subscription {
-    owner: Weak<_Hardware>,
-    id: u128,
-}
-impl Subscription {
-    fn error(&self) -> Option<String> {
-        let owner = self.owner.upgrade()?;
-        let hub = owner.capture.get().unwrap();
-        let feeds = hub.feeds.lock().unwrap();
-        feeds.get(&self.id).and_then(|feed| <&Source>::from(&feed.media).error())
-    }
-}
-impl Drop for Subscription {
-    fn drop(&mut self) {
-        if let Some(owner) = self.owner.upgrade() {owner.capture.get().unwrap().remove(self.id);}
-    }
 }
 
 define_class!(
@@ -341,26 +269,14 @@ define_class!(
                     .ok().filter(|duration| !duration.is_zero())
                     .unwrap_or(*state.interval.lock().unwrap());
                 Self::image(sample).map(|image| Frame::Image(image, duration))
-            } else {Self::sound(sample).map(Frame::Sound)};
-            let feeds = state.feeds.lock().unwrap();
-            for feed in feeds.values() {
-                let Some(origin) = feed.origin else {continue};
-                if <&Source>::from(&feed.media).error().is_some() {continue}
-                let Ok(position) = Duration::try_from_secs_f64(timestamp - origin) else {continue};
-                let position = feed.offset + position;
-                let result = match (&result, feed.camera, feed.microphone) {
-                    (Ok(Frame::Image(image, duration)), true, _) => {
-                        <&Source>::from(&feed.media).splice_video(VideoFrame {
-                            position, image: image.clone(), duration: *duration,
-                        })
-                    }
-                    (Ok(Frame::Sound(sound)), _, true) => {
-                        <&Source>::from(&feed.media).splice_audio(AudioFrame {position, sound: sound.clone()})
-                    }
-                    (Err(error), _, _) => Err(error.clone()),
-                    _ => Ok(()),
-                };
-                if let Err(error) = result {<&Source>::from(&feed.media).fail(error);}
+            } else {Self::sound(sample).map(|(sound, duration)| Frame::Sound(sound, duration))};
+            let result = result.map(Arc::new);
+            let mut feeds = state.feeds.lock().unwrap();
+            for feed in feeds.values_mut() {
+                match &result {
+                    Ok(frame) => feed.send(timestamp, frame),
+                    Err(error) => feed.fail(error.clone()),
+                }
             }
         }
     }
@@ -372,7 +288,7 @@ impl CaptureDelegate {
         });
         unsafe {msg_send![super(this), init]}
     }
-    fn sound(sample: &CMSampleBuffer) -> Result<Sound, String> {
+    fn sound(sample: &CMSampleBuffer) -> Result<(Sound, Duration), String> {
         let description = unsafe {sample.format_description()}.ok_or("Missing microphone format")?;
         let format = unsafe {CMAudioFormatDescriptionGetStreamBasicDescription(&description).as_ref()}
             .ok_or("Missing microphone audio format")?;
@@ -431,12 +347,11 @@ impl CaptureDelegate {
                         (signed as f64 / scale) as f32
                     } else {(value as f64 / scale - 1.0) as f32}
                 };
-                samples.push(value);
+                samples.push(Sample(value));
             }
         }
-        Ok(Sound {
-            sample_rate: format.mSampleRate as u32, channels: channels as u16, samples: Arc::new(samples),
-        })
+        let duration = Duration::from_secs_f64(frames as f64 / format.mSampleRate);
+        Ok((Sound {channels: channels as u16, samples}, duration))
     }
     fn image(sample: &CMSampleBuffer) -> Result<Image, String> {
         let buffer = unsafe {sample.image_buffer()}.unwrap();
@@ -462,22 +377,23 @@ impl CaptureDelegate {
             }
             let y_plane = unsafe {std::slice::from_raw_parts(y_base.cast::<u8>(), y_len)};
             let uv_plane = unsafe {std::slice::from_raw_parts(uv_base.cast::<u8>(), uv_len)};
-            let mut image = image::RgbaImage::new(width, height as u32);
-            for (x, y, pixel) in image.enumerate_pixels_mut() {
-                let yi = y as usize * y_stride + x as usize;
-                let uvi = y as usize / 2 * uv_stride + (x as usize & !1);
+            let mut pixels = vec![Pixel::default(); width as usize * height];
+            for (index, pixel) in pixels.iter_mut().enumerate() {
+                let (x, y) = (index % width as usize, index / width as usize);
+                let yi = y * y_stride + x;
+                let uvi = y / 2 * uv_stride + (x & !1);
                 if yi >= y_plane.len() || uvi + 1 >= uv_plane.len() {continue}
                 let y = (y_plane[yi] as i32 - 16).max(0);
                 let u = uv_plane[uvi] as i32 - 128;
                 let v = uv_plane[uvi + 1] as i32 - 128;
                 // BT.601 limited-range YUV to RGBA.
-                *pixel = image::Rgba([
-                    ((298 * y + 409 * v + 128) >> 8).clamp(0, 255) as u8,
-                    ((298 * y - 100 * u - 208 * v + 128) >> 8).clamp(0, 255) as u8,
-                    ((298 * y + 516 * u + 128) >> 8).clamp(0, 255) as u8, 255,
-                ]);
+                *pixel = Pixel {
+                    red: ((298 * y + 409 * v + 128) >> 8).clamp(0, 255) as u8,
+                    green: ((298 * y - 100 * u - 208 * v + 128) >> 8).clamp(0, 255) as u8,
+                    blue: ((298 * y + 516 * u + 128) >> 8).clamp(0, 255) as u8, alpha: 255,
+                };
             }
-            Ok(image.into())
+            Ok(Image::new((width, height as u32), pixels))
         })();
         unsafe {CVPixelBufferUnlockBaseAddress(buffer, flags);}
         result

@@ -1,4 +1,4 @@
-use arc_swap::Guard;
+use arc_swap::{ArcSwap, Guard};
 use arc_swap::access::{Access, Constant, Map};
 use serde::{Serialize, de::DeserializeOwned};
 use tokio::sync::{OnceCell, broadcast, mpsc, oneshot};
@@ -17,6 +17,13 @@ use crate::runtime::RUNTIME;
 static NEXT_SUBSCRIBER_ID: AtomicU64 = AtomicU64::new(0);
 static SHARED: LazyLock<Mutex<HashMap<(TypeId, Key), SharedEntry>>> = LazyLock::new(Mutex::default);
 static SERVICES: LazyLock<Mutex<HashMap<Key, JoinHandle<()>>>> = LazyLock::new(Mutex::default);
+
+type Request<S> = (u64, <S as Sharable>::Request, oneshot::Sender<<S as Sharable>::Response>);
+type Notification<S> = (u64, u64, Arc<<S as Sharable>::Response>);
+type SharedData<S> = (
+    Arc<ArcSwap<(u64, S)>>, mpsc::UnboundedSender<Request<S>>, broadcast::WeakSender<Notification<S>>,
+);
+type SharedEntry = Arc<OnceCell<Box<dyn Any + Send + Sync>>>;
 
 #[derive(Clone, Copy, Eq, Hash, PartialEq)]
 pub struct Key(pub TypeId, pub u64);
@@ -89,14 +96,12 @@ impl<T: Debug> Debug for Ref<'_, T> {
 }
 
 pub struct Shared<S: Sharable> {
-    // Abort temporary workers before dropping the last request sender.
-    worker: Arc<Worker>,
     key: Option<(TypeId, Key)>,
-    value: Arc<Mutex<Arc<S>>>,
+    value: Arc<ArcSwap<(u64, S)>>,
     requests: mpsc::UnboundedSender<Request<S>>,
     sender: broadcast::WeakSender<Notification<S>>,
     subscriber: u64,
-    responses: Mutex<broadcast::Receiver<Notification<S>>>,
+    responses: Mutex<(u64, broadcast::Receiver<Notification<S>>)>,
 }
 impl<S: Sharable> Shared<S> {
     pub fn new(init: S::Init) -> Self {Self::open(init, true)}
@@ -120,52 +125,44 @@ impl<S: Sharable> Shared<S> {
                     object
                 }
             };
-            let value = Arc::new(Mutex::new(Arc::new(object.clone())));
+            let value = Arc::new(ArcSwap::from_pointee((0_u64, object.clone())));
             let (requests, mut receiver) = mpsc::unbounded_channel::<Request<S>>();
             let (responses, _) = broadcast::channel(S::capacity());
             let snapshot = value.clone();
             let sender = responses.downgrade();
-            let task = runtime.spawn(Box::pin(async move {
+            runtime.spawn(Box::pin(async move {
+                let mut version = 0;
                 while let Some((origin, request, reply)) = receiver.recv().await {
                     let response = object.handle(request).await;
                     if let Some((cache, id)) = &cache {cache.save(id, &object).unwrap();}
-                    {
-                        let mut snapshot = value.lock().unwrap();
-                        *snapshot = Arc::new(object.clone());
-                        let _ = responses.send((origin, Arc::new(response.clone())));
-                    }
+                    version += 1;
+                    value.store(Arc::new((version, object.clone())));
+                    let _ = responses.send((version, origin, Arc::new(response.clone())));
                     reply.send(response).unwrap_or_else(|_| panic!("Shared reply receiver dropped"));
                 }
             }));
-            let worker = Arc::new(Worker(Mutex::new(Some(task))));
-            Box::new((snapshot, requests, sender, worker)) as Box<dyn Any + Send + Sync>
+            Box::new((snapshot, requests, sender)) as Box<dyn Any + Send + Sync>
         }));
-        let (value, requests, sender, worker) = shared.downcast_ref::<SharedData<S>>().unwrap();
+        let (value, requests, sender) = shared.downcast_ref::<SharedData<S>>().unwrap();
         let responses = sender.upgrade().unwrap().subscribe();
+        let version = value.as_ref().load().0;
         Self {
-            worker: worker.clone(), key, value: value.clone(),
-            requests: requests.clone(), sender: sender.clone(),
+            key, value: value.clone(), requests: requests.clone(), sender: sender.clone(),
             subscriber: NEXT_SUBSCRIBER_ID.fetch_add(1, Ordering::Relaxed),
-            responses: Mutex::new(responses),
+            responses: Mutex::new((version, responses)),
         }
     }
 
+    /// Releases the registry entry; remaining handles stay usable until they are dropped.
     pub fn shutdown(&self) {
-        let worker = self.worker.0.lock().unwrap().take();
-        if let Some(worker) = worker {
-            worker.abort();
-            if let Err(error) = RUNTIME.get().unwrap().block_on(worker) {
-                assert!(error.is_cancelled(), "Shared worker failed: {error}");
-            }
-            if let Some(key) = self.key {
-                let mut shared = SHARED.lock().unwrap();
-                let entry = shared.get(&key).and_then(|entry| entry.get());
-                let matches = entry.and_then(|entry| entry.downcast_ref::<SharedData<S>>())
-                    .is_some_and(|(value, _, _, _)| Arc::ptr_eq(value, &self.value));
-                let entry = matches.then(|| shared.remove(&key));
-                drop(shared);
-                drop(entry);
-            }
+        if let Some(key) = self.key {
+            let mut shared = SHARED.lock().unwrap();
+            let entry = shared.get(&key).and_then(|entry| entry.get());
+            let matches = entry.and_then(|entry| entry.downcast_ref::<SharedData<S>>())
+                .is_some_and(|(value, _, _)| Arc::ptr_eq(value, &self.value));
+            let entry = matches.then(|| shared.remove(&key));
+            drop(shared);
+            drop(entry);
         }
     }
 
@@ -177,26 +174,42 @@ impl<S: Sharable> Shared<S> {
     }
 
     pub fn load(&self) -> Ref<'_, S> {
-        let snapshot = self.value.lock().unwrap();
+        let mut responses = self.responses.lock().unwrap();
+        // Subscribe before loading so updates after this snapshot cannot be missed.
         let current = self.sender.upgrade().expect("Shared worker has stopped").subscribe();
-        *self.responses.lock().unwrap() = current;
-        Ref::new(Guard::from_inner(snapshot.clone()))
+        let snapshot = self.value.as_ref().load();
+        *responses = (snapshot.0, current);
+        Ref::new(snapshot).map(|snapshot| &snapshot.1)
     }
 
     pub async fn next(&mut self) -> S::Response {
+        let (seen, responses) = self.responses.get_mut().unwrap();
         loop {
-            let (origin, response) = self.responses.get_mut().unwrap().recv().await.unwrap();
-            if origin != self.subscriber {return (*response).clone()}
+            match responses.recv().await {
+                Ok((version, origin, response)) => {
+                    if version <= *seen {continue}
+                    assert_eq!(version, *seen + 1, "Shared notifications skipped unseen updates");
+                    *seen = version;
+                    if origin != self.subscriber {return (*response).clone()}
+                }
+                Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(error) => panic!("Shared notification failed: {error}"),
+            }
         }
     }
 
     pub fn try_next(&mut self) -> Option<S::Response> {
+        let (seen, responses) = self.responses.get_mut().unwrap();
         loop {
-            match self.responses.get_mut().unwrap().try_recv() {
-                Ok((origin, response)) => {
+            match responses.try_recv() {
+                Ok((version, origin, response)) => {
+                    if version <= *seen {continue}
+                    assert_eq!(version, *seen + 1, "Shared notifications skipped unseen updates");
+                    *seen = version;
                     if origin != self.subscriber {return Some((*response).clone())}
                 }
                 Err(broadcast::error::TryRecvError::Empty) => return None,
+                Err(broadcast::error::TryRecvError::Lagged(_)) => continue,
                 Err(error) => panic!("Shared notification failed: {error}"),
             }
         }
@@ -205,11 +218,12 @@ impl<S: Sharable> Shared<S> {
 impl<S: Sharable> Clone for Shared<S> {
     fn clone(&self) -> Self {
         let responses = self.sender.upgrade().expect("Shared worker has stopped").subscribe();
+        let version = self.value.as_ref().load().0;
         Self {
-            worker: self.worker.clone(), key: self.key,
-            value: self.value.clone(), requests: self.requests.clone(), sender: self.sender.clone(),
+            key: self.key, value: self.value.clone(),
+            requests: self.requests.clone(), sender: self.sender.clone(),
             subscriber: NEXT_SUBSCRIBER_ID.fetch_add(1, Ordering::Relaxed),
-            responses: Mutex::new(responses),
+            responses: Mutex::new((version, responses)),
         }
     }
 }
@@ -260,20 +274,5 @@ impl Services {
                 }
             });
         }
-    }
-}
-
-type Request<S> = (u64, <S as Sharable>::Request, oneshot::Sender<<S as Sharable>::Response>);
-type Notification<S> = (u64, Arc<<S as Sharable>::Response>);
-type SharedData<S> = (
-    Arc<Mutex<Arc<S>>>, mpsc::UnboundedSender<Request<S>>, broadcast::WeakSender<Notification<S>>,
-    Arc<Worker>,
-);
-type SharedEntry = Arc<OnceCell<Box<dyn Any + Send + Sync>>>;
-
-struct Worker(Mutex<Option<JoinHandle<()>>>);
-impl Drop for Worker {
-    fn drop(&mut self) {
-        if let Some(worker) = self.0.get_mut().unwrap().take() {worker.abort();}
     }
 }

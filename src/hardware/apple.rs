@@ -26,28 +26,30 @@ use objc2_photos_ui::{PHPickerConfiguration, PHPickerFilter, PHPickerResult};
 use objc2_core_foundation::{CFRetained, CGPoint, CGSize, CGRect};
 use objc2_core_graphics::{
     CGBitmapInfo, CGColorSpace, CGImageAlphaInfo, CGImageByteOrderInfo, CGDataProvider, CGImage,
-    CGColorRenderingIntent, CGBitmapContextGetData, CGBitmapContextCreate, CGContext,
+    CGColorRenderingIntent, CGBitmapContextCreate, CGContext,
 };
 
 use std::cell::RefCell;
-use std::sync::{Arc, Mutex};
+use std::collections::HashMap;
+use std::sync::{Arc, LazyLock, Mutex};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::ffi::CStr;
 use std::path::{Path, PathBuf};
 use std::fs::OpenOptions;
-use std::io::{Cursor, Read, Write};
+use std::io::{Read, Seek, Write};
 use std::ptr::NonNull;
 
 use crate::inputs::{Input, Media as MediaInput};
 use crate::events::Output;
-use super::{Clock, Data, DataPicker, Format, Media};
+use super::{Data, DataPicker, Format, Media};
 use super::picker::PickKind;
 pub use super::picker::PickRequest;
 
 mod capture;
-pub use capture::{Camera, Microphone, Capture, CaptureHub};
+pub use capture::CaptureHub;
 
 static MEDIA_COMMANDS: AtomicBool = AtomicBool::new(false);
+static PLAYING: LazyLock<Mutex<HashMap<u128, bool>>> = LazyLock::new(Default::default);
 
 pub enum PickState {
     Waiting(PickRequest),
@@ -111,7 +113,7 @@ impl MediaCommands {
             let block = RcBlock::new(move |_: NonNull<MPRemoteCommandEvent>| {
                 let input = match kind {
                     0 => MediaInput::Play, 1 => MediaInput::Pause,
-                    _ => if Clock::playing().unwrap_or(false) {MediaInput::Pause} else {MediaInput::Play},
+                    _ => MediaInput::Toggle,
                 };
                 let _ = proxy.send_event(Output::Input(Input::Media(input)));
                 MPRemoteCommandHandlerStatus::Success
@@ -123,12 +125,23 @@ impl MediaCommands {
             (command, target)
         }).collect())
     }
-    pub fn update() {
+    pub fn update(id: u128, playing: bool) {
+        if PLAYING.lock().unwrap().insert(id, playing) != Some(playing) {Self::publish();}
+    }
+    pub fn remove(id: u128) {
+        PLAYING.lock().unwrap().remove(&id);
+        Self::publish();
+    }
+    fn playing() -> Option<bool> {
+        let players = PLAYING.lock().unwrap();
+        (!players.is_empty()).then(|| players.values().any(|playing| *playing))
+    }
+    fn publish() {
         if !MEDIA_COMMANDS.load(Ordering::Acquire) {return}
         DispatchQueue::main().exec_async(|| unsafe {
             if !MEDIA_COMMANDS.load(Ordering::Acquire) {return}
             let center = MPNowPlayingInfoCenter::defaultCenter();
-            if let Some(playing) = Clock::playing() {
+            if let Some(playing) = Self::playing() {
                 let title = NSProcessInfo::processInfo().processName();
                 let rate = NSNumber::new_f64(if playing {1.0} else {0.0});
                 let info = NSDictionary::from_slices(&[
@@ -282,16 +295,19 @@ impl ShareMedia {
     pub fn new() -> Self {Self{path: RefCell::new(None)}}
 
     pub fn native_image(image: &super::Image) -> CFRetained<CGImage> {
-        let image = Arc::clone(image);
-        let (width, height) = (image.width() as usize, image.height() as usize);
-        let data = image.as_raw();
+        let image = Box::new(image.clone());
+        let (width, height) = image.dimensions;
+        let data = image.as_ref().as_ref();
+        let (width, height) = (width as usize, height as usize);
+        assert!(width > 0 && height > 0);
+        assert_eq!(data.len(), width * height * 4);
         let (pointer, length) = (data.as_ptr().cast(), data.len());
-        let info = Arc::into_raw(image) as *mut std::ffi::c_void;
+        let info = Box::into_raw(image).cast();
         let provider = unsafe {
             CGDataProvider::with_data(info, pointer, length, Some(Self::release_image)).unwrap()
         };
         let color = CGColorSpace::new_device_rgb().unwrap();
-        // image::Rgba is straight RGBA, top row first.
+        // Pixels are straight RGBA, top row first.
         let bitmap = CGBitmapInfo(CGImageAlphaInfo::Last.0 | CGImageByteOrderInfo::Order32Big.0);
         unsafe {
             CGImage::new(
@@ -304,40 +320,41 @@ impl ShareMedia {
         let (width, height) = (CGImage::width(Some(image)), CGImage::height(Some(image)));
         let color = CGColorSpace::new_device_rgb().unwrap();
         let info = CGImageAlphaInfo::PremultipliedLast.0 | CGImageByteOrderInfo::Order32Big.0;
+        let mut pixels = vec![::media::Pixel::default(); width * height];
         let context = unsafe {
             CGBitmapContextCreate(
-                std::ptr::null_mut(), width, height, 8, width * 4, Some(&color), info,
+                pixels.as_mut_ptr().cast(), width, height, 8, width * 4, Some(&color), info,
             ).unwrap()
         };
         CGContext::draw_image(
             Some(&context),
             CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(width as f64, height as f64)), Some(image),
         );
-        let pointer = NonNull::new(CGBitmapContextGetData(Some(&context)).cast::<u8>()).unwrap();
-        let mut pixels = unsafe {
-            std::slice::from_raw_parts(pointer.as_ptr(), width * height * 4)
-        }.to_vec();
-        for pixel in pixels.chunks_exact_mut(4) {
-            let alpha = u32::from(pixel[3]);
-            if alpha == 0 {pixel[..3].fill(0);} else if alpha < 255 {
-                for channel in &mut pixel[..3] {
+        drop(context);
+        for pixel in &mut pixels {
+            let alpha = u32::from(pixel.alpha);
+            if alpha == 0 {(pixel.red, pixel.green, pixel.blue) = (0, 0, 0);} else if alpha < 255 {
+                for channel in [&mut pixel.red, &mut pixel.green, &mut pixel.blue] {
                     *channel = (u32::from(*channel) * 255 / alpha).min(255) as u8;
                 }
             }
         }
-        image::RgbaImage::from_raw(width as u32, height as u32, pixels).unwrap().into()
+        super::Image::new((width as u32, height as u32), pixels)
     }
     pub fn export(media: &Media) -> Result<(Vec<u8>, Retained<UTType>), String> {
-        let format = if media.dimensions().is_some() {
+        let format = if media.video.dimensions().is_some() {
             Format::Mkv_Ffv1_PcmF32le
         } else {Format::Wav_PcmF32le};
-        let mut file = Cursor::new(Vec::new());
-        media.write(&mut file, format)?;
-        let parent = unsafe {if media.dimensions().is_some() {UTTypeMovie} else {UTTypeAudio}};
+        let mut file = tempfile::tempfile().map_err(|error| error.to_string())?;
+        media.write(file.try_clone().map_err(|error| error.to_string())?, format)?;
+        file.rewind().map_err(|error| error.to_string())?;
+        let mut bytes = Vec::new();
+        file.read_to_end(&mut bytes).map_err(|error| error.to_string())?;
+        let parent = unsafe {if media.video.dimensions().is_some() {UTTypeMovie} else {UTTypeAudio}};
         let ty = UTType::typeWithFilenameExtension_conformingToType(
             &NSString::from_str(format.extension()), parent,
         ).unwrap();
-        Ok((file.into_inner(), ty))
+        Ok((bytes, ty))
     }
 
     pub fn path(&self, data: &Data) -> Option<PathBuf> {
@@ -357,7 +374,7 @@ impl ShareMedia {
         Some(path)
     }
     unsafe extern "C-unwind" fn release_image(info: *mut std::ffi::c_void, _data: NonNull<std::ffi::c_void>, _size: usize) {
-        drop(unsafe {Arc::from_raw(info as *const image::RgbaImage)});
+        drop(unsafe {Box::from_raw(info.cast::<super::Image>())});
     }
 }
 
@@ -438,10 +455,17 @@ impl PickRequest {
                     Err("The file does not match the requested media type.".into())
                 }
             }
-            let bytes = std::fs::read(&path).map_err(|error| format!("Could not read file: {error}"))?;
             match format {
-                PickFormat::Photo => DataPicker::image(&NSData::with_bytes(&bytes)).map(Data::Image),
-                PickFormat::Media => Media::read(Cursor::new(bytes)).map(Data::Media),
+                PickFormat::Photo => {
+                    let bytes = std::fs::read(&path)
+                        .map_err(|error| format!("Could not read file: {error}"))?;
+                    DataPicker::image(&NSData::with_bytes(&bytes)).map(Data::Image)
+                }
+                PickFormat::Media => {
+                    let file = std::fs::File::open(&path)
+                        .map_err(|error| format!("Could not open file: {error}"))?;
+                    Media::read(file).map(Data::Media)
+                }
                 PickFormat::File => unreachable!(),
             }
         })();
