@@ -17,16 +17,20 @@ use objc2_core_media::{
 use objc2_core_video::{
     kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, kCVPixelBufferPixelFormatTypeKey,
     CVPixelBuffer, CVPixelBufferLockFlags, CVPixelBufferGetBaseAddressOfPlane,
-    CVPixelBufferGetBytesPerRowOfPlane, CVPixelBufferGetHeightOfPlane, CVPixelBufferGetWidth,
+    CVPixelBufferGetBytesPerRowOfPlane, CVPixelBufferGetHeightOfPlane, CVPixelBufferGetWidthOfPlane,
+    kCVImageBufferYCbCrMatrixKey, kCVImageBufferYCbCrMatrix_ITU_R_601_4,
+    kCVImageBufferYCbCrMatrix_ITU_R_709_2, kCVImageBufferYCbCrMatrix_ITU_R_2020,
+    kCVImageBufferYCbCrMatrix_SMPTE_240M_1995,
     CVPixelBufferLockBaseAddress, CVPixelBufferUnlockBaseAddress,
 };
 use objc2_foundation::{NSDictionary, NSNumber, NSObject, NSObjectProtocol, NSString};
 use objc2_core_audio_types::AudioBufferList;
-use objc2_core_foundation::CFRetained;
+use objc2_core_foundation::{CFRetained, CFString};
 use tokio::sync::broadcast;
 
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::ffi::c_void;
 use std::ptr::NonNull;
 use std::rc::{Rc, Weak};
 use std::sync::{Arc, Mutex};
@@ -36,15 +40,17 @@ use super::super::{AudioSession, Camera, Microphone, Capture, Hardware, _Hardwar
 use super::super::capture::{Feed, Frame};
 
 type Feeds = Arc<Mutex<HashMap<u128, Feed>>>;
+type FrameReceiver = broadcast::Receiver<(Duration, Arc<Frame>)>;
+type MicrophoneSession = (
+    Retained<AVCaptureDeviceInput>, Retained<AVCaptureAudioDataOutput>, AudioSession,
+);
 
 pub struct CaptureHub {
     owner: Weak<_Hardware>,
     session: Retained<AVCaptureSession>,
     feeds: Feeds,
     camera: RefCell<Option<(Retained<AVCaptureDeviceInput>, Retained<AVCaptureVideoDataOutput>)>>,
-    microphone: RefCell<Option<(
-        Retained<AVCaptureDeviceInput>, Retained<AVCaptureAudioDataOutput>, AudioSession,
-    )>>,
+    microphone: RefCell<Option<MicrophoneSession>>,
     rotation: RefCell<Option<Retained<AVCaptureDeviceRotationCoordinator>>>,
     delegate: Retained<CaptureDelegate>,
 }
@@ -83,7 +89,7 @@ impl CaptureHub {
         };
         self.configure(camera, microphone).expect("Could not release capture inputs");
     }
-    fn subscribe(&self, camera: bool, microphone: bool) -> Result<(u128, broadcast::Receiver<(Duration, Arc<Frame>)>), String> {
+    fn subscribe(&self, camera: bool, microphone: bool) -> Result<(u128, FrameReceiver), String> {
         let id = rand::random();
         let (feed, frames) = Feed::new(camera, microphone);
         self.feeds.lock().unwrap().insert(id, feed);
@@ -139,7 +145,7 @@ impl CaptureHub {
         Ok(())
     }
     fn configure(&self, camera: bool, microphone: bool) -> Result<(), String> {
-        let mut audio_session = None;
+        let mut _audio_session = None;
         unsafe {self.session.beginConfiguration();}
         let result = (|| {
             if unsafe {self.session.canSetSessionPreset(AVCaptureSessionPresetHigh)} {
@@ -222,7 +228,7 @@ impl CaptureHub {
                     self.session.removeOutput(&output);
                     self.session.removeInput(&input);
                 }
-                audio_session = Some(session);
+                _audio_session = Some(session);
             }
             Ok(())
         })();
@@ -230,7 +236,6 @@ impl CaptureHub {
         if !camera && !microphone && unsafe {self.session.isRunning()} {
             unsafe {self.session.stopRunning();}
         }
-        drop(audio_session);
         result
     }
 }
@@ -241,10 +246,109 @@ impl Drop for CaptureHub {
     }
 }
 
+#[repr(C)]
+struct ImageBuffer {
+    data: *mut c_void,
+    height: usize,
+    width: usize,
+    row_bytes: usize,
+}
+
+#[repr(C)]
+struct PixelRange {
+    y_bias: i32,
+    chroma_bias: i32,
+    y_range: i32,
+    chroma_range: i32,
+    y_max: i32,
+    y_min: i32,
+    chroma_max: i32,
+    chroma_min: i32,
+}
+
+#[repr(C)]
+struct Matrix {
+    y: f32,
+    cr_red: f32,
+    cr_green: f32,
+    cb_green: f32,
+    cb_blue: f32,
+}
+
 struct CaptureState {
     feeds: Feeds,
     session: Retained<AVCaptureSession>,
     interval: Mutex<Duration>,
+    // objc2 ivar storage cannot hold vImage's 16-byte alignment directly.
+    conversions: Box<[(&'static CFString, Conversion); 4]>,
+}
+
+#[repr(C, align(16))]
+struct Conversion {
+    opaque: [u8; 128],
+}
+impl Conversion {
+    fn new(red: f32, blue: f32) -> Self {
+        let green = 1.0 - red - blue;
+        let matrix = Matrix {
+            y: 1.0, cr_red: 2.0 * (1.0 - red), cr_green: -2.0 * red * (1.0 - red) / green,
+            cb_green: -2.0 * blue * (1.0 - blue) / green, cb_blue: 2.0 * (1.0 - blue),
+        };
+        let range = PixelRange {
+            y_bias: 16, chroma_bias: 128, y_range: 235, chroma_range: 240,
+            y_max: 255, y_min: 0, chroma_max: 255, chroma_min: 0,
+        };
+        let mut conversion = Self {opaque: [0; 128]};
+        // vImage's fixed input/output types are 420Yp8_CbCr8 (4) and ARGB8888 (0).
+        let result = unsafe {
+            vImageConvert_YpCbCrToARGB_GenerateConversion(&matrix, &range, &mut conversion, 4, 0, 0)
+        };
+        assert_eq!(result, 0, "Could not initialize camera color conversion");
+        conversion
+    }
+    fn image(&self, buffer: &CVPixelBuffer) -> Result<Image, String> {
+        let flags = CVPixelBufferLockFlags::ReadOnly;
+        if unsafe {CVPixelBufferLockBaseAddress(buffer, flags)} != 0 {
+            return Err("Invalid camera pixel buffer".into())
+        }
+        let result = (|| {
+            let luma = ImageBuffer {
+                data: CVPixelBufferGetBaseAddressOfPlane(buffer, 0),
+                height: CVPixelBufferGetHeightOfPlane(buffer, 0),
+                width: CVPixelBufferGetWidthOfPlane(buffer, 0),
+                row_bytes: CVPixelBufferGetBytesPerRowOfPlane(buffer, 0),
+            };
+            let chroma = ImageBuffer {
+                data: CVPixelBufferGetBaseAddressOfPlane(buffer, 1),
+                height: CVPixelBufferGetHeightOfPlane(buffer, 1),
+                width: CVPixelBufferGetWidthOfPlane(buffer, 1),
+                row_bytes: CVPixelBufferGetBytesPerRowOfPlane(buffer, 1),
+            };
+            if luma.width == 0 || luma.height == 0 || luma.data.is_null() || chroma.data.is_null()
+                || luma.row_bytes < luma.width || chroma.row_bytes < chroma.width * 2
+                || chroma.width != luma.width.div_ceil(2) || chroma.height != luma.height.div_ceil(2)
+            {
+                return Err("Invalid camera pixel buffer".into())
+            }
+            let count = luma.width * luma.height;
+            let mut pixels = Vec::<Pixel>::with_capacity(count);
+            let output = ImageBuffer {
+                data: pixels.as_mut_ptr().cast(), height: luma.height,
+                width: luma.width, row_bytes: luma.width * std::mem::size_of::<Pixel>(),
+            };
+            let result = unsafe {
+                vImageConvert_420Yp8_CbCr8ToARGB8888(
+                    &luma, &chroma, &output, self, [1, 2, 3, 0].as_ptr(), 255, 0,
+                )
+            };
+            if result != 0 {return Err(format!("Camera color conversion failed: {result}"))}
+            // Successful vImage conversion initializes every RGBA pixel, including opaque alpha.
+            unsafe {pixels.set_len(count);}
+            Ok(Image::new((luma.width as u32, luma.height as u32), pixels))
+        })();
+        unsafe {CVPixelBufferUnlockBaseAddress(buffer, flags);}
+        result
+    }
 }
 
 define_class!(
@@ -268,7 +372,7 @@ define_class!(
                 let duration = Duration::try_from_secs_f64(unsafe {sample.duration().seconds()})
                     .ok().filter(|duration| !duration.is_zero())
                     .unwrap_or(*state.interval.lock().unwrap());
-                Self::image(sample).map(|image| Frame::Image(image, duration))
+                self.image(sample).map(|image| Frame::Image(image, duration))
             } else {Self::sound(sample).map(|(sound, duration)| Frame::Sound(sound, duration))};
             let result = result.map(Arc::new);
             let mut feeds = state.feeds.lock().unwrap();
@@ -285,6 +389,12 @@ impl CaptureDelegate {
     fn new(feeds: Feeds, session: Retained<AVCaptureSession>) -> Retained<Self> {
         let this = Self::alloc().set_ivars(CaptureState {
             feeds, session, interval: Mutex::new(Duration::ZERO),
+            conversions: Box::new(unsafe {[
+                (kCVImageBufferYCbCrMatrix_ITU_R_601_4, 0.299, 0.114),
+                (kCVImageBufferYCbCrMatrix_ITU_R_709_2, 0.2126, 0.0722),
+                (kCVImageBufferYCbCrMatrix_ITU_R_2020, 0.2627, 0.0593),
+                (kCVImageBufferYCbCrMatrix_SMPTE_240M_1995, 0.212, 0.087),
+            ]}.map(|(key, red, blue)| (key, Conversion::new(red, blue)))),
         });
         unsafe {msg_send![super(this), init]}
     }
@@ -353,49 +463,30 @@ impl CaptureDelegate {
         let duration = Duration::from_secs_f64(frames as f64 / format.mSampleRate);
         Ok((Sound {channels: channels as u16, samples}, duration))
     }
-    fn image(sample: &CMSampleBuffer) -> Result<Image, String> {
+    fn image(&self, sample: &CMSampleBuffer) -> Result<Image, String> {
         let buffer = unsafe {sample.image_buffer()}.unwrap();
-        let buffer: &CVPixelBuffer = buffer.as_ref();
-        let flags = CVPixelBufferLockFlags::ReadOnly;
-        if unsafe {CVPixelBufferLockBaseAddress(buffer, flags)} != 0 {
-            return Err("Invalid camera pixel buffer".into())
-        }
-        let result = (|| {
-            let width = CVPixelBufferGetWidth(buffer) as u32;
-            let height = CVPixelBufferGetHeightOfPlane(buffer, 0);
-            let uv_height = CVPixelBufferGetHeightOfPlane(buffer, 1);
-            let y_base = CVPixelBufferGetBaseAddressOfPlane(buffer, 0);
-            let uv_base = CVPixelBufferGetBaseAddressOfPlane(buffer, 1);
-            let y_stride = CVPixelBufferGetBytesPerRowOfPlane(buffer, 0);
-            let uv_stride = CVPixelBufferGetBytesPerRowOfPlane(buffer, 1);
-            let y_len = y_stride.checked_mul(height).unwrap_or(0);
-            let uv_len = uv_stride.checked_mul(uv_height).unwrap_or(0);
-            if width == 0 || y_len == 0 || uv_len == 0 || y_base.is_null() || uv_base.is_null()
-                || y_stride < width as usize
-            {
-                return Err("Invalid camera pixel buffer".into())
-            }
-            let y_plane = unsafe {std::slice::from_raw_parts(y_base.cast::<u8>(), y_len)};
-            let uv_plane = unsafe {std::slice::from_raw_parts(uv_base.cast::<u8>(), uv_len)};
-            let mut pixels = vec![Pixel::default(); width as usize * height];
-            for (index, pixel) in pixels.iter_mut().enumerate() {
-                let (x, y) = (index % width as usize, index / width as usize);
-                let yi = y * y_stride + x;
-                let uvi = y / 2 * uv_stride + (x & !1);
-                if yi >= y_plane.len() || uvi + 1 >= uv_plane.len() {continue}
-                let y = (y_plane[yi] as i32 - 16).max(0);
-                let u = uv_plane[uvi] as i32 - 128;
-                let v = uv_plane[uvi + 1] as i32 - 128;
-                // BT.601 limited-range YUV to RGBA.
-                *pixel = Pixel {
-                    red: ((298 * y + 409 * v + 128) >> 8).clamp(0, 255) as u8,
-                    green: ((298 * y - 100 * u - 208 * v + 128) >> 8).clamp(0, 255) as u8,
-                    blue: ((298 * y + 516 * u + 128) >> 8).clamp(0, 255) as u8, alpha: 255,
-                };
-            }
-            Ok(Image::new((width, height as u32), pixels))
-        })();
-        unsafe {CVPixelBufferUnlockBaseAddress(buffer, flags);}
-        result
+        let matrix = unsafe {buffer.attachment(kCVImageBufferYCbCrMatrixKey, std::ptr::null_mut())};
+        let conversions = &self.ivars().conversions;
+        let conversion = match matrix {
+            Some(matrix) => {
+                let matrix = matrix.downcast::<CFString>().unwrap();
+                &conversions.iter().find(|(key, _)| **key == *matrix)
+                    .ok_or("Unsupported camera color matrix")?.1
+            },
+            None => &conversions[0].1,
+        };
+        conversion.image(buffer.as_ref())
     }
+}
+
+#[link(name = "Accelerate", kind = "framework")]
+unsafe extern "C" {
+    fn vImageConvert_YpCbCrToARGB_GenerateConversion(
+        matrix: &Matrix, range: &PixelRange, conversion: &mut Conversion,
+        input: u32, output: u32, flags: u32,
+    ) -> isize;
+    fn vImageConvert_420Yp8_CbCr8ToARGB8888(
+        luma: &ImageBuffer, chroma: &ImageBuffer, output: &ImageBuffer,
+        conversion: &Conversion, permutation: *const u8, alpha: u8, flags: u32,
+    ) -> isize;
 }

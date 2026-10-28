@@ -737,12 +737,6 @@ pub struct DataPicker {
 }
 
 impl DataPicker {
-    pub fn image(data: &NSData) -> Result<Image, String> {
-        if let Ok(image) = Image::read(data.to_vec().as_slice()) {return Ok(image)}
-        UIImage::initWithData(UIImage::alloc(), data)
-            .and_then(|image| Clipboard::image(&image))
-            .ok_or_else(|| "The image could not be decoded.".into())
-    }
     pub fn new() -> Self {
         let mtm = MainThreadMarker::new().expect("main thread");
         let (tx, rx) = spsc::build(spsc::List::new());

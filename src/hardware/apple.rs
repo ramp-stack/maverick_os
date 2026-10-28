@@ -23,10 +23,14 @@ use objc2_media_player::{
 };
 
 use objc2_photos_ui::{PHPickerConfiguration, PHPickerFilter, PHPickerResult};
-use objc2_core_foundation::{CFRetained, CGPoint, CGSize, CGRect};
+use objc2_core_foundation::{CFBoolean, CFDictionary, CFRetained, CGPoint, CGSize, CGRect};
 use objc2_core_graphics::{
     CGBitmapInfo, CGColorSpace, CGImageAlphaInfo, CGImageByteOrderInfo, CGDataProvider, CGImage,
     CGColorRenderingIntent, CGBitmapContextCreate, CGContext,
+};
+use objc2_image_io::{
+    CGImageSource, kCGImageSourceCreateThumbnailFromImageAlways,
+    kCGImageSourceCreateThumbnailWithTransform,
 };
 
 use std::cell::RefCell;
@@ -386,6 +390,29 @@ impl Drop for ShareMedia {
     }
 }
 
+impl DataPicker {
+    pub fn image(data: &NSData) -> Result<super::Image, String> {
+        let source = unsafe {CGImageSource::with_data(data.as_ref(), None)}
+            .filter(|source| unsafe {source.r#type().is_some()});
+        let Some(source) = source else {
+            return super::Image::read(data.to_vec().as_slice())
+        };
+        let options = unsafe {
+            CFDictionary::from_slices(
+                &[
+                    kCGImageSourceCreateThumbnailFromImageAlways,
+                    kCGImageSourceCreateThumbnailWithTransform,
+                ],
+                &[CFBoolean::new(true), CFBoolean::new(true)],
+            )
+        };
+        // No size limit: normalize source orientation at full resolution, not its embedded thumbnail.
+        let image = unsafe {source.thumbnail_at_index(0, Some(options.as_ref()))}
+            .ok_or_else(|| "The image could not be decoded.".to_owned())?;
+        Ok(ShareMedia::image(&image))
+    }
+}
+
 impl PickRequest {
     pub fn documents(&self) -> bool {
         matches!(self.kind(), PickKind::Audio | PickKind::Media | PickKind::File | PickKind::Data)
@@ -483,7 +510,7 @@ impl PickRequest {
             DispatchQoS::UserInitiated,
         ));
         queue.exec_async(move || autoreleasepool(|_| {
-            let items = urls.iter().map(|url| Self::load_file(kind, &url)).collect();
+            let items = urls.iter().map(|url| Self::load_file(kind, url)).collect();
             DispatchQueue::main().exec_async(move || completion(items));
         }));
     }

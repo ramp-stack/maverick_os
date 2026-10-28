@@ -306,11 +306,9 @@ impl DataPicker {
             spsc::build(spsc::List::new());
         let changed = Arc::new(Notify::new());
         let cancel = changed.clone();
-        let worker = RUNTIME.get().unwrap().block_on(async move {
-            tokio::spawn(async move {
-                while let Ok(request) = rx.recv().await {Self::select(request, &cancel).await;}
-            })
-        });
+        let worker = RUNTIME.get().unwrap().spawn(Box::pin(async move {
+            while let Ok(request) = rx.recv().await {Self::select(request, &cancel).await;}
+        }));
         Self {tx, changed, worker}
     }
     pub fn pick<P: Pickable>(&self, hardware: &Hardware) -> Picked<P> {

@@ -13,6 +13,8 @@ use std::time::Duration;
 mod demo_render;
 use demo_render::{DemoRenderer, Screen, Quad, Button};
 
+type PlayerOutput = (Player, Option<(Speaker, u64)>);
+
 pub struct Demo {
     hardware: Hardware,
     layout: Layout,
@@ -23,7 +25,7 @@ pub struct Demo {
     progress: Option<Delay>,
     clipboard: Option<Data>,
     cache: Option<Data>,
-    players: HashMap<&'static str, Result<(Player, Option<(Speaker, u64)>), String>>,
+    players: HashMap<&'static str, Result<PlayerOutput, String>>,
     playback: Option<u128>,
     mode: PlaybackMode,
     speed: f64,
@@ -278,15 +280,15 @@ impl Application for Demo {
                             keyboard.show(0.0);
                             self.keyboard = Some(keyboard);
                         },
-                        "camera" => if self.camera.take().is_none() {
-                            self.camera = Some(self.hardware.start_camera().and_then(|camera| {
+                        "camera" if self.camera.take().is_none() => {
+                            self.camera = Some(self.hardware.start_camera().map(|camera| {
                                 let video = Video::new();
                                 let mut player = video.player();
                                 player.set_mode(PlaybackMode::Live(Duration::ZERO));
                                 player.set_speed(self.speed);
                                 player.set_volume(self.volume);
                                 player.start();
-                                Ok((camera, video, player))
+                                (camera, video, player)
                             }));
                         },
                         "photo" => self.picked = Some(Selection::Photo(self.hardware.pick::<Image>())),

@@ -30,8 +30,11 @@ use crate::events::Output;
 use crate::inputs::Input;
 use crate::runtime::RUNTIME;
 
-static MEDIA_COMMANDS: LazyLock<Mutex<(Option<MediaControls>, HashMap<u128, bool>)>> =
+static MEDIA_COMMANDS: LazyLock<Mutex<MediaCommandState>> =
     LazyLock::new(|| Mutex::new((None, HashMap::new())));
+
+type MediaCommandState = (Option<MediaControls>, HashMap<u128, bool>);
+type FrameReceiver = broadcast::Receiver<(Duration, Arc<Frame>)>;
 
 #[derive(Clone)]
 pub struct Keyboard;
@@ -284,13 +287,9 @@ impl DataPicker {
             spsc::build(spsc::List::new());
         let changed = Arc::new(Notify::new());
         let cancel = changed.clone();
-        let worker = RUNTIME.get().unwrap().block_on(async move {
-            tokio::spawn(async move {
-                while let Ok(request) = rx.recv().await {
-                    Self::select(request, &cancel).await;
-                }
-            })
-        });
+        let worker = RUNTIME.get().unwrap().spawn(Box::pin(async move {
+            while let Ok(request) = rx.recv().await {Self::select(request, &cancel).await;}
+        }));
         Self {tx, changed, worker}
     }
 
@@ -432,7 +431,7 @@ impl MediaCommands {
             Err(error) => log::warn!("Desktop media controls unavailable: {error}"),
         }
     }
-    fn publish(state: &mut (Option<MediaControls>, HashMap<u128, bool>)) {
+    fn publish(state: &mut MediaCommandState) {
         let playback = if state.1.is_empty() {MediaPlayback::Stopped}
             else if state.1.values().any(|playing| *playing) {MediaPlayback::Playing {progress: None}}
             else {MediaPlayback::Paused {progress: None}};
@@ -481,7 +480,7 @@ impl CaptureHub {
         if !camera {self.camera.borrow_mut().take();}
         if !microphone {self.microphone.borrow_mut().take();}
     }
-    fn subscribe(&self, camera: bool, microphone: bool) -> Result<(u128, broadcast::Receiver<(Duration, Arc<Frame>)>), String> {
+    fn subscribe(&self, camera: bool, microphone: bool) -> Result<(u128, FrameReceiver), String> {
         gst::init().map_err(|error| error.to_string())?;
         let (video_active, audio_active) = {
             let feeds = self.feeds.lock().unwrap();
@@ -598,8 +597,8 @@ impl CaptureInput {
             let channels = format.get::<i32>("channels").unwrap() as u16;
             let rate = format.get::<i32>("rate").unwrap();
             let bytes = buffer.map_readable().map_err(|error| error.to_string())?;
-            let samples: Vec<_> = bytes.chunks_exact(4)
-                .map(|bytes| Sample(f32::from_le_bytes(bytes.try_into().unwrap()))).collect();
+            let samples: Vec<_> = bytes.as_chunks::<4>().0.iter()
+                .map(|bytes| Sample(f32::from_le_bytes(*bytes))).collect();
             let duration = Duration::from_secs_f64(samples.len() as f64 / channels as f64 / rate as f64);
             Frame::Sound(Sound {channels, samples}, duration)
         };

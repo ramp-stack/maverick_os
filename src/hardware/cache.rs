@@ -128,7 +128,7 @@ impl Cache {
                     (width, height), bytemuck::cast_slice(&pixel_data).to_vec(),
                 )))
             }
-            3 | 4 | 5 => {
+            3..=5 => {
                 // Older records carry a length-prefixed platform type before the movie bytes.
                 if tag == 3 {
                     if blob.is_empty() {

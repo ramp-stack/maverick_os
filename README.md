@@ -52,6 +52,10 @@ copies the buffer only when it is shared. Equality compares image data.
 The buffer must contain `width * height` pixels;
 operations consuming an image validate its dimensions. No public API exposes `RgbaImage`.
 
+Apple photo selection applies the source's orientation and mirroring metadata before returning
+pixels. HEIC and JPEG selections retain their full resolution, with upright dimensions; exporting
+the resulting pixels does not require the original orientation metadata.
+
 `image.write(writer, ImageFormat::Png)` encodes to any `Write`, including `Vec<u8>` and files.
 `ImageFormat` supports PNG, JPEG, lossless WebP, GIF, BMP, ICO, TIFF, and QOI and provides
 `extension()`. JPEG uses quality 75 and omits alpha; GIF uses palette color and binary transparency.
@@ -79,6 +83,11 @@ and retains source timestamp gaps. `None` means the subscription has closed; `er
 terminal capture failure when present. All four native platforms support camera, microphone, and
 combined capture through the same handles. Independent requests share the native inputs; dropping
 one request or its clones leaves other requests active.
+
+Apple capture converts native NV12 frames directly into the final RGBA allocation with Accelerate's
+vImage routines. The capture owner retains conversion settings for the source's YCbCr matrix, and
+each conversion respects the native plane strides. Missing matrix metadata retains the existing
+BT.601 interpretation. Resolution, source timestamps, and ordered frame delivery are unchanged.
 
 Android uses Camera2 and AudioRecord, requests camera and microphone permission when needed, and
 normalizes camera orientation and native timestamps before delivering RGBA images and float audio.

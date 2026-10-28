@@ -325,13 +325,6 @@ pub struct DataPicker {
 }
 
 impl DataPicker {
-    pub fn image(data: &NSData) -> Result<Image, String> {
-        if let Ok(image) = Image::read(data.to_vec().as_slice()) {return Ok(image)}
-        let image = NSImage::initWithData(NSImage::alloc(), data).and_then(|image| unsafe {
-            image.CGImageForProposedRect_context_hints(std::ptr::null_mut(), None, None)
-        }).ok_or_else(|| "The image could not be decoded.".to_owned())?;
-        Ok(super::apple::ShareMedia::image(&image))
-    }
     pub fn new() -> Self {
         let mtm = MainThreadMarker::new().expect("main thread");
         let (tx, rx) = spsc::build(spsc::List::new());
@@ -743,7 +736,7 @@ impl DeviceVolume {
             mScope: kAudioObjectPropertyScopeGlobal, mElement: 0,
         };
         let result = unsafe {AudioObjectAddPropertyListenerBlock(
-            kAudioObjectSystemObject as u32, NonNull::from(&mut address), Some(&DispatchQueue::main()),
+            kAudioObjectSystemObject as u32, NonNull::from(&mut address), Some(DispatchQueue::main()),
             RcBlock::as_ptr(&volume.borrow().listener),
         )};
         if result != 0 {log::warn!("Could not observe default output: {result}");}
@@ -765,7 +758,7 @@ impl DeviceVolume {
             mScope: kAudioObjectPropertyScopeOutput, mElement: kAudioObjectPropertyElementWildcard,
         };
         if self.device != 0 {unsafe {AudioObjectRemovePropertyListenerBlock(
-            self.device, NonNull::from(&mut address), Some(&DispatchQueue::main()),
+            self.device, NonNull::from(&mut address), Some(DispatchQueue::main()),
             RcBlock::as_ptr(&self.listener),
         );}}
         self.levels.clear();
@@ -789,7 +782,7 @@ impl DeviceVolume {
         }
         if self.levels.is_empty() {return}
         let result = unsafe {AudioObjectAddPropertyListenerBlock(
-            self.device, NonNull::from(&mut address), Some(&DispatchQueue::main()),
+            self.device, NonNull::from(&mut address), Some(DispatchQueue::main()),
             RcBlock::as_ptr(&self.listener),
         )};
         if result != 0 {log::warn!("Could not observe output volume: {result}");}
@@ -802,7 +795,7 @@ impl Drop for DeviceVolume {
             mScope: kAudioObjectPropertyScopeGlobal, mElement: 0,
         };
         unsafe {AudioObjectRemovePropertyListenerBlock(
-            kAudioObjectSystemObject as u32, NonNull::from(&mut address), Some(&DispatchQueue::main()),
+            kAudioObjectSystemObject as u32, NonNull::from(&mut address), Some(DispatchQueue::main()),
             RcBlock::as_ptr(&self.listener),
         );}
         if self.device == 0 {return}
@@ -811,7 +804,7 @@ impl Drop for DeviceVolume {
             mScope: kAudioObjectPropertyScopeOutput, mElement: kAudioObjectPropertyElementWildcard,
         };
         unsafe {AudioObjectRemovePropertyListenerBlock(
-            self.device, NonNull::from(&mut address), Some(&DispatchQueue::main()),
+            self.device, NonNull::from(&mut address), Some(DispatchQueue::main()),
             RcBlock::as_ptr(&self.listener),
         );}
     }
@@ -836,7 +829,7 @@ struct _Push {
 
 impl _Push {
     fn new() -> Option<Self> {
-        if NSBundle::mainBundle().bundleIdentifier().is_none() {return None}
+        NSBundle::mainBundle().bundleIdentifier()?;
         let app = NSApplication::sharedApplication(MainThreadMarker::new().unwrap());
         let delegate = app.delegate().unwrap();
         let delegate: &AnyObject = (*delegate).as_ref();
@@ -845,9 +838,13 @@ impl _Push {
         // the APNs selectors it does not implement, with void(id, SEL, id, id) signatures.
         let callbacks: [(Sel, Imp); 2] = unsafe {[
             (sel!(application:didRegisterForRemoteNotificationsWithDeviceToken:),
-                std::mem::transmute(Self::registered as extern "C-unwind" fn(_, _, _, _))),
+                std::mem::transmute::<
+                    extern "C-unwind" fn(&AnyObject, Sel, &NSApplication, &NSData), Imp,
+                >(Self::registered)),
             (sel!(application:didFailToRegisterForRemoteNotificationsWithError:),
-                std::mem::transmute(Self::failed as extern "C-unwind" fn(_, _, _, _))),
+                std::mem::transmute::<
+                    extern "C-unwind" fn(&AnyObject, Sel, &NSApplication, &NSError), Imp,
+                >(Self::failed)),
         ]};
         for (selector, callback) in callbacks {
             assert!(unsafe {objc2::ffi::class_addMethod(class, selector, callback, c"v@:@@".as_ptr())}.as_bool(),
