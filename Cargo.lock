@@ -2212,7 +2212,7 @@ dependencies = [
 
 [[package]]
 name = "maverick_os"
-version = "5.0.1"
+version = "5.0.2"
 dependencies = [
  "android_logger",
  "arboard",

@@ -9,6 +9,7 @@ import android.graphics.drawable.ColorDrawable;
 import android.graphics.fonts.Font;
 import android.graphics.fonts.FontFamily;
 import android.os.Looper;
+import android.text.Editable;
 import android.text.Layout;
 import android.text.Selection;
 import android.text.Spannable;
@@ -53,6 +54,8 @@ public final class NativeText extends TextView implements ActionMode.Callback {
     private float lastY;
     private float scale = 1;
     private String appearance;
+    private int inputBatches;
+    private long revision;
 
     public static NativeText create(MaverickActivity activity, String id) throws Exception {
         if (Looper.myLooper() == Looper.getMainLooper()) return new NativeText(activity, id);
@@ -78,7 +81,31 @@ public final class NativeText extends TextView implements ActionMode.Callback {
 
     public synchronized void close() {
         active = false;
-        activity.runOnUiThread(() -> overlay.dismiss());
+        activity.runOnUiThread(() -> {
+            activity.editText(this, false);
+            overlay.dismiss();
+        });
+    }
+
+    Editable document() {return active && editable ? getEditableText() : null;}
+    void beginInput() {inputBatches++; super.beginBatchEdit();}
+    void cancelInput() {super.endBatchEdit(); inputBatches--;}
+    void endInput() {
+        super.endBatchEdit();
+        if (--inputBatches == 0) publish();
+    }
+
+    private synchronized void publish() {
+        if (!active || applying || !editable || inputBatches != 0 || events == 0) return;
+        int start = getSelectionStart(), end = getSelectionEnd();
+        if (start < 0 || end < 0) return;
+        revision = activity.nextTextRevision();
+        textReplaced(identity, getText().toString(), Math.min(start, end), Math.max(start, end), revision);
+        activity.updateText(this, false);
+    }
+
+    synchronized void sendCommand(int code, int meta) {
+        if (active && events != 0) command(code, meta);
     }
 
     @Override public boolean onTouchEvent(MotionEvent event) {
@@ -171,6 +198,11 @@ public final class NativeText extends TextView implements ActionMode.Callback {
     }
 
     @Override public boolean onTextContextMenuItem(int command) {
+        if (editable && (command == android.R.id.undo || command == android.R.id.redo)) {
+            beginInput();
+            try {return super.onTextContextMenuItem(command);}
+            finally {endInput();}
+        }
         if (!editable || (command != android.R.id.cut && command != android.R.id.paste)) {
             return super.onTextContextMenuItem(command);
         }
@@ -186,24 +218,31 @@ public final class NativeText extends TextView implements ActionMode.Callback {
             if (clip == null || clip.getItemCount() == 0) return false;
             replacement = clip.getItemAt(0).coerceToText(activity).toString();
         }
-        String result = text.substring(0, start) + replacement + text.substring(end);
-        int cursor = start + replacement.length();
-        synchronized (this) {
-            if (active && events != 0) textReplaced(identity, result, cursor);
-        }
+        beginInput();
+        try {
+            Editable document = getEditableText();
+            android.view.inputmethod.BaseInputConnection.removeComposingSpans(document);
+            document.replace(start, end, replacement);
+            Selection.setSelection(document, start + replacement.length());
+        } finally {endInput();}
         return true;
     }
 
     @Override protected void onSelectionChanged(int start, int end) {
         super.onSelectionChanged(start, end);
         synchronized (this) {
-            if (!active || applying || !editable || events == 0 || start < 0 || end < 0) return;
-            selectionChanged(identity, getText().toString(), Math.min(start, end), Math.max(start, end));
+            if (!active || applying || !editable || inputBatches != 0
+                || events == 0 || start < 0 || end < 0) return;
+            revision = activity.nextTextRevision();
+            selectionChanged(identity, getText().toString(),
+                Math.min(start, end), Math.max(start, end), revision);
+            activity.updateText(this, false);
         }
     }
 
-    private native void selectionChanged(String id, String text, int start, int end);
-    private native void textReplaced(String id, String text, int cursor);
+    private native void selectionChanged(String id, String text, int start, int end, long revision);
+    private native void textReplaced(String id, String text, int start, int end, long revision);
+    private native void command(int code, int meta);
     private native void pointer(float x, float y, int state, float dx, float dy);
 
     private NativeText(MaverickActivity activity, String id) {
@@ -255,52 +294,76 @@ public final class NativeText extends TextView implements ActionMode.Callback {
         applying = true;
         try {
             scale = (float) data.getDouble("scale");
-            editable = !data.isNull("cursor");
-            if (focused && !data.getBoolean("focused")) clearFocus();
-            focused = data.getBoolean("focused");
-            String value = data.getString("text");
-            JSONArray spans = data.getJSONArray("spans");
-            JSONObject first = spans.getJSONObject(0);
-            float size = (float) first.getDouble("size");
-            setTextSize(TypedValue.COMPLEX_UNIT_PX, size);
-            setTypeface(fonts[0]);
-            setLetterSpacing((float) first.getDouble("kerning") / size);
-            setGravity(Gravity.TOP | new int[] {Gravity.LEFT, Gravity.CENTER_HORIZONTAL, Gravity.RIGHT}
-                [data.getInt("align")]);
-            if (!first.isNull("height")) setLineHeight((int) Math.ceil(first.getDouble("height")));
-            String style = spans.toString();
-            boolean replaced = !getText().toString().equals(value);
-            if (replaced && selectionMode != null) selectionMode.finish();
-            if (replaced) selecting = false;
-            if (replaced || !style.equals(appearance)) {
-                int selectionStart = getSelectionStart(), selectionEnd = getSelectionEnd();
-                SpannableString styled = new SpannableString(value);
-                for (int index = 0; index < spans.length(); index++) {
-                    JSONObject span = spans.getJSONObject(index);
-                    int start = span.getInt("start"), end = span.getInt("end");
-                    if (start == end) continue;
-                    styled.setSpan(new Style(fonts[index], (float) span.getDouble("size"),
-                        (float) span.getDouble("kerning")), start, end, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE);
-                    if (!span.isNull("height")) {
-                        styled.setSpan(new LineHeightSpan.Standard((int) Math.ceil(span.getDouble("height"))),
-                            start, end, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE);
+            if (data.getLong("revision") >= revision) {
+                editable = !data.isNull("cursor");
+                if (focused && !data.getBoolean("focused")) clearFocus();
+                focused = data.getBoolean("focused");
+                String value = data.getString("text");
+                int cursor = editable ? data.getInt("cursor") : 0;
+                int anchor = editable && !data.isNull("anchor") ? data.getInt("anchor") : cursor;
+                boolean replaced = !getText().toString().equals(value);
+                boolean documentChanged = replaced
+                    || getSelectionStart() != anchor || getSelectionEnd() != cursor;
+                JSONArray spans = data.getJSONArray("spans");
+                JSONObject first = spans.getJSONObject(0);
+                float size = (float) first.getDouble("size");
+                setTextSize(TypedValue.COMPLEX_UNIT_PX, size);
+                setTypeface(fonts[0]);
+                setLetterSpacing((float) first.getDouble("kerning") / size);
+                setGravity(Gravity.TOP | new int[] {Gravity.LEFT, Gravity.CENTER_HORIZONTAL, Gravity.RIGHT}
+                    [data.getInt("align")]);
+                if (!first.isNull("height")) setLineHeight((int) Math.ceil(first.getDouble("height")));
+                String style = spans.toString();
+                if (replaced && selectionMode != null) selectionMode.finish();
+                if (replaced) selecting = false;
+                if (replaced || !style.equals(appearance)
+                    || (editable && getEditableText() == null)) {
+                    int selectionStart = getSelectionStart(), selectionEnd = getSelectionEnd();
+                    SpannableString styled = new SpannableString(value);
+                    for (int index = 0; index < spans.length(); index++) {
+                        JSONObject span = spans.getJSONObject(index);
+                        int start = span.getInt("start"), end = span.getInt("end");
+                        if (start == end) continue;
+                        styled.setSpan(new Style(fonts[index], (float) span.getDouble("size"),
+                            (float) span.getDouble("kerning")), start, end,
+                            Spannable.SPAN_EXCLUSIVE_EXCLUSIVE);
+                        if (!span.isNull("height")) {
+                            styled.setSpan(new LineHeightSpan.Standard(
+                                (int) Math.ceil(span.getDouble("height"))), start, end,
+                                Spannable.SPAN_EXCLUSIVE_EXCLUSIVE);
+                        }
+                    }
+                    if (!replaced && getText() instanceof Editable && editable) {
+                        Editable document = getEditableText();
+                        for (Style old : document.getSpans(0, document.length(), Style.class)) {
+                            document.removeSpan(old);
+                        }
+                        for (LineHeightSpan old : document.getSpans(
+                            0, document.length(), LineHeightSpan.class)) {
+                            document.removeSpan(old);
+                        }
+                        for (Object span : styled.getSpans(0, styled.length(), Object.class)) {
+                            document.setSpan(span, styled.getSpanStart(span), styled.getSpanEnd(span),
+                                styled.getSpanFlags(span));
+                        }
+                    } else {setText(styled, editable ? BufferType.EDITABLE : BufferType.SPANNABLE);}
+                    appearance = style;
+                    if (!editable && selecting && selectionStart >= 0 && selectionEnd >= 0) {
+                        Selection.setSelection((Spannable) getText(),
+                            Math.min(selectionStart, value.length()), Math.min(selectionEnd, value.length()));
                     }
                 }
-                setText(styled, BufferType.SPANNABLE);
-                appearance = style;
-                if (!editable && selecting && selectionStart >= 0 && selectionEnd >= 0) {
-                    Selection.setSelection((Spannable) getText(), Math.min(selectionStart, value.length()),
-                        Math.min(selectionEnd, value.length()));
+                if (editable && documentChanged && getText() instanceof Spannable) {
+                    cursor = Math.min(cursor, getText().length());
+                    anchor = Math.min(anchor, getText().length());
+                    if (anchor == cursor && selectionMode != null) selectionMode.finish();
+                    if (anchor == cursor) selecting = false;
+                    Selection.setSelection((Spannable) getText(), anchor, cursor);
                 }
+                activity.editText(this, focused && editable);
+                if (editable && documentChanged) activity.updateText(this, replaced);
             }
-            if (editable && getText() instanceof Spannable) {
-                int cursor = Math.min(data.getInt("cursor"), getText().length());
-                int anchor = data.isNull("anchor") ? cursor :
-                    Math.min(data.getInt("anchor"), getText().length());
-                if (anchor == cursor && selectionMode != null) selectionMode.finish();
-                if (anchor == cursor) selecting = false;
-                Selection.setSelection((Spannable) getText(), anchor, cursor);
-            }
+            if (!data.getBoolean("visible")) {overlay.hide(); return;}
             int left = (int) Math.floor(data.getDouble("left"));
             int top = (int) Math.floor(data.getDouble("top"));
             int width = (int) Math.ceil(data.getDouble("right")) - left;

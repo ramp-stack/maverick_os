@@ -55,6 +55,8 @@ public final class MaverickActivity extends NativeActivity {
     private volatile float[] insets = new float[4];
     private final AtomicInteger nextKeyboard = new AtomicInteger(1);
     private KeyboardView keyboard;
+    private NativeText editor;
+    private long textRevision;
     private boolean keyboardDragging;
     private long keyboardDragPointer;
     private float keyboardDragX;
@@ -130,6 +132,23 @@ public final class MaverickActivity extends NativeActivity {
         pendingNotifications.clear();
     }
 
+    void editText(NativeText view, boolean focused) {
+        if (focused) editor = view;
+        else if (editor == view) editor = null;
+        else return;
+        if (keyboard != null) keyboard.edit(editor);
+    }
+
+    public void initializeText(long revision) {
+        runOnUiThread(() -> textRevision = Math.max(textRevision, revision));
+    }
+
+    long nextTextRevision() {return ++textRevision;}
+
+    void updateText(NativeText view, boolean replaced) {
+        if (keyboard != null) keyboard.update(view, replaced);
+    }
+
     public int openKeyboard() {
         int id = nextKeyboard.getAndIncrement();
         runOnUiThread(() -> {
@@ -138,6 +157,7 @@ public final class MaverickActivity extends NativeActivity {
                 if (keyboard != null) keyboard.close();
                 keyboardDragging = false;
                 keyboard = new KeyboardView(this, id);
+                keyboard.edit(editor);
                 addContentView(keyboard, new ViewGroup.LayoutParams(1, 1));
                 keyboard.requestFocus();
                 keyboard.post(() -> {
@@ -156,6 +176,7 @@ public final class MaverickActivity extends NativeActivity {
         runOnUiThread(() -> {
             if (keyboard == null || keyboard.id != id) return;
             keyboardDragging = false;
+            keyboard.edit(editor);
             WindowInsets value = getWindow().getDecorView().getRootWindowInsets();
             if (!keyboard.isFocused() || value == null || !value.isVisible(WindowInsets.Type.ime())) {
                 keyboard.setFocusableInTouchMode(true);
